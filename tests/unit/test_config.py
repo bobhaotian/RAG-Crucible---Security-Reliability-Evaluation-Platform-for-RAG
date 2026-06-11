@@ -116,3 +116,37 @@ def test_load_spec_errors_name_the_file(tmp_path: Path) -> None:
 def test_corpus_config_requires_documents() -> None:
     with pytest.raises(ValidationError):
         CorpusConfig()  # type: ignore[call-arg]
+
+
+def _spec_with_suites(suites: dict[str, object]) -> dict[str, object]:
+    raw = _minimal_spec_dict()
+    raw["corpus"] = {"documents": "datasets/seeded/corpus", "qa": "datasets/seeded/qa.jsonl"}
+    raw["suites"] = suites
+    return raw
+
+
+def test_llm_judge_requires_provider_model_and_cache() -> None:
+    with pytest.raises(ValidationError, match=r"judge\.provider"):
+        RunSpec.model_validate(_spec_with_suites({"faithfulness": {"judge": {"kind": "llm"}}}))
+    with pytest.raises(ValidationError, match=r"judge\.cache"):
+        RunSpec.model_validate(
+            _spec_with_suites(
+                {
+                    "faithfulness": {
+                        "judge": {"kind": "llm", "provider": "fake", "model": "m", "mode": "auto"}
+                    }
+                }
+            )
+        )
+
+
+def test_k_values_cannot_exceed_retrieval_depth() -> None:
+    with pytest.raises(ValidationError, match="retrieval depth"):
+        RunSpec.model_validate(_spec_with_suites({"retrieval": {"k_values": [1, 50]}}))
+
+
+def test_suites_require_qa_labels() -> None:
+    raw = _minimal_spec_dict()
+    raw["suites"] = {"retrieval": {}}
+    with pytest.raises(ValidationError, match=r"corpus\.qa"):
+        RunSpec.model_validate(raw)

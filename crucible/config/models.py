@@ -108,9 +108,54 @@ class PipelineConfig(StrictConfig):
         return self
 
 
+class RetrievalSuiteConfig(StrictConfig):
+    k_values: tuple[int, ...] = (1, 5, 10, 20)
+    rerank_lift: bool = True  # also evaluate with rerank off and report the delta
+
+    @model_validator(mode="after")
+    def _k_values_sane(self) -> RetrievalSuiteConfig:
+        if not self.k_values or any(k < 1 for k in self.k_values):
+            raise ValueError("retrieval.k_values must be non-empty positive integers")
+        return self
+
+
+class JudgeConfig(StrictConfig):
+    """Entailment judge for the faithfulness suite.
+
+    ``llm`` judges through the provider interface; ``heuristic`` is a
+    deterministic token-containment scorer (no model — what CI uses). Cache
+    modes: ``auto`` reads the cache and judges+persists misses, ``cached`` is
+    read-only (miss = error, full reproducibility), ``live`` always re-judges
+    and refreshes entries.
+    """
+
+    kind: Literal["llm", "heuristic"] = "llm"
+    provider: ProviderName | None = None
+    model: str | None = None
+    mode: Literal["auto", "cached", "live"] = "auto"
+    cache: Path | None = None
+
+    @model_validator(mode="after")
+    def _llm_requirements(self) -> JudgeConfig:
+        if self.kind == "llm":
+            if self.provider is None or self.model is None:
+                raise ValueError("judge.kind=llm requires judge.provider and judge.model")
+            if self.mode in ("auto", "cached") and self.cache is None:
+                raise ValueError(f"judge.mode={self.mode} requires a judge.cache path")
+        return self
+
+
+class FaithfulnessSuiteConfig(StrictConfig):
+    judge: JudgeConfig
+    sample_size: int | None = Field(default=None, ge=1)  # None = all QA items
+
+
 class SuitesConfig(StrictConfig):
-    """Evaluation suite selection. Suites land in Phase 2+; the key exists now
-    so spec files stay stable as suites are added."""
+    """Evaluation suite selection. Security and privacy suites are added here
+    in Phases 4-5."""
+
+    retrieval: RetrievalSuiteConfig | None = None
+    faithfulness: FaithfulnessSuiteConfig | None = None
 
 
 class RunSpec(StrictConfig):
@@ -121,6 +166,21 @@ class RunSpec(StrictConfig):
     index: IndexConfig = IndexConfig()
     pipeline: PipelineConfig
     suites: SuitesConfig | None = None
+
+    @model_validator(mode="after")
+    def _suites_consistent(self) -> RunSpec:
+        if self.suites is None:
+            return self
+        if (self.suites.retrieval or self.suites.faithfulness) and self.corpus.qa is None:
+            raise ValueError("evaluation suites require corpus.qa (the labeled QA file)")
+        if self.suites.retrieval is not None:
+            k_max = max(self.suites.retrieval.k_values)
+            if k_max > self.pipeline.retriever.k:
+                raise ValueError(
+                    f"retrieval.k_values includes {k_max} but retriever.k is "
+                    f"{self.pipeline.retriever.k}; metrics@k cannot exceed retrieval depth"
+                )
+        return self
 
     def canonical_json(self) -> str:
         """Stable serialization: key-sorted, no whitespace. This exact string
