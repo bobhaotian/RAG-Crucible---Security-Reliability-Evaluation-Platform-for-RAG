@@ -1,0 +1,23 @@
+# environments / secrets
+.env
+.venv/
+
+# caches
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# build
+dist/
+*.egg-info/
+
+# run artifacts (indexes, results, plots) — reproducible from specs
+artifacts/
+results/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
