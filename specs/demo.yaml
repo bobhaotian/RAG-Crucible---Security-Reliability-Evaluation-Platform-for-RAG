@@ -35,3 +35,16 @@ pipeline:
     model: Qwen/Qwen2.5-0.5B-Instruct
     temperature: 0.0
     max_tokens: 256
+
+suites:
+  retrieval:
+    k_values: [1, 5, 10, 20]
+    rerank_lift: true
+  faithfulness:
+    sample_size: 20            # keeps the CPU demo under ~5 minutes
+    judge:
+      kind: llm
+      provider: local
+      model: Qwen/Qwen2.5-0.5B-Instruct
+      mode: auto               # committed cache hit = free + reproducible;
+      cache: datasets/seeded/judgments.jsonl   # misses are judged + persisted

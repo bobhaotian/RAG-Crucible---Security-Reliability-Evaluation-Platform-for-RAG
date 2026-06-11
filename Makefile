@@ -33,15 +33,17 @@ corpus: ## regenerate the seeded corpus + QA labels (deterministic)
 ingest: ## build the demo index (local provider; downloads MiniLM on first run)
 	$(UV) run crucible ingest $(DEMO_SPEC)
 
-demo: ## end-to-end: ingest + answer sample queries with the local provider
+demo: ## end-to-end: ingest + sample query + full evaluation with plots (local models)
 	$(UV) run crucible ingest $(DEMO_SPEC)
 	$(UV) run crucible query $(DEMO_SPEC) "What is the battery life of the AT-300 inspection drone?"
-	$(UV) run crucible query $(DEMO_SPEC) "How many days of paid vacation do employees get?"
-	$(UV) run crucible query $(DEMO_SPEC) "What does error code E-114 mean on the SR-2 rover?"
+	$(UV) run crucible eval $(DEMO_SPEC) --out results/demo
+	@echo "" && cat results/demo/summary.md
 
-demo-fake: ## same demo on the deterministic fake provider (instant, no downloads)
+demo-fake: ## same flow on the deterministic fake provider (instant, no downloads)
 	$(UV) run crucible ingest $(FAKE_SPEC)
 	$(UV) run crucible query $(FAKE_SPEC) "What is the battery life of the AT-300 inspection drone?"
+	$(UV) run crucible eval $(FAKE_SPEC) --out results/smoke-fake
+	@echo "" && cat results/smoke-fake/summary.md
 
 clean: ## remove caches and run artifacts
 	rm -rf artifacts .pytest_cache .mypy_cache .ruff_cache

@@ -17,6 +17,8 @@ import typer
 
 from crucible import __version__
 from crucible.config import RunSpec, SpecError, load_spec
+from crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
+from crucible.eval.report import write_report
 from crucible.index import FaissIndex, IndexMeta
 from crucible.ingest import build_index
 from crucible.pipeline import Answer, build_pipeline
@@ -135,6 +137,36 @@ def _print_answer(question: str, answer: Answer) -> None:
         f"rerank {rerank} | generate {t.generate_ms:.1f} | total {t.total_ms:.1f}"
     )
     typer.echo(f"Tokens: in {answer.usage.input_tokens}, out {answer.usage.output_tokens}")
+
+
+@app.command("eval")
+def eval_command(
+    spec_path: SpecPathArg,
+    out: Annotated[
+        Path | None,
+        typer.Option("--out", help="Output directory (default: results/<spec name>)"),
+    ] = None,
+) -> None:
+    """Run the spec's evaluation suites; write results.json, summary.md, plots."""
+    spec = _load_spec_or_exit(spec_path)
+    if spec.suites is None:
+        typer.echo(f"error: spec {spec.name!r} configures no `suites:`", err=True)
+        raise typer.Exit(code=2)
+    index, _ = _load_index_or_exit(spec)
+    out_dir = out if out is not None else Path("results") / spec.name
+
+    try:
+        result = asyncio.run(run_eval(spec, index))
+    except (ProviderError, QADatasetError, JudgeCacheMissError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    written = write_report(result, out_dir)
+    for suite in result.suites:
+        shown = [m for m in suite.metrics if m.variant in ("", "rerank=on")][:4]
+        rendered = " · ".join(f"{m.name}={m.value:.3f}" for m in shown)
+        typer.echo(f"{suite.suite}: {rendered}")
+    typer.echo("wrote: " + ", ".join(str(p) for p in written))
 
 
 @app.command()

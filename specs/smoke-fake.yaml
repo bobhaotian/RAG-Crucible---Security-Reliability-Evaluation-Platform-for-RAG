@@ -34,3 +34,11 @@ pipeline:
     model: extractive
     temperature: 0.0
     max_tokens: 256
+
+suites:
+  retrieval:
+    k_values: [1, 5, 10, 20]
+    rerank_lift: true
+  faithfulness:
+    judge:
+      kind: heuristic          # deterministic, model-free — same judge CI uses
