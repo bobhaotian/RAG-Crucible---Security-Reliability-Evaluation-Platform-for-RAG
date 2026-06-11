@@ -1,0 +1,36 @@
+# Deterministic smoke spec: the fake provider end-to-end, no downloads.
+# Used by `make demo-fake` and as a quick sanity check that the spine works.
+name: smoke-fake
+seed: 42
+
+corpus:
+  documents: datasets/seeded/corpus
+  qa: datasets/seeded/qa.jsonl
+
+ingest:
+  filters: [dedup, language, boilerplate]
+  chunker:
+    type: fixed
+    size_tokens: 350
+    overlap_tokens: 60
+
+index:
+  store: faiss
+  metric: cosine
+
+pipeline:
+  embedder:
+    provider: fake
+    model: hash-64
+  retriever:
+    k: 20
+  reranker:
+    provider: fake
+    model: overlap
+    enabled: true
+    top_n: 5
+  generator:
+    provider: fake
+    model: extractive
+    temperature: 0.0
+    max_tokens: 256

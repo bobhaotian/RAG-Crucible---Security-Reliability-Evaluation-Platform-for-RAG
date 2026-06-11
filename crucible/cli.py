@@ -1,0 +1,147 @@
+"""crucible CLI: run the core spine end-to-end from a spec file.
+
+    crucible ingest specs/demo.yaml          # corpus → filters → chunks → index
+    crucible query  specs/demo.yaml "..."    # retrieve → rerank → generate
+
+The API and runner (Phase 3) front the same core library; the CLI exists so
+the spine works and is demoable before any service does.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Annotated
+
+import typer
+
+from crucible import __version__
+from crucible.config import RunSpec, SpecError, load_spec
+from crucible.index import FaissIndex, IndexMeta
+from crucible.ingest import build_index
+from crucible.pipeline import Answer, build_pipeline
+from crucible.providers import ProviderError
+
+app = typer.Typer(
+    name="crucible",
+    help="Security, faithfulness, and privacy evaluation for RAG pipelines.",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+ARTIFACTS_DIR = Path("artifacts")
+
+SpecPathArg = Annotated[Path, typer.Argument(help="Path to a RunSpec YAML file")]
+
+
+def index_dir_for(spec: RunSpec) -> Path:
+    return ARTIFACTS_DIR / "indexes" / spec.name
+
+
+def _load_spec_or_exit(spec_path: Path) -> RunSpec:
+    try:
+        return load_spec(spec_path)
+    except SpecError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+
+def _load_index_or_exit(spec: RunSpec) -> tuple[FaissIndex, IndexMeta]:
+    directory = index_dir_for(spec)
+    try:
+        index, meta = FaissIndex.load(directory)
+    except (FileNotFoundError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if meta.fingerprint != spec.ingest_fingerprint():
+        typer.echo(
+            f"error: index at {directory} was built from a different ingest "
+            "configuration; re-run `crucible ingest` for this spec",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return index, meta
+
+
+@app.command()
+def ingest(
+    spec_path: SpecPathArg,
+    force: Annotated[bool, typer.Option("--force", help="Rebuild even if up to date")] = False,
+) -> None:
+    """Build (or rebuild) the vector index for a spec."""
+    spec = _load_spec_or_exit(spec_path)
+    out_dir = index_dir_for(spec)
+
+    if not force and (out_dir / "meta.json").is_file():
+        meta = IndexMeta.model_validate_json((out_dir / "meta.json").read_text(encoding="utf-8"))
+        if meta.fingerprint == spec.ingest_fingerprint():
+            typer.echo(
+                f"index at {out_dir} is up to date ({meta.chunk_count} chunks); "
+                "use --force to rebuild"
+            )
+            return
+
+    try:
+        report = asyncio.run(build_index(spec, out_dir))
+    except (ProviderError, NotImplementedError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"ingested corpus {spec.corpus.documents}")
+    typer.echo(f"  documents loaded : {report.docs_loaded} ({report.files_skipped} skipped)")
+    for stat in report.filter_stats:
+        typer.echo(f"  filter {stat.name:<12}: dropped {stat.dropped}")
+    typer.echo(f"  documents indexed: {report.docs_indexed}")
+    typer.echo(f"  chunks           : {report.chunks} (dim {report.dim})")
+    typer.echo(f"  duration         : {report.duration_s}s")
+    typer.echo(f"  index            : {out_dir}")
+
+
+@app.command()
+def query(
+    spec_path: SpecPathArg,
+    question: Annotated[str, typer.Argument(help="The question to answer")],
+) -> None:
+    """Answer one question through the configured pipeline, with citations."""
+    spec = _load_spec_or_exit(spec_path)
+    index, _ = _load_index_or_exit(spec)
+
+    try:
+        pipeline = build_pipeline(spec, index)
+        answer = asyncio.run(pipeline.answer(question))
+    except ProviderError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    _print_answer(question, answer)
+
+
+def _print_answer(question: str, answer: Answer) -> None:
+    typer.echo(f"Q: {question}")
+    typer.echo(f"A: {answer.text}")
+    typer.echo("")
+    typer.echo("Citations:")
+    for citation in answer.citations:
+        candidate = answer.context.candidates[citation.marker - 1]
+        label = candidate.chunk.source + (
+            f" › {candidate.chunk.section}" if candidate.chunk.section else ""
+        )
+        kind = "cited by model" if citation.parsed else "context fallback"
+        typer.echo(f"  [{citation.marker}] {label} (chunk {citation.chunk_id}, {kind})")
+    t = answer.timings
+    rerank = f"{t.rerank_ms:.1f}" if t.rerank_ms is not None else "off"
+    typer.echo(
+        f"Timings (ms): embed {t.embed_query_ms:.1f} | retrieve {t.retrieve_ms:.1f} | "
+        f"rerank {rerank} | generate {t.generate_ms:.1f} | total {t.total_ms:.1f}"
+    )
+    typer.echo(f"Tokens: in {answer.usage.input_tokens}, out {answer.usage.output_tokens}")
+
+
+@app.command()
+def version() -> None:
+    """Print the crucible version."""
+    typer.echo(__version__)
+
+
+if __name__ == "__main__":
+    app()
