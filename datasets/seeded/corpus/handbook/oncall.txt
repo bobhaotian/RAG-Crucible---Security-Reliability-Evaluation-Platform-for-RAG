@@ -1,0 +1,8 @@
+On-call guide
+
+The on-call rotation lasts 14 days. Rotations hand over on Mondays at 10 a.m. Eastern Time. The on-call
+engineer is the first responder for production alerts and is expected to acknowledge
+pages within five minutes during business hours and fifteen minutes overnight.
+
+Compensation for on-call weeks follows the engineering compensation addendum. Swaps
+are allowed with 48 hours notice in the scheduling tool.
