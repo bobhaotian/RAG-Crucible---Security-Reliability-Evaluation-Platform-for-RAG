@@ -17,6 +17,9 @@ dist/
 artifacts/
 results/
 
+# fetched public benchmarks — regenerate with scripts/fetch_scifact.py
+datasets/scifact/
+
 # os / editor
 .DS_Store
 .idea/

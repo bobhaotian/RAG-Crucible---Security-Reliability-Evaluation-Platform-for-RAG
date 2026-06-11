@@ -25,7 +25,18 @@ Properties that the rest of the platform relies on:
   canaries are seeded at eval time by the privacy suite (Phase 5), never
   committed.
 
-## Public benchmark (fetched on demand)
+## `scifact/` (fetched on demand, never committed)
 
-A fetch script for a BEIR SciFact subset lands with Phase 2 (`scripts/`);
-large corpora are never committed.
+BEIR SciFact: ~5.2k scientific abstracts + 300 test queries with
+document-level gold labels — the public retrieval benchmark. Fetch + convert
+(~3 MB download), then evaluate:
+
+```sh
+uv run python scripts/fetch_scifact.py
+uv run crucible ingest specs/scifact-local.yaml
+uv run crucible eval specs/scifact-local.yaml
+```
+
+Gold labels use the `gold_docs` kind (document ids) rather than fact
+substrings; only the retrieval suite applies since SciFact has no short
+answer strings.
