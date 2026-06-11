@@ -106,9 +106,11 @@ Import name is `crucible`; distribution name is `rag-crucible`.
 
 Strictly acyclic, enforced by review (and import-linter if it earns its keep):
 
-- `config` depends on nothing internal. Everything depends on `config`.
-- `providers`, `index`, `ingest` depend only on `config` (+ each other's data models
-  where shared models live in `config`/`pipeline.types`).
+- `config` and `types` (shared data contracts) depend on nothing internal. Everything
+  may depend on them.
+- `providers` and `index` depend only on `config`/`types`; `ingest` additionally
+  depends on `providers` and `index` — ingestion ends by building the index, and that
+  single build path is reused by the attack suites for poisoned indexes.
 - `pipeline` depends on `providers` + `index`.
 - `eval` and `attacks` depend on `pipeline` (they consume the system under test
   through its public interface only — eval code never reaches into provider

@@ -149,21 +149,23 @@ run through a bounded asyncio pool sized to provider rate limits.
 
 ```mermaid
 flowchart BT
-    config[crucible.config]
-    providers[crucible.providers] --> config
-    index[crucible.index] --> config
-    ingest[crucible.ingest] --> config & providers
-    pipeline[crucible.pipeline] --> providers & index & config
-    attacks[crucible.attacks] --> config & ingest
-    eval[crucible.eval] --> pipeline & attacks & config
-    runner[crucible.runner] --> eval & pipeline & ingest & config
-    api[api/] --> runner
-    cli[crucible CLI] --> runner
+    types[crucible.types + crucible.config]
+    providers[crucible.providers] --> types
+    index[crucible.index] --> types
+    ingest[crucible.ingest] --> types & providers & index
+    pipeline[crucible.pipeline] --> providers & index & types
+    attacks[crucible.attacks] --> types & ingest
+    eval[crucible.eval] --> pipeline & attacks & types
+    runner[crucible.runner] --> eval & pipeline & ingest & types
+    api[api/ Phase 3] --> runner
+    cli[crucible CLI] --> runner & pipeline & ingest & types
 ```
 
 Arrows mean "may import". Anything not drawn is forbidden — in particular, `eval` may
 not import `providers` directly (it consumes the pipeline's public interface only),
-and nothing imports from `api/`.
+and nothing imports from `api/`. `ingest` imports `index` because ingestion *ends* by
+building the index (`ingest/build.py`) — there is exactly one index-build path, and
+the attack suites reuse it for their poisoned indexes.
 
 ---
 
@@ -191,7 +193,8 @@ SuiteResult     {suite, metrics[], records[]}  → suite_results table
 RunResult       {run_id, spec, suite_results, timings}
 ```
 
-All of these are frozen pydantic models defined in `crucible/config` /
+All of these are frozen pydantic models: `Document`/`Chunk` live in `crucible/types.py`
+(the dependency root, importable by every module), pipeline-owned models in
 `crucible/pipeline/types.py`. Provider-facing results (`EmbedResult`, `RerankResult`,
 `GenerateResult`, `Usage`) are defined with the provider interface in
 [DESIGN.md §4](DESIGN.md#4-the-provider-abstraction-the-most-important-contract).
