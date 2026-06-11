@@ -1,0 +1,55 @@
+"""Embed / rerank / generate behind one provider-agnostic interface."""
+
+from crucible.providers.base import (
+    CHARS_PER_TOKEN,
+    Embedder,
+    EmbedInputType,
+    EmbedResult,
+    GenerateResult,
+    Generator,
+    GenParams,
+    Message,
+    Reranker,
+    RerankItem,
+    RerankResult,
+    Usage,
+    estimate_tokens,
+)
+from crucible.providers.errors import (
+    CapabilityNotSupportedError,
+    ProviderAuthError,
+    ProviderDependencyError,
+    ProviderError,
+    ProviderInvalidRequestError,
+    ProviderNotImplementedError,
+    ProviderRateLimitError,
+    ProviderTransientError,
+)
+from crucible.providers.registry import build_embedder, build_generator, build_reranker
+
+__all__ = [
+    "CHARS_PER_TOKEN",
+    "CapabilityNotSupportedError",
+    "EmbedInputType",
+    "EmbedResult",
+    "Embedder",
+    "GenParams",
+    "GenerateResult",
+    "Generator",
+    "Message",
+    "ProviderAuthError",
+    "ProviderDependencyError",
+    "ProviderError",
+    "ProviderInvalidRequestError",
+    "ProviderNotImplementedError",
+    "ProviderRateLimitError",
+    "ProviderTransientError",
+    "RerankItem",
+    "RerankResult",
+    "Reranker",
+    "Usage",
+    "build_embedder",
+    "build_generator",
+    "build_reranker",
+    "estimate_tokens",
+]
