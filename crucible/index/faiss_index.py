@@ -12,12 +12,19 @@ recall/complexity trade. A saved index is a directory:
 from __future__ import annotations
 
 import contextlib
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
-# torch (when installed) must be imported before faiss: on macOS both bundle
-# their own libomp, and letting faiss's copy initialize first segfaults the
-# process as soon as torch runs real compute (e.g. generation).
+# faiss-cpu and torch each bundle their own libomp on macOS; loading both in
+# one process aborts with "duplicate OpenMP runtime" depending on
+# initialization order. Two defensive measures, both required:
+#   1. allow the duplicate runtime (the documented risk — silently wrong
+#      parallel results — is neutralized by 2.);
+#   2. import torch first and cap faiss to a single thread: IndexFlat search
+#      is exact and tiny at evaluation-corpus scale, so OpenMP parallelism in
+#      faiss buys nothing here anyway.
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 with contextlib.suppress(ImportError):
     import torch  # noqa: F401
 
@@ -28,6 +35,8 @@ import numpy.typing as npt
 from crucible.config import ChunkerConfig, ProviderRef
 from crucible.index.base import IndexItem, SearchHit
 from crucible.types import Chunk, StrictModel
+
+faiss.omp_set_num_threads(1)
 
 
 class IndexMeta(StrictModel):

@@ -44,6 +44,10 @@ class RagPipeline:
     def config(self) -> PipelineConfig:
         return self._config
 
+    @property
+    def has_reranker(self) -> bool:
+        return self._reranker is not None
+
     async def retrieve(self, query: str, *, timer: StageTimer | None = None) -> list[Candidate]:
         """Embed the query and pull the top-k candidates from the index."""
         timer = timer or StageTimer()
@@ -53,6 +57,30 @@ class RagPipeline:
             hits = await self._index.search(embedded.vectors[0], self._config.retriever.k)
         return [
             Candidate(chunk=hit.chunk, score=hit.score, rank=rank) for rank, hit in enumerate(hits)
+        ]
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: list[Candidate],
+        *,
+        top_n: int | None = None,
+        timer: StageTimer | None = None,
+    ) -> list[Candidate]:
+        """Reorder candidates with the configured reranker. ``top_n=None``
+        keeps the full list — the retrieval suite uses that to measure rerank
+        lift at every cutoff, independent of the generation context size."""
+        if self._reranker is None:
+            raise ValueError("this pipeline has no reranker configured")
+        if not candidates:
+            return []
+        n = len(candidates) if top_n is None else min(top_n, len(candidates))
+        timer = timer or StageTimer()
+        with timer.stage("rerank"):
+            result = await self._reranker.rerank(query, [c.chunk.text for c in candidates], top_n=n)
+        return [
+            Candidate(chunk=candidates[item.index].chunk, score=item.score, rank=rank)
+            for rank, item in enumerate(result.ranking)
         ]
 
     async def build_context(
@@ -65,15 +93,7 @@ class RagPipeline:
         """Apply the (toggleable) rerank stage and cut to top_n."""
         top_n = self._config.reranker.top_n
         if self._config.reranker.enabled and self._reranker is not None and candidates:
-            timer = timer or StageTimer()
-            with timer.stage("rerank"):
-                result = await self._reranker.rerank(
-                    query, [c.chunk.text for c in candidates], top_n=top_n
-                )
-            reordered = [
-                Candidate(chunk=candidates[item.index].chunk, score=item.score, rank=rank)
-                for rank, item in enumerate(result.ranking)
-            ]
+            reordered = await self.rerank(query, candidates, top_n=top_n, timer=timer)
             return RankedContext(candidates=reordered, rerank_applied=True)
         return RankedContext(candidates=candidates[:top_n], rerank_applied=False)
 

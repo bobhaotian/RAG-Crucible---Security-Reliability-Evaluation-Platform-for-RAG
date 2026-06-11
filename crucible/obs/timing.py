@@ -28,3 +28,6 @@ class StageTimer:
 
     def total_ms(self) -> float:
         return sum(self._elapsed_ms.values())
+
+    def as_dict(self) -> dict[str, float]:
+        return dict(self._elapsed_ms)
