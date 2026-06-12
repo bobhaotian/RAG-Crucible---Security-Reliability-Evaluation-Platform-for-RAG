@@ -9,6 +9,7 @@ the per-metric delta; the report layer renders it explicitly.
 from __future__ import annotations
 
 from crucible.config import RetrievalSuiteConfig
+from crucible.eval.concurrent import bounded_gather
 from crucible.eval.metrics import (
     first_relevant_rank,
     mean,
@@ -30,41 +31,40 @@ async def run_retrieval_suite(
     qa_items: list[QAItem],
     config: RetrievalSuiteConfig,
     collector: TimingCollector,
+    *,
+    concurrency: int = 4,
 ) -> SuiteResult:
     rerank = config.rerank_lift and pipeline.has_reranker
-    ranks_initial: list[int | None] = []
-    ranks_reranked: list[int | None] = []
-    records: list[RetrievalRecord] = []
 
-    for item in qa_items:
+    async def evaluate_item(item: QAItem) -> RetrievalRecord:
         timer = StageTimer()
         candidates = await pipeline.retrieve(item.question, timer=timer)
         rank_initial = first_relevant_rank([is_relevant(c.chunk, item) for c in candidates])
-        ranks_initial.append(rank_initial)
 
         rank_reranked: int | None = None
         reranked_ids: tuple[str, ...] = ()
         if rerank:
             reranked = await pipeline.rerank(item.question, candidates, timer=timer)
             rank_reranked = first_relevant_rank([is_relevant(c.chunk, item) for c in reranked])
-            ranks_reranked.append(rank_reranked)
             reranked_ids = tuple(c.chunk.chunk_id for c in reranked)
         collector.add_all(timer.as_dict())
 
-        records.append(
-            RetrievalRecord(
-                qid=item.qid,
-                question=item.question,
-                first_hit_rank_initial=rank_initial,
-                first_hit_rank_reranked=rank_reranked,
-                retrieved_initial=tuple(c.chunk.chunk_id for c in candidates),
-                retrieved_reranked=reranked_ids,
-            )
+        return RetrievalRecord(
+            qid=item.qid,
+            question=item.question,
+            first_hit_rank_initial=rank_initial,
+            first_hit_rank_reranked=rank_reranked,
+            retrieved_initial=tuple(c.chunk.chunk_id for c in candidates),
+            retrieved_reranked=reranked_ids,
         )
 
-    metrics = _aggregate(ranks_initial, config, variant="rerank=off")
+    records = await bounded_gather([evaluate_item(item) for item in qa_items], concurrency)
+
+    metrics = _aggregate([r.first_hit_rank_initial for r in records], config, variant="rerank=off")
     if rerank:
-        metrics += _aggregate(ranks_reranked, config, variant="rerank=on")
+        metrics += _aggregate(
+            [r.first_hit_rank_reranked for r in records], config, variant="rerank=on"
+        )
     return SuiteResult(suite=SUITE, metrics=tuple(metrics), records=tuple(records))
 
 

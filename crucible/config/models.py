@@ -156,6 +156,10 @@ class SuitesConfig(StrictConfig):
 
     retrieval: RetrievalSuiteConfig | None = None
     faithfulness: FaithfulnessSuiteConfig | None = None
+    # Bounded parallelism for suite items. Default 1: the shipped local
+    # providers are CPU-bound, where concurrency only inflates per-call wall
+    # times. Raise it for I/O-bound hosted providers (cohere/openai).
+    concurrency: int = Field(default=1, ge=1)
 
 
 class RunSpec(StrictConfig):

@@ -18,6 +18,7 @@ from crucible.providers import (
     EmbedInputType,
     Generator,
     GenParams,
+    Message,
     Reranker,
 )
 
@@ -47,6 +48,16 @@ class RagPipeline:
     @property
     def has_reranker(self) -> bool:
         return self._reranker is not None
+
+    async def warmup(self, *, generator: bool = True) -> None:
+        """Load lazy providers outside any timed path, so first-call model
+        loads don't pollute latency stats (p95 >> p50 otherwise)."""
+        await self._embedder.embed(["warmup"], input_type=EmbedInputType.QUERY)
+        if self._reranker is not None:
+            await self._reranker.rerank("warmup", ["warmup"], top_n=1)
+        if generator:
+            messages = [Message(role="user", content="Reply with OK.")]
+            await self._generator.generate(messages, params=GenParams(max_tokens=1))
 
     async def retrieve(self, query: str, *, timer: StageTimer | None = None) -> list[Candidate]:
         """Embed the query and pull the top-k candidates from the index."""

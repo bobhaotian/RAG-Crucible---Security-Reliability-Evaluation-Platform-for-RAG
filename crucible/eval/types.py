@@ -62,6 +62,8 @@ EvalRecord = Annotated[RetrievalRecord | FaithfulnessRecord, Field(discriminator
 
 class SuiteResult(StrictModel):
     suite: str
+    status: Literal["succeeded", "failed"] = "succeeded"
+    error: str | None = None
     metrics: tuple[Metric, ...]
     records: tuple[EvalRecord, ...]
 

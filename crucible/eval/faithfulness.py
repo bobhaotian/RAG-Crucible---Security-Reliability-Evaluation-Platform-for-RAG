@@ -25,6 +25,7 @@ import random
 import re
 
 from crucible.config import FaithfulnessSuiteConfig
+from crucible.eval.concurrent import bounded_gather
 from crucible.eval.judge import EntailmentJudge
 from crucible.eval.metrics import mean
 from crucible.eval.qa import QAItem, answer_matches
@@ -66,18 +67,20 @@ async def run_faithfulness_suite(
     judge: EntailmentJudge,
     seed: int,
     collector: TimingCollector,
+    *,
+    concurrency: int = 4,
 ) -> SuiteResult:
     sample = qa_items
     if config.sample_size is not None and config.sample_size < len(qa_items):
         sample = random.Random(seed).sample(qa_items, config.sample_size)
         sample.sort(key=lambda item: item.qid)
 
-    records: list[FaithfulnessRecord] = []
-    for item in sample:
+    async def evaluate_item(item: QAItem) -> FaithfulnessRecord:
         answer = await pipeline.answer(item.question)
         collector.add_all(_timings_dict(answer))
-        records.append(await _judge_answer(item, answer, judge))
+        return await _judge_answer(item, answer, judge)
 
+    records = await bounded_gather([evaluate_item(item) for item in sample], concurrency)
     return SuiteResult(suite=SUITE, metrics=tuple(_aggregate(records)), records=tuple(records))
 
 
