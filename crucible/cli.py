@@ -21,8 +21,10 @@ from crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
 from crucible.eval.report import write_report
 from crucible.index import FaissIndex, IndexMeta
 from crucible.ingest import build_index
+from crucible.paths import default_db_path, index_dir_for
 from crucible.pipeline import Answer, build_pipeline
 from crucible.providers import ProviderError
+from crucible.runner import DuplicateRunError, ResultStore, worker_loop
 
 app = typer.Typer(
     name="crucible",
@@ -31,13 +33,14 @@ app = typer.Typer(
     add_completion=False,
 )
 
-ARTIFACTS_DIR = Path("artifacts")
-
 SpecPathArg = Annotated[Path, typer.Argument(help="Path to a RunSpec YAML file")]
+DbOption = Annotated[
+    Path | None, typer.Option("--db", help="Result-store path (default: $CRUCIBLE_DB)")
+]
 
 
-def index_dir_for(spec: RunSpec) -> Path:
-    return ARTIFACTS_DIR / "indexes" / spec.name
+def _store(db: Path | None) -> ResultStore:
+    return ResultStore(db if db is not None else default_db_path())
 
 
 def _load_spec_or_exit(spec_path: Path) -> RunSpec:
@@ -49,7 +52,7 @@ def _load_spec_or_exit(spec_path: Path) -> RunSpec:
 
 
 def _load_index_or_exit(spec: RunSpec) -> tuple[FaissIndex, IndexMeta]:
-    directory = index_dir_for(spec)
+    directory = index_dir_for(spec.name)
     try:
         index, meta = FaissIndex.load(directory)
     except (FileNotFoundError, ValueError) as exc:
@@ -72,7 +75,7 @@ def ingest(
 ) -> None:
     """Build (or rebuild) the vector index for a spec."""
     spec = _load_spec_or_exit(spec_path)
-    out_dir = index_dir_for(spec)
+    out_dir = index_dir_for(spec.name)
 
     if not force and (out_dir / "meta.json").is_file():
         meta = IndexMeta.model_validate_json((out_dir / "meta.json").read_text(encoding="utf-8"))
@@ -167,6 +170,62 @@ def eval_command(
         rendered = " · ".join(f"{m.name}={m.value:.3f}" for m in shown)
         typer.echo(f"{suite.suite}: {rendered}")
     typer.echo("wrote: " + ", ".join(str(p) for p in written))
+
+
+@app.command()
+def submit(
+    spec_path: SpecPathArg,
+    force: Annotated[bool, typer.Option("--force", help="Re-run an identical spec")] = False,
+    db: DbOption = None,
+) -> None:
+    """Enqueue an evaluation run for the worker (returns the run id)."""
+    spec = _load_spec_or_exit(spec_path)
+    if spec.suites is None:
+        typer.echo(f"error: spec {spec.name!r} configures no `suites:`", err=True)
+        raise typer.Exit(code=2)
+    try:
+        run_id = _store(db).submit_run(spec, force=force)
+    except DuplicateRunError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(run_id)
+
+
+@app.command()
+def worker(
+    db: DbOption = None,
+    once: Annotated[
+        bool, typer.Option("--once", help="Drain the queue and exit instead of polling")
+    ] = False,
+) -> None:
+    """Run the evaluation worker (claims queued runs and executes them)."""
+    store = _store(db)
+    typer.echo("worker started; polling for runs (ctrl-c to stop)" if not once else "draining…")
+    processed = asyncio.run(worker_loop(store, drain=once))
+    if once:
+        typer.echo(f"processed {processed} run(s)")
+
+
+@app.command()
+def runs(db: DbOption = None) -> None:
+    """List recent runs."""
+    for row in _store(db).list_runs(limit=20):
+        typer.echo(f"{row.id}  {row.status:<9}  {row.name}  ({row.created_at})")
+
+
+@app.command()
+def serve(
+    spec_path: Annotated[Path | None, typer.Option("--spec", help="Spec served by /query")] = None,
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port")] = 8000,
+    db: DbOption = None,
+) -> None:
+    """Start the API server (submit/poll/fetch runs + live /query)."""
+    import uvicorn
+
+    from api.main import create_app
+
+    uvicorn.run(create_app(db_path=db, serve_spec_path=spec_path), host=host, port=port)
 
 
 @app.command()

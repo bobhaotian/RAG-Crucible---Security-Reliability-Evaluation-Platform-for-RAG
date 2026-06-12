@@ -16,6 +16,7 @@ from crucible.index import FaissIndex, IndexItem, IndexMeta
 from crucible.ingest.chunkers import chunk_document
 from crucible.ingest.filters import FilterStats, apply_filters
 from crucible.ingest.loaders import load_corpus
+from crucible.paths import index_dir_for
 from crucible.providers import EmbedInputType, build_embedder
 from crucible.types import Chunk, StrictModel
 
@@ -83,3 +84,17 @@ async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
         dim=index.dim,
         duration_s=round(time.perf_counter() - started, 3),
     )
+
+
+async def load_or_build_index(spec: RunSpec) -> FaissIndex:
+    """Load the index at the conventional location for ``spec``; (re)build it
+    first when missing or built from a different ingest configuration. The
+    worker and API use this; the CLI keeps `crucible ingest` explicit."""
+    directory = index_dir_for(spec.name)
+    if (directory / "meta.json").is_file():
+        index, meta = FaissIndex.load(directory)
+        if meta.fingerprint == spec.ingest_fingerprint():
+            return index
+    await build_index(spec, directory)
+    index, _ = FaissIndex.load(directory)
+    return index
