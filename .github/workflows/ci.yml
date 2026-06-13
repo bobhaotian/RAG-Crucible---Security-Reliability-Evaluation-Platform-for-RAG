@@ -1,7 +1,6 @@
-# CI: lint → type-check → test on every push/PR.
+# CI: lint → type-check → test → build the Docker image, on every push/PR.
 # Tests run on the fake provider only — no model downloads, fully
-# deterministic. The Docker image build job is added in Phase 3 alongside the
-# Dockerfile.
+# deterministic.
 name: ci
 
 on:
@@ -38,3 +37,13 @@ jobs:
 
       - name: Test
         run: uv run pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t rag-crucible:ci .
+      - name: Smoke-test image
+        run: docker run --rm rag-crucible:ci uv run --no-sync crucible version

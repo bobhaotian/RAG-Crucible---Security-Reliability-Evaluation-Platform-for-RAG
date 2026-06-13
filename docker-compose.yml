@@ -1,0 +1,30 @@
+# API + worker sharing one SQLite store and index directory via a volume.
+# Defaults to the fake-provider spec so `docker compose up` answers /query and
+# completes submitted runs with zero downloads. To serve the local-model
+# pipeline instead, build with WITH_LOCAL=1 and set CRUCIBLE_SERVE_SPEC.
+services:
+  api:
+    build:
+      context: .
+      args:
+        WITH_LOCAL: "${WITH_LOCAL:-0}"
+    command:
+      ["uv", "run", "--no-sync", "crucible", "serve", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      CRUCIBLE_SERVE_SPEC: ${CRUCIBLE_SERVE_SPEC:-specs/smoke-fake.yaml}
+    ports:
+      - "8000:8000"
+    volumes:
+      - crucible-data:/data/artifacts
+
+  worker:
+    build:
+      context: .
+      args:
+        WITH_LOCAL: "${WITH_LOCAL:-0}"
+    command: ["uv", "run", "--no-sync", "crucible", "worker"]
+    volumes:
+      - crucible-data:/data/artifacts
+
+volumes:
+  crucible-data:

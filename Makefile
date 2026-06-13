@@ -5,7 +5,8 @@ UV ?= uv
 DEMO_SPEC ?= specs/demo.yaml
 FAKE_SPEC ?= specs/smoke-fake.yaml
 
-.PHONY: setup lint format typecheck test test-local corpus ingest demo demo-fake clean help
+.PHONY: setup lint format typecheck test test-local corpus ingest demo demo-fake \
+        serve worker compose-up clean help
 
 setup: ## install all deps (incl. local-model extra + dev tools)
 	$(UV) sync --extra local
@@ -44,6 +45,15 @@ demo-fake: ## same flow on the deterministic fake provider (instant, no download
 	$(UV) run crucible query $(FAKE_SPEC) "What is the battery life of the AT-300 inspection drone?"
 	$(UV) run crucible eval $(FAKE_SPEC) --out results/smoke-fake
 	@echo "" && cat results/smoke-fake/summary.md
+
+serve: ## start the API (live /query on the demo spec + run submission)
+	$(UV) run crucible serve --spec $(DEMO_SPEC)
+
+worker: ## start the evaluation worker (claims submitted runs)
+	$(UV) run crucible worker
+
+compose-up: ## API + worker in containers (fake provider, zero downloads)
+	docker compose up --build
 
 clean: ## remove caches and run artifacts
 	rm -rf artifacts .pytest_cache .mypy_cache .ruff_cache
