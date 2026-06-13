@@ -60,6 +60,7 @@ def _eval_spec(tiny_corpus: Path, tmp_path: Path, name: str = "eval-fake") -> Ru
             "suites": SuitesConfig(
                 retrieval=RetrievalSuiteConfig(k_values=(1, 3, 5), rerank_lift=True),
                 faithfulness=FaithfulnessSuiteConfig(judge=JudgeConfig(kind="heuristic")),
+                concurrency=3,  # exercise the parallel path; determinism test covers it
             ),
         }
     )
