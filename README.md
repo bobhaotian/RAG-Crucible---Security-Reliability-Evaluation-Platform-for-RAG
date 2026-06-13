@@ -15,11 +15,12 @@ flowchart LR
     P --> R[answer + citations<br/>+ per-stage timings]
     P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy soon]
     E --> F[results.json · summary.md · plots]
-    E -.-> D[API · result store · dashboard]
+    A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
+    E -.-> D[dashboard]
     style D stroke-dasharray: 5 5
 ```
 
-*(dashed = lands in Phases 3–6; solid = working today)*
+*(dashed = lands in Phase 6; solid = working today)*
 
 ## Why this exists
 
@@ -102,17 +103,17 @@ quality is a configuration choice (`suites.faithfulness.judge`), judgments are c
 numbers for free, and swapping in a stronger judge (e.g. Cohere Command in Phase 6)
 is one YAML line.
 
-### Latency per stage (seeded demo, CPU)
+### Latency per stage (seeded demo, CPU, providers warmed before timing)
 
 | stage | count | mean ms | p50 ms | p95 ms |
 |---|---|---|---|---|
-| embed_query | 76 | 119.7 | 9.4 | 347.3 |
-| retrieve (FAISS) | 76 | 0.2 | 0.1 | 0.3 |
-| rerank | 76 | 144.1 | 96.2 | 183.3 |
-| generate | 20 | 2301.7 | 1957.1 | 4263.5 |
+| embed_query | 76 | 30.0 | 10.6 | 43.7 |
+| retrieve (FAISS) | 76 | 0.1 | 0.1 | 0.2 |
+| rerank | 76 | 113.4 | 101.8 | 186.8 |
+| generate | 20 | 2081.2 | 1903.3 | 3214.5 |
 
-p95 ≫ p50 on embed reflects lazy model load on first call; the Phase 3 runner warms
-providers before timing.
+Generation dominates end-to-end latency by ~20× over the entire retrieval side —
+the standard RAG profile, now measured rather than assumed.
 
 ## Status
 
@@ -123,13 +124,37 @@ Built in phases, each ending with tests + CI green ([CHANGELOG](CHANGELOG.md)):
 | 0 | Design docs ([DESIGN.md](docs/DESIGN.md), [architecture.md](docs/architecture.md)) | ✅ |
 | 1 | Core spine: providers, ingestion, FAISS, RAG pipeline + citations, CLI | ✅ |
 | 2 | Retrieval + faithfulness metrics, rerank lift, `make demo` with plots | ✅ |
-| 3 | API + async runner + result store, docker-compose *(MVP cut line)* | — |
+| 3 | API + async runner + result store, docker-compose *(MVP cut line)* | ✅ |
 | 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | — |
 | 5 | Privacy suite: PII canaries, leakage measurement | — |
 | 6 | Dashboard, Cohere provider first-class, Qdrant adapter, polish | — |
 
 Attack-success (with/without defenses) and privacy-leakage tables land with
 Phases 4–5 — from real runs, never invented, like everything above.
+
+## Run it as a service
+
+The same evaluation runs as jobs behind an API — submit a spec, a worker claims it
+from a SQLite-backed queue, results land in the store; `/query` serves the configured
+pipeline live with citations and timings:
+
+```sh
+make serve    # API on :8000 (or: docker compose up --build — zero keys, zero downloads)
+make worker   # the evaluation worker, in a second terminal
+
+curl -s -X POST localhost:8000/query \
+  -H 'content-type: application/json' \
+  -d '{"question": "What does error code E-114 mean on the SR-2?"}'
+
+# submit an evaluation run (spec as JSON), poll it, fetch results
+curl -s -X POST localhost:8000/runs -H 'content-type: application/json' -d @spec.json
+curl -s localhost:8000/runs/<run_id>/results
+```
+
+Queue semantics worth knowing: identical specs dedupe by hash (409 with the existing
+run id; `?force=true` re-runs), a failing suite is recorded with its error while
+completed suites' results are persisted, and multiple workers can share the queue —
+claims are atomic.
 
 ## Architecture in one minute
 
@@ -159,7 +184,9 @@ trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 ## Repo layout
 
 ```
-crucible/      core library: config, types, providers, ingest, index, pipeline, eval, obs
+crucible/      core library: config, types, providers, ingest, index, pipeline,
+               eval, runner (store + queue + worker), obs
+api/           FastAPI shell over the runner — no evaluation logic lives here
 specs/         RunSpec YAMLs (demo, fake smoke, scifact)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)
 tests/         unit + integration; deterministic via the fake provider
@@ -185,7 +212,9 @@ make test-local            # tests that exercise the real local models
   not hidden.
 - Retrieval metrics use the single-gold formulation (first-relevant-rank); graded
   multi-relevance nDCG is future work.
-- First pipeline call pays model load (visible as p95 ≫ p50 on embed); the Phase 3
-  runner will warm providers before timing.
-- API/runner, security/privacy suites, and the dashboard are designed (see
-  DESIGN.md) but not yet built — see the phase table above.
+- Suite-item concurrency defaults to 1: the shipped local providers are CPU-bound,
+  where parallel calls only inflate per-call wall times. The bounded-concurrency
+  machinery exists and is tested; hosted providers (Phase 6) are what it's for.
+- The API has no authentication (out of scope for v1; documented in DESIGN.md).
+- Security/privacy suites and the dashboard are designed (see DESIGN.md) but not
+  yet built — see the phase table above.

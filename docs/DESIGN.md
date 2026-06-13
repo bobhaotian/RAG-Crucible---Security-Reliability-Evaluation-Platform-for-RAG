@@ -448,7 +448,7 @@ FastAPI, thin layer over the runner and store:
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /runs` | submit a RunSpec (YAML or JSON body) → `{run_id}` |
+| `POST /runs` | submit a RunSpec (JSON body; the CLI handles YAML files) → `{run_id}` |
 | `GET /runs` | list runs (status, name, created_at) |
 | `GET /runs/{id}` | status + metric summary |
 | `GET /runs/{id}/results` | full results: metrics, suite summaries, timings |
