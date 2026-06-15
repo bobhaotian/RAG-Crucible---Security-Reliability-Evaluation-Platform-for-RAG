@@ -42,3 +42,7 @@ suites:
   faithfulness:
     judge:
       kind: heuristic          # deterministic, model-free — same judge CI uses
+  security:
+    poisoning: {targets: 6}
+    injection: {targets: 6}
+    defenses: [none, prompt_isolation, injection_filter]

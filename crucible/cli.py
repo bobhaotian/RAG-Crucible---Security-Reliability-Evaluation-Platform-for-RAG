@@ -166,7 +166,10 @@ def eval_command(
 
     written = write_report(result, out_dir)
     for suite in result.suites:
-        shown = [m for m in suite.metrics if m.variant in ("", "rerank=on")][:4]
+        if suite.status == "failed":
+            typer.echo(f"{suite.suite}: FAILED ({suite.error})")
+            continue
+        shown = [m for m in suite.metrics if m.variant in ("", "rerank=on", "defense=none")][:4]
         rendered = " · ".join(f"{m.name}={m.value:.3f}" for m in shown)
         typer.echo(f"{suite.suite}: {rendered}")
     typer.echo("wrote: " + ", ".join(str(p) for p in written))

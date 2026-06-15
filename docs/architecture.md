@@ -149,23 +149,29 @@ run through a bounded asyncio pool sized to provider rate limits.
 
 ```mermaid
 flowchart BT
-    types[crucible.types + crucible.config]
+    types[crucible.types + crucible.config + crucible.qa]
     providers[crucible.providers] --> types
     index[crucible.index] --> types
     ingest[crucible.ingest] --> types & providers & index
     pipeline[crucible.pipeline] --> providers & index & types
-    attacks[crucible.attacks] --> types & ingest
-    eval[crucible.eval] --> pipeline & attacks & types
+    attacks[crucible.attacks] --> types
+    eval[crucible.eval] --> pipeline & attacks & ingest & types
     runner[crucible.runner] --> eval & pipeline & ingest & types
-    api[api/ Phase 3] --> runner
-    cli[crucible CLI] --> runner & pipeline & ingest & types
+    api[api/] --> runner & pipeline & ingest
+    cli[crucible CLI] --> runner & eval & pipeline & ingest & types
 ```
 
 Arrows mean "may import". Anything not drawn is forbidden — in particular, `eval` may
 not import `providers` directly (it consumes the pipeline's public interface only),
-and nothing imports from `api/`. `ingest` imports `index` because ingestion *ends* by
-building the index (`ingest/build.py`) — there is exactly one index-build path, and
-the attack suites reuse it for their poisoned indexes.
+and nothing imports from `api/`. Two edges are worth calling out:
+
+- `ingest` imports `index` because ingestion *ends* by building the index
+  (`ingest/build.py`); there is exactly one index-build path.
+- `eval` imports `ingest` because the security suite re-runs ingestion to build a
+  poisoned index (clean corpus + attack documents) through that same single path,
+  then queries it via `RagPipeline.with_index`. `crucible.qa` (labeled-QA data
+  contracts) sits in the dependency root so both `eval` and `attacks` use it without
+  a cycle.
 
 ---
 

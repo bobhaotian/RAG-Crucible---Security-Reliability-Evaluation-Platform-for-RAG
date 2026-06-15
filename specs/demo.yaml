@@ -48,3 +48,7 @@ suites:
       model: Qwen/Qwen2.5-0.5B-Instruct
       mode: auto               # committed cache hit = free + reproducible;
       cache: datasets/seeded/judgments.jsonl   # misses are judged + persisted
+  security:
+    poisoning: {targets: 10}   # 10 poison + 10 injection × 3 defenses on CPU
+    injection: {targets: 10}
+    defenses: [none, prompt_isolation, injection_filter]
