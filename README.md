@@ -14,6 +14,7 @@ flowchart LR
     C --> P
     P --> R[answer + citations<br/>+ per-stage timings]
     P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy soon]
+    K[attacks<br/>poison · injection] -.->|poisoned index| E
     E --> F[results.json · summary.md · plots]
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
     E -.-> D[dashboard]
@@ -103,6 +104,38 @@ quality is a configuration choice (`suites.faithfulness.judge`), judgments are c
 numbers for free, and swapping in a stronger judge (e.g. Cohere Command in Phase 6)
 is one YAML line.
 
+### Security — attack success with vs. without defenses
+
+The differentiator. Crafted documents are injected into the corpus and re-indexed;
+both attack types are reliably retrieved (poison and injection retrieval rate **1.00**),
+then every targeted query is answered under each defense condition. Seeded demo, 10
+poison + 10 injection targets, local Qwen2.5-0.5B generator:
+
+| attack success ↓ | no defense | prompt_isolation | injection_filter |
+|---|---|---|---|
+| knowledge corruption (poison) | 0.20 | 0.40 | 0.30 |
+| injection compliance | 0.10 | 0.40 | **0.00** |
+
+**Honest reading** — this is what the platform is *for*: defenses that work and
+defenses that don't, measured rather than assumed.
+
+- **`injection_filter` zeroes injection compliance** (0.10 → 0.00): a deterministic
+  classifier drops the injected chunk before it reaches the prompt, so the model never
+  sees the payload. Provider-independent.
+- **`prompt_isolation` backfires here** (0.10 → 0.40): a hardened "treat context as
+  untrusted data" system prompt only helps a model strong enough to follow it — the
+  0.5B local model is not, and the longer prompt makes it *worse*. Prompt-level
+  defenses need a capable generator; that's precisely what the Cohere Command provider
+  (Phase 6) is for, and the platform will quantify the difference.
+- **No defense fixes knowledge corruption** — a poisoned fact isn't syntactically
+  adversarial, so a pattern filter can't flag it and an isolation prompt can't
+  un-believe it. Defending answer integrity needs provenance/consistency checks
+  (future work). See [docs/threat-model.md](docs/threat-model.md).
+
+Reporting both directions — the undefended attack succeeding, and each defense measured
+on the identical poisoned index — is the point: it shows the system being both broken
+and hardened, with the evidence to tell which defense earns its place.
+
 ### Latency per stage (seeded demo, CPU, providers warmed before timing)
 
 | stage | count | mean ms | p50 ms | p95 ms |
@@ -125,12 +158,12 @@ Built in phases, each ending with tests + CI green ([CHANGELOG](CHANGELOG.md)):
 | 1 | Core spine: providers, ingestion, FAISS, RAG pipeline + citations, CLI | ✅ |
 | 2 | Retrieval + faithfulness metrics, rerank lift, `make demo` with plots | ✅ |
 | 3 | API + async runner + result store, docker-compose *(MVP cut line)* | ✅ |
-| 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | — |
+| 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | ✅ |
 | 5 | Privacy suite: PII canaries, leakage measurement | — |
 | 6 | Dashboard, Cohere provider first-class, Qdrant adapter, polish | — |
 
-Attack-success (with/without defenses) and privacy-leakage tables land with
-Phases 4–5 — from real runs, never invented, like everything above.
+Privacy-leakage tables land with Phase 5 — from real runs, never invented, like
+everything above.
 
 ## Run it as a service
 
@@ -184,14 +217,24 @@ trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 ## Repo layout
 
 ```
-crucible/      core library: config, types, providers, ingest, index, pipeline,
-               eval, runner (store + queue + worker), obs
+crucible/      core library: config, types, qa, providers, ingest, index, pipeline,
+               attacks, eval, runner (store + queue + worker), obs
 api/           FastAPI shell over the runner — no evaluation logic lives here
 specs/         RunSpec YAMLs (demo, fake smoke, scifact)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)
 tests/         unit + integration; deterministic via the fake provider
-docs/          DESIGN.md, architecture.md (threat-model.md lands with Phase 4)
+docs/          DESIGN.md, architecture.md, threat-model.md
 ```
+
+## Threat model
+
+The security suite models an adversary who can **contribute documents to the corpus**
+(poisoning, indirect injection); the privacy suite (Phase 5) adds a query-side
+adversary extracting sensitive content. Compromise of the serving infrastructure,
+model weights, or training is out of scope. Attack payloads are generic and
+educational — the framing throughout is defensive red-teaming of one's own pipeline.
+Full attacker capabilities, assets, success criteria, and the defense mapping:
+[docs/threat-model.md](docs/threat-model.md).
 
 ## Development
 
@@ -216,5 +259,10 @@ make test-local            # tests that exercise the real local models
   where parallel calls only inflate per-call wall times. The bounded-concurrency
   machinery exists and is tested; hosted providers (Phase 6) are what it's for.
 - The API has no authentication (out of scope for v1; documented in DESIGN.md).
-- Security/privacy suites and the dashboard are designed (see DESIGN.md) but not
-  yet built — see the phase table above.
+- Prompt-level defenses (`prompt_isolation`) are only as good as the generator that
+  follows them — on the 0.5B local model the hardened prompt backfires (see Security).
+  This is reported, not hidden; a capable generator is the Cohere provider's job.
+- No defense addresses knowledge corruption (poisoned facts aren't syntactically
+  adversarial); provenance/consistency defenses are future work.
+- The privacy suite and the dashboard are designed (see DESIGN.md) but not yet built —
+  see the phase table above.
