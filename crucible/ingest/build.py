@@ -11,14 +11,14 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-from crucible.config import RunSpec
+from crucible.config import ChunkerConfig, RunSpec
 from crucible.index import FaissIndex, IndexItem, IndexMeta
 from crucible.ingest.chunkers import chunk_document
 from crucible.ingest.filters import FilterStats, apply_filters
 from crucible.ingest.loaders import load_corpus
 from crucible.paths import index_dir_for
-from crucible.providers import EmbedInputType, build_embedder
-from crucible.types import Chunk, StrictModel
+from crucible.providers import Embedder, EmbedInputType, build_embedder
+from crucible.types import Chunk, Document, StrictModel
 
 _EMBED_BATCH_SIZE = 32
 
@@ -33,23 +33,19 @@ class IngestReport(StrictModel):
     duration_s: float
 
 
-async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
-    """Run the full ingestion pipeline for ``spec`` and save the index to
-    ``out_dir``. Deterministic given the same corpus and spec."""
-    if spec.index.store != "faiss":
-        raise NotImplementedError("the qdrant adapter ships in Phase 6; use store: faiss")
-
-    started = time.perf_counter()
-    docs, skipped = load_corpus(spec.corpus.documents)
-    kept, filter_stats = apply_filters(docs, spec.ingest.filters)
-
+def chunk_documents(docs: list[Document], chunker: ChunkerConfig) -> list[Chunk]:
     chunks: list[Chunk] = []
-    for doc in kept:
-        chunks.extend(chunk_document(doc, spec.ingest.chunker))
-    if not chunks:
-        raise ValueError(f"corpus at {spec.corpus.documents} produced no chunks")
+    for doc in docs:
+        chunks.extend(chunk_document(doc, chunker))
+    return chunks
 
-    embedder = build_embedder(spec.pipeline.embedder)
+
+async def embed_into_index(chunks: list[Chunk], embedder: Embedder) -> FaissIndex:
+    """Embed chunks (DOCUMENT input type) and load them into a fresh in-memory
+    FAISS index. The one embedding path shared by full ingestion and the
+    security suite's poisoned indexes — so there is no second path to drift."""
+    if not chunks:
+        raise ValueError("cannot build an index from zero chunks")
     index: FaissIndex | None = None
     for batch_start in range(0, len(chunks), _EMBED_BATCH_SIZE):
         batch = chunks[batch_start : batch_start + _EMBED_BATCH_SIZE]
@@ -63,6 +59,24 @@ async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
             ]
         )
     assert index is not None  # chunks is non-empty, so at least one batch ran
+    return index
+
+
+async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
+    """Run the full ingestion pipeline for ``spec`` and save the index to
+    ``out_dir``. Deterministic given the same corpus and spec."""
+    if spec.index.store != "faiss":
+        raise NotImplementedError("the qdrant adapter ships in Phase 6; use store: faiss")
+
+    started = time.perf_counter()
+    docs, skipped = load_corpus(spec.corpus.documents)
+    kept, filter_stats = apply_filters(docs, spec.ingest.filters)
+
+    chunks = chunk_documents(kept, spec.ingest.chunker)
+    if not chunks:
+        raise ValueError(f"corpus at {spec.corpus.documents} produced no chunks")
+
+    index = await embed_into_index(chunks, build_embedder(spec.pipeline.embedder))
 
     meta = IndexMeta(
         embedder=spec.pipeline.embedder,
