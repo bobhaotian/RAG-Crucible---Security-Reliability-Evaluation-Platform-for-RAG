@@ -36,6 +36,9 @@ def render_summary(result: EvalRunResult) -> str:
     faithfulness = _suite(result, "faithfulness")
     if faithfulness is not None:
         lines += _faithfulness_table(faithfulness)
+    security = _suite(result, "security")
+    if security is not None:
+        lines += _security_table(security)
     if result.stage_stats:
         lines += _latency_table(result)
     return "\n".join(lines) + "\n"
@@ -83,6 +86,38 @@ def _faithfulness_table(suite: SuiteResult) -> list[str]:
     return lines
 
 
+def _security_table(suite: SuiteResult) -> list[str]:
+    """Attack success with vs. without each defense — the headline numbers.
+    Rows are attack-success metrics; columns are defense conditions."""
+    success = {  # (metric_name, defense) -> value
+        (m.name, m.variant.removeprefix("defense=")): m.value
+        for m in suite.metrics
+        if m.variant.startswith("defense=")
+    }
+    defenses: list[str] = []
+    for _, defense in success:
+        if defense not in defenses:
+            defenses.append(defense)
+    success_names: list[str] = []
+    for name, _ in success:
+        if name not in success_names:
+            success_names.append(name)
+    retrieval = {m.name: m.value for m in suite.metrics if m.variant == ""}
+
+    lines = ["## Security", ""]
+    if retrieval:
+        lines += [f"- {name}: {value:.4f}" for name, value in retrieval.items()]
+        lines.append("")
+    if success_names:
+        header = "| attack-success rate | " + " | ".join(defenses) + " |"
+        lines += [header, "|" + "---|" * (len(defenses) + 1)]
+        for name in success_names:
+            cells = " | ".join(f"{success.get((name, d), 0.0):.4f}" for d in defenses)
+            lines.append(f"| {name} | {cells} |")
+        lines.append("")
+    return lines
+
+
 def _latency_table(result: EvalRunResult) -> list[str]:
     lines = [
         "## Latency per stage",
@@ -126,6 +161,38 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         fig.savefig(path, dpi=120)
         plt.close(fig)
         written.append(path)
+
+    security = _suite(result, "security")
+    if security is not None:
+        success = {
+            (m.name, m.variant.removeprefix("defense=")): m.value
+            for m in security.metrics
+            if m.variant.startswith("defense=")
+        }
+        names = list(dict.fromkeys(n for n, _ in success))
+        defenses = list(dict.fromkeys(d for _, d in success))
+        if names and defenses:
+            fig, ax = plt.subplots(figsize=(8, 4))
+            x = range(len(names))
+            width = 0.8 / len(defenses)
+            for j, defense in enumerate(defenses):
+                offset = (j - (len(defenses) - 1) / 2) * width
+                ax.bar(
+                    [i + offset for i in x],
+                    [success.get((n, defense), 0.0) for n in names],
+                    width=width,
+                    label=defense,
+                )
+            ax.set_xticks(list(x), names, rotation=20, ha="right")
+            ax.set_ylim(0, 1.05)
+            ax.set_ylabel("attack success rate")
+            ax.set_title(f"Attack success by defense — {result.name}")
+            ax.legend()
+            fig.tight_layout()
+            path = out_dir / "security.png"
+            fig.savefig(path, dpi=120)
+            plt.close(fig)
+            written.append(path)
 
     if result.stage_stats:
         stages = [s.stage for s in result.stage_stats]

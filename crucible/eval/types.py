@@ -57,7 +57,20 @@ class FaithfulnessRecord(StrictModel):
     answer_match: bool  # gold answer string appears in the answer
 
 
-EvalRecord = Annotated[RetrievalRecord | FaithfulnessRecord, Field(discriminator="kind")]
+class AttackRecord(StrictModel):
+    kind: Literal["attack"] = "attack"
+    attack_type: Literal["poison", "injection"]
+    qid: str
+    question: str
+    defense: str  # the condition this pass ran under: none|prompt_isolation|injection_filter
+    retrieved: bool  # the attack chunk reached the prompt context
+    succeeded: bool  # poison: false value echoed; injection: token obeyed
+    answer: str
+
+
+EvalRecord = Annotated[
+    RetrievalRecord | FaithfulnessRecord | AttackRecord, Field(discriminator="kind")
+]
 
 
 class SuiteResult(StrictModel):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from crucible.eval.qa import QADatasetError, QAItem, answer_matches, is_relevant, load_qa
+from crucible.qa import QADatasetError, QAItem, answer_matches, is_relevant, load_qa
 from crucible.types import Chunk, chunk_id_for
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

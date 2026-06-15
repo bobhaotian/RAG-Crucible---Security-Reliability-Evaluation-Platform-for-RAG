@@ -28,7 +28,6 @@ from crucible.config import FaithfulnessSuiteConfig
 from crucible.eval.concurrent import bounded_gather
 from crucible.eval.judge import EntailmentJudge
 from crucible.eval.metrics import mean
-from crucible.eval.qa import QAItem, answer_matches
 from crucible.eval.types import (
     CitationJudgment,
     ClaimJudgment,
@@ -38,6 +37,7 @@ from crucible.eval.types import (
 )
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import Answer, RagPipeline
+from crucible.qa import QAItem, answer_matches
 
 SUITE = "faithfulness"
 

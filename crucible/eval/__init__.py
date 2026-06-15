@@ -11,9 +11,9 @@ from crucible.eval.judge import (
     LlmJudge,
     build_judge,
 )
-from crucible.eval.qa import QADatasetError, QAItem, answer_matches, is_relevant, load_qa
 from crucible.eval.run import run_eval
 from crucible.eval.types import (
+    AttackRecord,
     CitationJudgment,
     ClaimJudgment,
     EvalRecord,
@@ -23,9 +23,11 @@ from crucible.eval.types import (
     RetrievalRecord,
     SuiteResult,
 )
+from crucible.qa import QADatasetError, QAItem, answer_matches, is_relevant, load_qa
 
 __all__ = [
     "JUDGE_TEMPLATE_VERSION",
+    "AttackRecord",
     "CitationJudgment",
     "ClaimJudgment",
     "EntailmentJudge",

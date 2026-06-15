@@ -17,11 +17,11 @@ from crucible.eval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
-from crucible.eval.qa import QAItem, is_relevant
 from crucible.eval.types import Metric, RetrievalRecord, SuiteResult
 from crucible.obs import StageTimer
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import RagPipeline
+from crucible.qa import QAItem, is_relevant
 
 SUITE = "retrieval"
 

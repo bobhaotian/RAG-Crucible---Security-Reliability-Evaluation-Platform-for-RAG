@@ -26,14 +26,15 @@ from typing import Any
 from crucible.config import RunSpec
 from crucible.eval.faithfulness import run_faithfulness_suite
 from crucible.eval.judge import build_judge
-from crucible.eval.qa import load_qa
 from crucible.eval.retrieval import run_retrieval_suite
+from crucible.eval.security import run_security_suite
 from crucible.eval.types import EvalRunResult, SuiteResult
 from crucible.index import VectorIndex
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import build_pipeline
+from crucible.qa import load_qa
 
-_SUITE_SEED_OFFSETS = {"retrieval": 1, "faithfulness": 2}
+_SUITE_SEED_OFFSETS = {"retrieval": 1, "faithfulness": 2, "security": 3}
 
 _SuiteCoro = Coroutine[Any, Any, SuiteResult]
 
@@ -73,6 +74,22 @@ async def run_eval(spec: RunSpec, index: VectorIndex, *, fail_fast: bool = True)
                     spec.suites.faithfulness,
                     judge,
                     spec.seed + _SUITE_SEED_OFFSETS["faithfulness"],
+                    collector,
+                    concurrency=concurrency,
+                ),
+                fail_fast=fail_fast,
+            )
+        )
+    if spec.suites.security is not None:
+        guarded.append(
+            _guard(
+                "security",
+                run_security_suite(
+                    pipeline,
+                    spec,
+                    qa_items,
+                    spec.suites.security,
+                    spec.seed + _SUITE_SEED_OFFSETS["security"],
                     collector,
                     concurrency=concurrency,
                 ),
