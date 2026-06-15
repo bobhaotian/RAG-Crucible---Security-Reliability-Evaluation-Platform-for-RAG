@@ -1,6 +1,7 @@
 """The configurable RAG pipeline: retrieve → rerank → generate."""
 
 from crucible.pipeline.citations import parse_citations
+from crucible.pipeline.defenses import filter_injected_chunks, looks_like_injection
 from crucible.pipeline.factory import build_pipeline
 from crucible.pipeline.prompts import TEMPLATE_VERSION, build_messages
 from crucible.pipeline.rag import RagPipeline
@@ -22,5 +23,7 @@ __all__ = [
     "StageTimings",
     "build_messages",
     "build_pipeline",
+    "filter_injected_chunks",
+    "looks_like_injection",
     "parse_citations",
 ]

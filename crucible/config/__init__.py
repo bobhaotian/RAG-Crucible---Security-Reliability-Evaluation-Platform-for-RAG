@@ -2,8 +2,10 @@
 
 from crucible.config.loader import SpecError, load_spec
 from crucible.config.models import (
+    AttackKindConfig,
     ChunkerConfig,
     CorpusConfig,
+    DefenseName,
     DefensesConfig,
     FaithfulnessSuiteConfig,
     FilterName,
@@ -18,12 +20,15 @@ from crucible.config.models import (
     RetrievalSuiteConfig,
     RetrieverConfig,
     RunSpec,
+    SecuritySuiteConfig,
     SuitesConfig,
 )
 
 __all__ = [
+    "AttackKindConfig",
     "ChunkerConfig",
     "CorpusConfig",
+    "DefenseName",
     "DefensesConfig",
     "FaithfulnessSuiteConfig",
     "FilterName",
@@ -38,6 +43,7 @@ __all__ = [
     "RetrievalSuiteConfig",
     "RetrieverConfig",
     "RunSpec",
+    "SecuritySuiteConfig",
     "SpecError",
     "SuitesConfig",
     "load_spec",

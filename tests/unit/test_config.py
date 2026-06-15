@@ -67,9 +67,10 @@ def test_overlap_must_be_smaller_than_size() -> None:
         ChunkerConfig(size_tokens=100, overlap_tokens=100)
 
 
-def test_defenses_rejected_until_phase_4() -> None:
-    with pytest.raises(ValidationError, match="Phase 4"):
-        DefensesConfig(prompt_isolation=True)
+def test_defenses_are_configurable() -> None:
+    assert DefensesConfig(prompt_isolation=True).prompt_isolation
+    assert DefensesConfig(injection_filter=True).injection_filter
+    assert not DefensesConfig().prompt_isolation
 
 
 def test_canonical_json_is_stable_and_hash_tracks_content() -> None:

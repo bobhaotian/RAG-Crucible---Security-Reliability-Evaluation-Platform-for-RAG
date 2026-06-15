@@ -78,17 +78,17 @@ class GeneratorConfig(ProviderRef):
 
 
 class DefensesConfig(StrictConfig):
-    """Security-suite defense toggles. Implementations land in Phase 4; until
-    then enabling one is a config error rather than a silent no-op."""
+    """Query-time defense toggles (DESIGN.md §5.5).
+
+    ``prompt_isolation`` swaps in a hardened system prompt that frames
+    retrieved text as untrusted data; ``injection_filter`` screens candidate
+    chunks for adversarial instructions before they reach the prompt. The
+    security suite flips these per-condition to report attack success with and
+    without each defense.
+    """
 
     prompt_isolation: bool = False
     injection_filter: bool = False
-
-    @model_validator(mode="after")
-    def _not_implemented_yet(self) -> DefensesConfig:
-        if self.prompt_isolation or self.injection_filter:
-            raise ValueError("defenses ship in Phase 4; toggles must be false for now")
-        return self
 
 
 class PipelineConfig(StrictConfig):
@@ -150,12 +150,36 @@ class FaithfulnessSuiteConfig(StrictConfig):
     sample_size: int | None = Field(default=None, ge=1)  # None = all QA items
 
 
+DefenseName = Literal["none", "prompt_isolation", "injection_filter"]
+
+
+class AttackKindConfig(StrictConfig):
+    enabled: bool = True
+    targets: int | None = Field(default=None, ge=1)  # # QA items to attack (None = all)
+
+
+class SecuritySuiteConfig(StrictConfig):
+    poisoning: AttackKindConfig = AttackKindConfig()
+    injection: AttackKindConfig = AttackKindConfig()
+    # Each named condition is evaluated and reported as its own variant, so
+    # attack success is shown with and without each defense.
+    defenses: tuple[DefenseName, ...] = ("none", "prompt_isolation", "injection_filter")
+
+    @model_validator(mode="after")
+    def _has_an_attack_and_defenses(self) -> SecuritySuiteConfig:
+        if not self.poisoning.enabled and not self.injection.enabled:
+            raise ValueError("security suite needs at least one of poisoning/injection enabled")
+        if not self.defenses:
+            raise ValueError("security.defenses must list at least one condition (e.g. none)")
+        return self
+
+
 class SuitesConfig(StrictConfig):
-    """Evaluation suite selection. Security and privacy suites are added here
-    in Phases 4-5."""
+    """Evaluation suite selection. The privacy suite is added here in Phase 5."""
 
     retrieval: RetrievalSuiteConfig | None = None
     faithfulness: FaithfulnessSuiteConfig | None = None
+    security: SecuritySuiteConfig | None = None
     # Bounded parallelism for suite items. Default 1: the shipped local
     # providers are CPU-bound, where concurrency only inflates per-call wall
     # times. Raise it for I/O-bound hosted providers (cohere/openai).
@@ -175,7 +199,8 @@ class RunSpec(StrictConfig):
     def _suites_consistent(self) -> RunSpec:
         if self.suites is None:
             return self
-        if (self.suites.retrieval or self.suites.faithfulness) and self.corpus.qa is None:
+        any_suite = self.suites.retrieval or self.suites.faithfulness or self.suites.security
+        if any_suite and self.corpus.qa is None:
             raise ValueError("evaluation suites require corpus.qa (the labeled QA file)")
         if self.suites.retrieval is not None:
             k_max = max(self.suites.retrieval.k_values)

@@ -7,10 +7,11 @@ they never reach into provider or index internals.
 
 from __future__ import annotations
 
-from crucible.config import PipelineConfig
+from crucible.config import DefensesConfig, PipelineConfig
 from crucible.index import VectorIndex
 from crucible.obs import StageTimer
 from crucible.pipeline.citations import parse_citations
+from crucible.pipeline.defenses import filter_injected_chunks
 from crucible.pipeline.prompts import build_messages
 from crucible.pipeline.types import Answer, Candidate, RankedContext, StageTimings
 from crucible.providers import (
@@ -48,6 +49,24 @@ class RagPipeline:
     @property
     def has_reranker(self) -> bool:
         return self._reranker is not None
+
+    @property
+    def embedder(self) -> Embedder:
+        """Exposed so the security suite can build a poisoned index with the
+        same (warmed) embedder instead of reloading the model."""
+        return self._embedder
+
+    def with_index(self, index: VectorIndex) -> RagPipeline:
+        """A sibling pipeline over a different index, sharing this pipeline's
+        providers. The security suite uses it to query a poisoned index without
+        reloading models or mutating the clean index."""
+        return RagPipeline(
+            config=self._config,
+            embedder=self._embedder,
+            index=index,
+            reranker=self._reranker,
+            generator=self._generator,
+        )
 
     async def warmup(self, *, generator: bool = True) -> None:
         """Load lazy providers outside any timed path, so first-call model
@@ -108,11 +127,17 @@ class RagPipeline:
             return RankedContext(candidates=reordered, rerank_applied=True)
         return RankedContext(candidates=candidates[:top_n], rerank_applied=False)
 
-    async def answer(self, query: str) -> Answer:
+    async def answer(self, query: str, *, defenses: DefensesConfig | None = None) -> Answer:
+        """Answer through the full pipeline. ``defenses`` overrides the spec's
+        configured defenses for this call — the security suite uses it to run
+        each defense condition over one warmed pipeline."""
+        active = defenses if defenses is not None else self._config.defenses
         timer = StageTimer()
         candidates = await self.retrieve(query, timer=timer)
         context = await self.build_context(query, candidates, timer=timer)
-        messages = build_messages(query, context)
+        if active.injection_filter:
+            context, _ = filter_injected_chunks(context)
+        messages = build_messages(query, context, isolation=active.prompt_isolation)
         params = GenParams(
             temperature=self._config.generator.temperature,
             max_tokens=self._config.generator.max_tokens,
