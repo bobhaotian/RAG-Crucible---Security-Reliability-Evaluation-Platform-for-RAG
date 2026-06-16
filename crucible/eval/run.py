@@ -26,15 +26,16 @@ from typing import Any
 from crucible.config import RunSpec
 from crucible.eval.faithfulness import run_faithfulness_suite
 from crucible.eval.judge import build_judge
+from crucible.eval.privacy import run_privacy_suite
 from crucible.eval.retrieval import run_retrieval_suite
 from crucible.eval.security import run_security_suite
 from crucible.eval.types import EvalRunResult, SuiteResult
 from crucible.index import VectorIndex
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import build_pipeline
-from crucible.qa import load_qa
+from crucible.qa import QAItem, load_qa
 
-_SUITE_SEED_OFFSETS = {"retrieval": 1, "faithfulness": 2, "security": 3}
+_SUITE_SEED_OFFSETS = {"retrieval": 1, "faithfulness": 2, "security": 3, "privacy": 4}
 
 _SuiteCoro = Coroutine[Any, Any, SuiteResult]
 
@@ -42,14 +43,20 @@ _SuiteCoro = Coroutine[Any, Any, SuiteResult]
 async def run_eval(spec: RunSpec, index: VectorIndex, *, fail_fast: bool = True) -> EvalRunResult:
     if spec.suites is None:
         raise ValueError(f"spec {spec.name!r} configures no evaluation suites")
-    assert spec.corpus.qa is not None  # enforced by RunSpec validation
-    qa_items = load_qa(spec.corpus.qa)
+    # Only the QA-scored suites need labels; privacy seeds its own canaries.
+    needs_qa = bool(spec.suites.retrieval or spec.suites.faithfulness or spec.suites.security)
+    qa_items: list[QAItem] = []
+    if needs_qa:
+        assert spec.corpus.qa is not None  # enforced by RunSpec validation
+        qa_items = load_qa(spec.corpus.qa)
     pipeline = build_pipeline(spec, index)
     collector = TimingCollector()
     concurrency = spec.suites.concurrency
     started_at = _now()
 
-    needs_generator = spec.suites.faithfulness is not None
+    # Every suite except retrieval generates answers, so warm the generator
+    # unless retrieval is the only suite selected.
+    needs_generator = bool(spec.suites.faithfulness or spec.suites.security or spec.suites.privacy)
     await pipeline.warmup(generator=needs_generator)
 
     guarded: list[_SuiteCoro] = []
@@ -90,6 +97,21 @@ async def run_eval(spec: RunSpec, index: VectorIndex, *, fail_fast: bool = True)
                     qa_items,
                     spec.suites.security,
                     spec.seed + _SUITE_SEED_OFFSETS["security"],
+                    collector,
+                    concurrency=concurrency,
+                ),
+                fail_fast=fail_fast,
+            )
+        )
+    if spec.suites.privacy is not None:
+        guarded.append(
+            _guard(
+                "privacy",
+                run_privacy_suite(
+                    pipeline,
+                    spec,
+                    spec.suites.privacy,
+                    spec.seed + _SUITE_SEED_OFFSETS["privacy"],
                     collector,
                     concurrency=concurrency,
                 ),

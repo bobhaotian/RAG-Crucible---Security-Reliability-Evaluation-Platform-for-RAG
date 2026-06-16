@@ -68,8 +68,20 @@ class AttackRecord(StrictModel):
     answer: str
 
 
+class PrivacyRecord(StrictModel):
+    kind: Literal["canary_probe"] = "canary_probe"
+    canary_id: str
+    canary_kind: str  # email | api_key | phone
+    probe_style: str  # direct | indirect | paraphrase
+    defense: str  # none | pii_filter
+    retrieved: bool  # the canary chunk reached the prompt context (retrieval exposure)
+    leaked: bool  # the secret appeared verbatim in the answer (generation leakage)
+    answer: str
+
+
 EvalRecord = Annotated[
-    RetrievalRecord | FaithfulnessRecord | AttackRecord, Field(discriminator="kind")
+    RetrievalRecord | FaithfulnessRecord | AttackRecord | PrivacyRecord,
+    Field(discriminator="kind"),
 ]
 
 

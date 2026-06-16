@@ -20,6 +20,7 @@ from crucible.eval.types import (
     EvalRunResult,
     FaithfulnessRecord,
     Metric,
+    PrivacyRecord,
     RetrievalRecord,
     SuiteResult,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "JudgeVerdict",
     "LlmJudge",
     "Metric",
+    "PrivacyRecord",
     "QADatasetError",
     "QAItem",
     "RetrievalRecord",
