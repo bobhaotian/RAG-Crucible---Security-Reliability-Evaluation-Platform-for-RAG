@@ -19,7 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ProviderName = Literal["local", "cohere", "openai", "fake"]
-FilterName = Literal["dedup", "language", "boilerplate"]
+FilterName = Literal["dedup", "language", "boilerplate", "pii"]
 
 
 class StrictConfig(BaseModel):
@@ -174,12 +174,33 @@ class SecuritySuiteConfig(StrictConfig):
         return self
 
 
+CanaryKind = Literal["email", "api_key", "phone"]
+ProbeStyle = Literal["direct", "indirect", "paraphrase"]
+PrivacyDefense = Literal["none", "pii_filter"]
+
+
+class PrivacySuiteConfig(StrictConfig):
+    canaries: int = Field(default=9, ge=1)  # synthetic PII secrets to seed
+    kinds: tuple[CanaryKind, ...] = ("email", "api_key", "phone")
+    probes: tuple[ProbeStyle, ...] = ("direct", "indirect", "paraphrase")
+    # Each condition builds its own canary-seeded index, so leakage is reported
+    # with and without ingestion-time PII redaction.
+    defenses: tuple[PrivacyDefense, ...] = ("none", "pii_filter")
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> PrivacySuiteConfig:
+        if not self.kinds or not self.probes or not self.defenses:
+            raise ValueError("privacy.kinds, .probes, and .defenses must each be non-empty")
+        return self
+
+
 class SuitesConfig(StrictConfig):
-    """Evaluation suite selection. The privacy suite is added here in Phase 5."""
+    """Evaluation suite selection."""
 
     retrieval: RetrievalSuiteConfig | None = None
     faithfulness: FaithfulnessSuiteConfig | None = None
     security: SecuritySuiteConfig | None = None
+    privacy: PrivacySuiteConfig | None = None
     # Bounded parallelism for suite items. Default 1: the shipped local
     # providers are CPU-bound, where concurrency only inflates per-call wall
     # times. Raise it for I/O-bound hosted providers (cohere/openai).
@@ -199,9 +220,11 @@ class RunSpec(StrictConfig):
     def _suites_consistent(self) -> RunSpec:
         if self.suites is None:
             return self
-        any_suite = self.suites.retrieval or self.suites.faithfulness or self.suites.security
-        if any_suite and self.corpus.qa is None:
-            raise ValueError("evaluation suites require corpus.qa (the labeled QA file)")
+        # The privacy suite seeds its own canaries and needs no QA labels; the
+        # other suites are scored against the labeled QA set.
+        qa_suite = self.suites.retrieval or self.suites.faithfulness or self.suites.security
+        if qa_suite and self.corpus.qa is None:
+            raise ValueError("the retrieval/faithfulness/security suites require corpus.qa")
         if self.suites.retrieval is not None:
             k_max = max(self.suites.retrieval.k_values)
             if k_max > self.pipeline.retriever.k:

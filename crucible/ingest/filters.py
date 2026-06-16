@@ -1,9 +1,10 @@
-"""Corpus filter chain: dedup, language, boilerplate.
+"""Corpus filter chain: dedup, language, boilerplate, pii.
 
 Each filter consumes and yields ``Document`` lists, so adding one never
 touches its neighbors; the chain reports per-filter drop counts that the CLI
-surfaces. The optional PII-detection filter arrives with the privacy module
-(Phase 5).
+surfaces. ``pii`` is opt-in (not in the default chain) — it redacts PII in
+place rather than dropping documents, and shares its redaction with the
+privacy suite's defense condition.
 
 The language filter is a deterministic stopword-ratio heuristic rather than a
 language-detection dependency: real detectors are seeded-random and heavier
@@ -17,6 +18,7 @@ import re
 from collections.abc import Callable, Sequence
 
 from crucible.config import FilterName
+from crucible.ingest.pii import redact_pii
 from crucible.types import Document, StrictModel
 
 
@@ -173,10 +175,21 @@ def _filter_boilerplate(docs: list[Document]) -> list[Document]:
     return kept
 
 
+def _filter_pii(docs: list[Document]) -> list[Document]:
+    """Redact PII (emails, key-shaped secrets, phone numbers) in place. Drops
+    nothing; the privacy suite's ``pii_filter`` defense shares this redaction."""
+    kept: list[Document] = []
+    for doc in docs:
+        redacted = redact_pii(doc.text)
+        kept.append(doc if redacted == doc.text else doc.model_copy(update={"text": redacted}))
+    return kept
+
+
 _FILTERS: dict[str, Callable[[list[Document]], list[Document]]] = {
     "dedup": _filter_dedup,
     "language": _filter_language,
     "boilerplate": _filter_boilerplate,
+    "pii": _filter_pii,
 }
 
 
