@@ -13,8 +13,8 @@ flowchart LR
     Q[query] --> P[RAG pipeline<br/>retrieve → rerank → generate]
     C --> P
     P --> R[answer + citations<br/>+ per-stage timings]
-    P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy soon]
-    K[attacks<br/>poison · injection] -.->|poisoned index| E
+    P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy]
+    K[attacks<br/>poison · injection · canaries] -.->|seeded index| E
     E --> F[results.json · summary.md · plots]
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
     E -.-> D[dashboard]
@@ -136,6 +136,29 @@ Reporting both directions — the undefended attack succeeding, and each defense
 on the identical poisoned index — is the point: it shows the system being both broken
 and hardened, with the evidence to tell which defense earns its place.
 
+### Privacy — canary extraction and the leakage decomposition
+
+The RAG-era analog of membership inference: synthetic PII canaries (fake emails,
+API keys, phone numbers in reserved test namespaces) are seeded into the corpus, and
+probe queries try to pull each secret back out. Leakage is split across the kill chain
+so you can see *where* a secret escapes. Seeded demo, 9 canaries × 3 probe styles,
+local Qwen2.5-0.5B:
+
+| condition | retrieval exposure | generation leakage |
+|---|---|---|
+| no defense | 1.00 | 0.185 |
+| `pii_filter` (ingestion redaction) | 1.00 | **0.00** |
+
+Leakage by probe style (no defense): paraphrase 0.33 · direct 0.22 · indirect 0.00.
+
+The decomposition is the point. **Retrieval exposure stays at 1.00 under redaction** —
+the host documents are still topically retrieved — while **generation leakage drops to
+zero**, because the secret is no longer in the index to emit. That's a clean, theory-
+matching defense (contrast the security section, where a prompt defense backfired):
+redacting at ingestion is the right layer for PII. The probe-style breakdown is itself
+a finding — paraphrased questions extract more than blunt direct ones, and indirect
+"tell me about X" probes extract nothing from this model.
+
 ### Latency per stage (seeded demo, CPU, providers warmed before timing)
 
 | stage | count | mean ms | p50 ms | p95 ms |
@@ -159,11 +182,12 @@ Built in phases, each ending with tests + CI green ([CHANGELOG](CHANGELOG.md)):
 | 2 | Retrieval + faithfulness metrics, rerank lift, `make demo` with plots | ✅ |
 | 3 | API + async runner + result store, docker-compose *(MVP cut line)* | ✅ |
 | 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | ✅ |
-| 5 | Privacy suite: PII canaries, leakage measurement | — |
+| 5 | Privacy suite: PII canaries, leakage measurement | ✅ |
 | 6 | Dashboard, Cohere provider first-class, Qdrant adapter, polish | — |
 
-Privacy-leakage tables land with Phase 5 — from real runs, never invented, like
-everything above.
+All four evaluation properties are now measured from real runs. Phase 6 adds the
+Cohere provider (and a stronger judge), a results dashboard, and a server-backed
+vector store.
 
 ## Run it as a service
 
@@ -217,8 +241,8 @@ trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 ## Repo layout
 
 ```
-crucible/      core library: config, types, qa, providers, ingest, index, pipeline,
-               attacks, eval, runner (store + queue + worker), obs
+crucible/      core library: config, types, qa, providers, ingest (+ pii), index,
+               pipeline, attacks (poison · injection · canaries), eval, runner, obs
 api/           FastAPI shell over the runner — no evaluation logic lives here
 specs/         RunSpec YAMLs (demo, fake smoke, scifact)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)
@@ -229,8 +253,8 @@ docs/          DESIGN.md, architecture.md, threat-model.md
 ## Threat model
 
 The security suite models an adversary who can **contribute documents to the corpus**
-(poisoning, indirect injection); the privacy suite (Phase 5) adds a query-side
-adversary extracting sensitive content. Compromise of the serving infrastructure,
+(poisoning, indirect injection); the privacy suite adds a query-side adversary
+extracting seeded PII canaries. Compromise of the serving infrastructure,
 model weights, or training is out of scope. Attack payloads are generic and
 educational — the framing throughout is defensive red-teaming of one's own pipeline.
 Full attacker capabilities, assets, success criteria, and the defense mapping:
@@ -264,5 +288,8 @@ make test-local            # tests that exercise the real local models
   This is reported, not hidden; a capable generator is the Cohere provider's job.
 - No defense addresses knowledge corruption (poisoned facts aren't syntactically
   adversarial); provenance/consistency defenses are future work.
-- The privacy suite and the dashboard are designed (see DESIGN.md) but not yet built —
-  see the phase table above.
+- Privacy leakage is measured with the deterministic `pii_filter` defense (an
+  ingestion-time redactor); the broader settings sweep (top_k, chunk size,
+  temperature) is done at the dashboard level by comparing runs, not in one run.
+- The dashboard and the Cohere/OpenAI providers are designed (see DESIGN.md) but not
+  yet built — see the phase table above.
