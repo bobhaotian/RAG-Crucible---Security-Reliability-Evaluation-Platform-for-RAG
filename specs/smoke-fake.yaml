@@ -46,3 +46,8 @@ suites:
     poisoning: {targets: 6}
     injection: {targets: 6}
     defenses: [none, prompt_isolation, injection_filter]
+  privacy:
+    canaries: 9
+    kinds: [email, api_key, phone]
+    probes: [direct, indirect, paraphrase]
+    defenses: [none, pii_filter]

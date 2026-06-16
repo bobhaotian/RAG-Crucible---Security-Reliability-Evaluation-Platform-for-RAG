@@ -39,6 +39,9 @@ def render_summary(result: EvalRunResult) -> str:
     security = _suite(result, "security")
     if security is not None:
         lines += _security_table(security)
+    privacy = _suite(result, "privacy")
+    if privacy is not None:
+        lines += _privacy_table(privacy)
     if result.stage_stats:
         lines += _latency_table(result)
     return "\n".join(lines) + "\n"
@@ -118,6 +121,39 @@ def _security_table(suite: SuiteResult) -> list[str]:
     return lines
 
 
+def _privacy_table(suite: SuiteResult) -> list[str]:
+    """Canary leakage with vs. without redaction, decomposed into retrieval
+    exposure and generation leakage, plus the per-probe-style breakdown."""
+    by_defense: dict[str, dict[str, float]] = {}
+    for m in suite.metrics:
+        if m.variant.startswith("defense="):
+            by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = m.value
+    by_probe = {
+        m.name.removeprefix("leakage_rate@"): m.value
+        for m in suite.metrics
+        if m.name.startswith("leakage_rate@")
+    }
+
+    lines = ["## Privacy", ""]
+    if by_defense:
+        lines += [
+            "| condition | retrieval exposure | generation leakage |",
+            "|---|---|---|",
+        ]
+        for defense, vals in by_defense.items():
+            exposure = vals.get("retrieval_exposure_rate", 0.0)
+            leakage = vals.get("leakage_rate", 0.0)
+            lines.append(f"| {defense} | {exposure:.4f} | {leakage:.4f} |")
+        lines.append("")
+    if by_probe:
+        lines.append(
+            "Leakage by probe style (no redaction): "
+            + " · ".join(f"{style} {value:.2f}" for style, value in by_probe.items())
+        )
+        lines.append("")
+    return lines
+
+
 def _latency_table(result: EvalRunResult) -> list[str]:
     lines = [
         "## Latency per stage",
@@ -190,6 +226,39 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             ax.legend()
             fig.tight_layout()
             path = out_dir / "security.png"
+            fig.savefig(path, dpi=120)
+            plt.close(fig)
+            written.append(path)
+
+    privacy = _suite(result, "privacy")
+    if privacy is not None:
+        by_defense: dict[str, dict[str, float]] = {}
+        for m in privacy.metrics:
+            if m.variant.startswith("defense="):
+                by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = m.value
+        if by_defense:
+            conditions = list(by_defense)
+            fig, ax = plt.subplots(figsize=(7, 4))
+            x = range(len(conditions))
+            ax.bar(
+                [i - 0.2 for i in x],
+                [by_defense[c].get("retrieval_exposure_rate", 0.0) for c in conditions],
+                width=0.4,
+                label="retrieval exposure",
+            )
+            ax.bar(
+                [i + 0.2 for i in x],
+                [by_defense[c].get("leakage_rate", 0.0) for c in conditions],
+                width=0.4,
+                label="generation leakage",
+            )
+            ax.set_xticks(list(x), conditions)
+            ax.set_ylim(0, 1.05)
+            ax.set_ylabel("rate")
+            ax.set_title(f"Canary leakage by condition — {result.name}")
+            ax.legend()
+            fig.tight_layout()
+            path = out_dir / "privacy.png"
             fig.savefig(path, dpi=120)
             plt.close(fig)
             written.append(path)

@@ -52,3 +52,8 @@ suites:
     poisoning: {targets: 10}   # 10 poison + 10 injection × 3 defenses on CPU
     injection: {targets: 10}
     defenses: [none, prompt_isolation, injection_filter]
+  privacy:
+    canaries: 9                # 9 canaries × 3 probes × 2 conditions on CPU
+    kinds: [email, api_key, phone]
+    probes: [direct, indirect, paraphrase]
+    defenses: [none, pii_filter]

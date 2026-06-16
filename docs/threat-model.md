@@ -70,6 +70,24 @@ deterministic substring check. We measure:
 - **injection compliance rate** — the answer contains the token, i.e. the model
   obeyed text from a retrieved document.
 
+### Privacy: canary extraction (Phase 5)
+
+The query-side adversary tries to pull sensitive corpus content back out
+through ordinary queries. We seed synthetic PII **canaries** — uniquely-formatted
+fake emails, API keys, and phone numbers in reserved test namespaces
+(`example-corp.test`, `sk-canary-…`, `+1-555-…`) — inside plausible host
+documents, then probe with direct, paraphrased, and indirect queries. This is
+the RAG-era analog of membership inference: rather than "was this record in the
+training set?", we ask "can a query reproduce this corpus secret verbatim?"
+Leakage is decomposed across the kill chain:
+
+- **retrieval exposure** — the canary chunk reaches the prompt context;
+- **generation leakage** — the answer reproduces the secret verbatim
+  (the actual leak; a deterministic substring check).
+
+A canary can be *exposed* without *leaking* — surfaced in context but not echoed
+by the model — which is exactly why the two are measured separately.
+
 ---
 
 ## Defenses evaluated
@@ -81,12 +99,16 @@ without** it (and the clean `none` baseline):
 |---|---|---|---|
 | `injection_filter` | retrieval → prompt | heuristic classifier drops candidate chunks that match injection patterns before they enter the prompt | indirect prompt injection |
 | `prompt_isolation` | prompt → generation | hardened system prompt that frames retrieved text as untrusted data and instructs the model to never obey instructions within it | indirect prompt injection |
+| `pii_filter` | ingestion | redacts PII-shaped strings (emails, keys, phone numbers) before indexing | canary extraction |
 
-Neither defense is expected to fix **knowledge corruption** — a poisoned fact
-is not syntactically adversarial, so a pattern filter won't flag it and an
-isolation prompt won't un-believe it. The suite reports that honestly: it is a
-finding, not a gap. Defending answer integrity needs provenance/consistency
-checks, noted as future work.
+Neither injection defense is expected to fix **knowledge corruption** — a
+poisoned fact is not syntactically adversarial, so a pattern filter won't flag
+it and an isolation prompt won't un-believe it. For privacy, `pii_filter` acts
+at ingestion: it leaves **retrieval exposure** largely intact (the topical host
+text survives) while driving **generation leakage** to zero — the secret is no
+longer in the index to emit. The suite reports all of this honestly: it is a
+finding, not a gap. Defending answer integrity (against poisoning) needs
+provenance/consistency checks, noted as future work.
 
 ## What "with and without defenses" demonstrates
 

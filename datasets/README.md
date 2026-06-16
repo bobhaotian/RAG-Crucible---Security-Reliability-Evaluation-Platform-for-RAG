@@ -21,9 +21,9 @@ Properties that the rest of the platform relies on:
   filter behavior is observable in the demo output.
 - **PDFs carry no gold facts** (extraction reflows lines); they exercise the
   loader path.
-- **All content is fictional.** No real personal data anywhere; privacy
-  canaries are seeded at eval time by the privacy suite (Phase 5), never
-  committed.
+- **All content is fictional.** No real personal data anywhere; the privacy
+  suite's PII canaries are synthetic, generated and seeded at eval time into an
+  ephemeral index, never committed.
 
 ## `scifact/` (fetched on demand, never committed)
 
