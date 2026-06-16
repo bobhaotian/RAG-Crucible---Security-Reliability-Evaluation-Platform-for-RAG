@@ -1,0 +1,45 @@
+# Same evaluation as demo.yaml but against a server-backed Qdrant store,
+# proving the VectorIndex abstraction. Start Qdrant first:
+#   docker compose --profile qdrant up -d qdrant
+#   crucible ingest specs/demo-qdrant.yaml   # vectors land in Qdrant
+#   crucible eval   specs/demo-qdrant.yaml
+# QDRANT_URL overrides the server location (default http://localhost:6333).
+name: demo-qdrant
+seed: 42
+
+corpus:
+  documents: datasets/seeded/corpus
+  qa: datasets/seeded/qa.jsonl
+
+ingest:
+  filters: [dedup, language, boilerplate]
+  chunker:
+    type: fixed
+    size_tokens: 350
+    overlap_tokens: 60
+
+index:
+  store: qdrant
+  metric: cosine
+
+pipeline:
+  embedder:
+    provider: local
+    model: sentence-transformers/all-MiniLM-L6-v2
+  retriever:
+    k: 20
+  reranker:
+    provider: local
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    enabled: true
+    top_n: 5
+  generator:
+    provider: local
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    temperature: 0.0
+    max_tokens: 256
+
+suites:
+  retrieval:
+    k_values: [1, 5, 10, 20]
+    rerank_lift: true

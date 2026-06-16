@@ -47,6 +47,8 @@ class IndexMeta(StrictModel):
     chunk_count: int
     fingerprint: str  # RunSpec.ingest_fingerprint() of the spec that built this
     built_at: str  # ISO-8601 UTC
+    store: str = "faiss"
+    collection: str | None = None  # qdrant collection name (None for faiss)
 
 
 class IndexStaleError(Exception):

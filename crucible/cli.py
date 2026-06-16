@@ -19,7 +19,7 @@ from crucible import __version__
 from crucible.config import RunSpec, SpecError, load_spec
 from crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
 from crucible.eval.report import write_report
-from crucible.index import FaissIndex, IndexMeta
+from crucible.index import IndexMeta, VectorIndex, open_saved_index
 from crucible.ingest import build_index
 from crucible.paths import default_db_path, index_dir_for
 from crucible.pipeline import Answer, build_pipeline
@@ -51,10 +51,10 @@ def _load_spec_or_exit(spec_path: Path) -> RunSpec:
         raise typer.Exit(code=2) from exc
 
 
-def _load_index_or_exit(spec: RunSpec) -> tuple[FaissIndex, IndexMeta]:
+def _load_index_or_exit(spec: RunSpec) -> tuple[VectorIndex, IndexMeta]:
     directory = index_dir_for(spec.name)
     try:
-        index, meta = FaissIndex.load(directory)
+        index, meta = open_saved_index(directory)
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
