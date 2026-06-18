@@ -1,0 +1,59 @@
+# Cohere as a first-class provider across every stage — embedder, reranker,
+# generator, and the faithfulness judge. Requires `uv sync --extra cohere` and
+# COHERE_API_KEY. Swapping any single stage back to `local` is a one-line edit:
+# the whole point of the provider abstraction.
+name: cohere-baseline
+seed: 42
+
+corpus:
+  documents: datasets/seeded/corpus
+  qa: datasets/seeded/qa.jsonl
+
+ingest:
+  filters: [dedup, language, boilerplate]
+  chunker:
+    type: fixed
+    size_tokens: 350
+    overlap_tokens: 60
+
+index:
+  store: faiss
+  metric: cosine
+
+pipeline:
+  embedder:
+    provider: cohere
+    model: embed-english-v3.0
+  retriever:
+    k: 20
+  reranker:
+    provider: cohere
+    model: rerank-v3.5
+    enabled: true
+    top_n: 5
+  generator:
+    provider: cohere
+    model: command-r-08-2024
+    temperature: 0.0
+    max_tokens: 256
+
+suites:
+  retrieval:
+    k_values: [1, 5, 10, 20]
+    rerank_lift: true
+  faithfulness:
+    judge:
+      kind: llm
+      provider: cohere
+      model: command-r-08-2024
+      mode: auto
+      cache: datasets/seeded/judgments-cohere.jsonl
+  security:
+    poisoning: {targets: 10}
+    injection: {targets: 10}
+    defenses: [none, prompt_isolation, injection_filter]
+  privacy:
+    canaries: 9
+    kinds: [email, api_key, phone]
+    probes: [direct, indirect, paraphrase]
+    defenses: [none, pii_filter]

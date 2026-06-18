@@ -6,7 +6,7 @@ DEMO_SPEC ?= specs/demo.yaml
 FAKE_SPEC ?= specs/smoke-fake.yaml
 
 .PHONY: setup lint format typecheck test test-local corpus ingest demo demo-fake \
-        serve worker compose-up clean help
+        serve worker compose-up dashboard clean help
 
 setup: ## install all deps (incl. local-model extra + dev tools)
 	$(UV) sync --extra local
@@ -52,8 +52,11 @@ serve: ## start the API (live /query on the demo spec + run submission)
 worker: ## start the evaluation worker (claims submitted runs)
 	$(UV) run crucible worker
 
-compose-up: ## API + worker in containers (fake provider, zero downloads)
+compose-up: ## API + worker + dashboard in containers (fake provider, zero downloads)
 	docker compose up --build
+
+dashboard: ## run the dashboard dev server (proxies to the API on :8000)
+	cd dashboard && npm install && npm run dev
 
 clean: ## remove caches and run artifacts
 	rm -rf artifacts .pytest_cache .mypy_cache .ruff_cache
