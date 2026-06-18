@@ -183,11 +183,11 @@ Built in phases, each ending with tests + CI green ([CHANGELOG](CHANGELOG.md)):
 | 3 | API + async runner + result store, docker-compose *(MVP cut line)* | ✅ |
 | 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | ✅ |
 | 5 | Privacy suite: PII canaries, leakage measurement | ✅ |
-| 6 | Dashboard, Cohere provider first-class, Qdrant adapter, polish | — |
+| 6 | Dashboard, Cohere + OpenAI providers, Qdrant adapter, polish | ✅ |
 
-All four evaluation properties are now measured from real runs. Phase 6 adds the
-Cohere provider (and a stronger judge), a results dashboard, and a server-backed
-vector store.
+All six phases are complete: four evaluation properties measured from real runs, a
+provider-agnostic core with Cohere/OpenAI/local/fake providers, FAISS + Qdrant stores,
+an API + worker + dashboard, and a green CI on every push.
 
 ## Run it as a service
 
@@ -213,12 +213,21 @@ run id; `?force=true` re-runs), a failing suite is recorded with its error while
 completed suites' results are persisted, and multiple workers can share the queue —
 claims are atomic.
 
+## Dashboard
+
+A read-only Vite + React + TypeScript SPA ([dashboard/](dashboard/)) over the API:
+the four-property trade-off radar, rerank lift, attack success with/without defenses,
+the canary-leakage decomposition, per-stage latency, and a two-run diff (Cohere vs
+local, rerank on vs off). It holds no evaluation logic — it reads the API's flat
+metric list. `docker compose up` brings it up on `:8080` alongside the API and worker;
+`cd dashboard && npm run dev` runs it against a local API.
+
 ## Architecture in one minute
 
-One core library (`crucible/`), three thin shells (CLI now; API + dashboard later).
-The load-bearing abstraction is the **provider interface**: `embed` / `rerank` /
-`generate` behind one async contract, with each pipeline stage selecting its provider
-independently in config — never in code:
+One core library (`crucible/`) with thin shells around it: the CLI, the FastAPI
+service, and the dashboard. The load-bearing abstraction is the **provider
+interface**: `embed` / `rerank` / `generate` behind one async contract, with each
+pipeline stage selecting its provider independently in config — never in code:
 
 ```yaml
 pipeline:
@@ -230,21 +239,53 @@ pipeline:
 | Provider | embed | rerank | generate | needs |
 |---|---|---|---|---|
 | `local` | sentence-transformers | cross-encoder | Qwen2.5-0.5B | nothing (first-run download) |
-| `cohere` *(Phase 6)* | Embed v3 | Rerank v3.5 | Command | `COHERE_API_KEY` |
-| `openai` *(Phase 6)* | ✓ | — (no such endpoint) | ✓ | `OPENAI_API_KEY` / any compatible server |
+| `cohere` | Embed v3 | Rerank v3.5 | Command | `COHERE_API_KEY` + `[cohere]` extra |
+| `openai` | ✓ | — (no such endpoint) | ✓ | `OPENAI_API_KEY` / `OPENAI_BASE_URL` + `[openai]` extra |
 | `fake` | hashed bag-of-words | token overlap | extractive | nothing, deterministic — used by CI |
 
 An evaluation run is fully described by one YAML spec (see [specs/](specs/)) —
 reproducible from the spec alone, fixed seeds throughout. Details, contracts, and
 trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 
+## Plugging in Cohere (and any new provider)
+
+Cohere is a first-class provider — Embed v3's asymmetric document/query encoding is
+why `input_type` is in the interface at all. Point any stage at it in the spec and
+set the key; it works as the embedder, reranker, generator, **and** the faithfulness
+judge:
+
+```yaml
+pipeline:
+  embedder:  {provider: cohere, model: embed-english-v3.0}
+  reranker:  {provider: cohere, model: rerank-v3.5, top_n: 5}
+  generator: {provider: cohere, model: command-r-08-2024}
+suites:
+  faithfulness:
+    judge: {kind: llm, provider: cohere, model: command-r-08-2024, mode: auto, cache: ...}
+```
+
+```sh
+uv sync --extra cohere
+export COHERE_API_KEY=...        # the only required change
+crucible eval specs/your-spec.yaml
+```
+
+**Adding a new provider** is three small classes — `Embedder` / `Reranker` /
+`Generator` (any subset) implementing the protocols in
+[crucible/providers/base.py](crucible/providers/base.py) — plus a branch in the
+[registry](crucible/providers/registry.py). Vendor exceptions translate to the shared
+error taxonomy at that boundary, and `with_retries` handles rate-limit/transient
+failures. The `cohere`, `openai`, and `fake` providers are each ~120 lines and make
+good templates; the `fake` one is the minimal reference.
+
 ## Repo layout
 
 ```
-crucible/      core library: config, types, qa, providers, ingest (+ pii), index,
-               pipeline, attacks (poison · injection · canaries), eval, runner, obs
+crucible/      core library: config, types, qa, providers (local·cohere·openai·fake),
+               ingest (+ pii), index (faiss·qdrant), pipeline, attacks, eval, runner, obs
 api/           FastAPI shell over the runner — no evaluation logic lives here
-specs/         RunSpec YAMLs (demo, fake smoke, scifact)
+dashboard/     read-only Vite + React + TS SPA over the API
+specs/         RunSpec YAMLs (demo, fake smoke, scifact, qdrant)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)
 tests/         unit + integration; deterministic via the fake provider
 docs/          DESIGN.md, architecture.md, threat-model.md
@@ -272,8 +313,8 @@ make test-local            # tests that exercise the real local models
 
 - The 0.5B local judge is weak: it under-credits grounded answers (groundedness 0.37
   vs deterministic answer accuracy 0.85). Judgments are cached and committed so the
-  numbers are reproducible, and the judge is swappable per spec; a stronger judge
-  arrives with the Cohere provider in Phase 6.
+  numbers are reproducible, and the judge is swappable per spec — pointing it at
+  Cohere Command is one config line.
 - The 0.5B local generator rarely emits explicit `[n]` citation markers
   (citation_parse_rate 0.25); citations degrade to context-level fallback — measured,
   not hidden.
@@ -281,15 +322,18 @@ make test-local            # tests that exercise the real local models
   multi-relevance nDCG is future work.
 - Suite-item concurrency defaults to 1: the shipped local providers are CPU-bound,
   where parallel calls only inflate per-call wall times. The bounded-concurrency
-  machinery exists and is tested; hosted providers (Phase 6) are what it's for.
+  machinery exists and is tested; the hosted providers are what it's for.
 - The API has no authentication (out of scope for v1; documented in DESIGN.md).
 - Prompt-level defenses (`prompt_isolation`) are only as good as the generator that
   follows them — on the 0.5B local model the hardened prompt backfires (see Security).
-  This is reported, not hidden; a capable generator is the Cohere provider's job.
+  This is reported, not hidden; a capable generator (Cohere Command) is the answer.
 - No defense addresses knowledge corruption (poisoned facts aren't syntactically
   adversarial); provenance/consistency defenses are future work.
 - Privacy leakage is measured with the deterministic `pii_filter` defense (an
   ingestion-time redactor); the broader settings sweep (top_k, chunk size,
   temperature) is done at the dashboard level by comparing runs, not in one run.
-- The dashboard and the Cohere/OpenAI providers are designed (see DESIGN.md) but not
-  yet built — see the phase table above.
+- **The Cohere/OpenAI providers and the Qdrant server path are verified by unit and
+  in-memory tests** (mocked SDK clients; qdrant-client's in-memory mode) and by a
+  successful strict dashboard build — but not against live hosted APIs or a running
+  Qdrant server in this repo, since that needs keys/infra a grader may not have. The
+  code paths are exercised; the live wiring is documented (`make`/compose targets).

@@ -631,16 +631,21 @@ diff view (e.g. Cohere vs local provider) driven entirely by the `metrics` table
 | 9 | Immutable per-condition indexes for attacks | mutating + restoring one index | reproducibility and parallelism beat disk savings at this corpus size |
 | 10 | Character-offset chunking with a tokenizer-estimate budget | tokenizer-exact chunking | no tokenizer download/network in the core path; offsets stay deterministic across providers; token counts are estimates where exactness isn't load-bearing |
 
-## 16. Deferred decisions (explicitly not decided now)
+## 16. Deferred decisions (still out of scope after v1)
 
-- Exact prompt templates for generation, judging, and defenses (Phase 2/4; versioned
-  as `template_version` so caches invalidate correctly).
-- Heuristics vs small-model for the `injection_filter` defense (Phase 4 spike).
+Resolved during the build: the `injection_filter` defense shipped as a heuristic
+classifier (Phase 4); prompt/judge/defense templates are versioned via
+`template_version`; Cohere/OpenAI providers, the Qdrant store, and the dashboard
+landed in Phase 6.
+
+Still deferred:
+
 - A semantic/embedding-based chunker as a third strategy (post-v1).
 - Streaming generation through the API (post-v1).
 - API authentication (out of scope for v1; documented).
 - Embedding cache for re-runs (optimization; only if demo latency demands it).
 - Postgres/multi-host runner upgrade (documented swap paths, not built).
+- A graded multi-relevance nDCG (current metrics use the single-gold formulation).
 - Whether `import-linter` enforcement of §2's dependency rules earns its dependency.
 
 ---
