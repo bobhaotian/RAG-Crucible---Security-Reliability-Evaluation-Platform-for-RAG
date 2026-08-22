@@ -151,7 +151,7 @@ class ResultStore:
             row = conn.execute(
                 "UPDATE runs SET status = 'running', claimed_by = ?, started_at = ? "
                 "WHERE id = (SELECT id FROM runs WHERE status = 'pending' "
-                "            ORDER BY created_at, id LIMIT 1) "
+                "            ORDER BY created_at, rowid LIMIT 1) "
                 "RETURNING id, name, spec_json",
                 (worker_id, _now()),
             ).fetchone()

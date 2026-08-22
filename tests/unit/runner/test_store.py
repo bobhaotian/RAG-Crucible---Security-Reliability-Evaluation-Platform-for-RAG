@@ -6,12 +6,13 @@ from pathlib import Path
 
 import pytest
 
+import crucible.runner.store as store_module
 from crucible.config import RunSpec
 from crucible.eval.types import EvalRunResult, Metric, RetrievalRecord, SuiteResult
 from crucible.runner import DuplicateRunError, ResultStore, RunNotFoundError
 from crucible.runner.ids import new_run_id
 
-from ..conftest import make_fake_spec
+from ...conftest import make_fake_spec
 
 
 @pytest.fixture
@@ -80,7 +81,18 @@ def test_duplicate_spec_requires_force(store: ResultStore, tmp_path: Path) -> No
     assert store.submit_run(spec)
 
 
-def test_claim_is_fifo(store: ResultStore, tmp_path: Path) -> None:
+def test_claim_is_fifo(
+    store: ResultStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = iter(
+        [
+            "ZZZZZZZZZZZZZZZZZZZZZZZZZZ",  # first insertion sorts after the second ID
+            "00000000000000000000000000",
+        ]
+    )
+    monkeypatch.setattr(store_module, "new_run_id", lambda: next(ids))
+    monkeypatch.setattr(store_module, "_now", lambda: "2026-08-22T12:00:00+00:00")
+
     first = store.submit_run(_spec(tmp_path, name="run-a"))
     second = store.submit_run(_spec(tmp_path, name="run-b"))
     claimed_first = store.claim_next("w")
