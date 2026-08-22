@@ -11,12 +11,22 @@ def test_aggregate_separates_retrieval_from_defense_success() -> None:
     config = SecuritySuiteConfig(defenses=("none", "injection_filter"))
     records = [
         AttackRecord(
-            attack_type="injection", qid="q1", question="question", defense="none",
-            retrieved=True, succeeded=True, answer="obeyed",
+            attack_type="injection",
+            qid="q1",
+            question="question",
+            defense="none",
+            retrieved=True,
+            succeeded=True,
+            answer="obeyed",
         ),
         AttackRecord(
-            attack_type="injection", qid="q1", question="question",
-            defense="injection_filter", retrieved=False, succeeded=False, answer="blocked",
+            attack_type="injection",
+            qid="q1",
+            question="question",
+            defense="injection_filter",
+            retrieved=False,
+            succeeded=False,
+            answer="blocked",
         ),
     ]
     metrics = {(m.name, m.variant): m.value for m in _aggregate(records, config)}

@@ -16,7 +16,9 @@ def test_extract_claims_strips_markers_drops_fragments_and_caps_results() -> Non
 def test_aggregate_uses_the_intended_denominators() -> None:
     records = [
         FaithfulnessRecord(
-            qid="q1", question="one", answer="answer",
+            qid="q1",
+            question="one",
+            answer="answer",
             claims=(
                 ClaimJudgment(claim="supported", supported=True, parse_ok=True, cached=False),
                 ClaimJudgment(claim="unsupported", supported=False, parse_ok=True, cached=False),
@@ -26,8 +28,13 @@ def test_aggregate_uses_the_intended_denominators() -> None:
             answer_match=True,
         ),
         FaithfulnessRecord(
-            qid="q2", question="two", answer="refusal", claims=(),
-            citations_parsed=False, citations=(), answer_match=False,
+            qid="q2",
+            question="two",
+            answer="refusal",
+            claims=(),
+            citations_parsed=False,
+            citations=(),
+            answer_match=False,
         ),
     ]
     metrics = {(m.name, m.variant): m.value for m in _aggregate(records)}
@@ -41,8 +48,13 @@ def test_aggregate_uses_the_intended_denominators() -> None:
 
 def test_aggregate_omits_precision_without_citations() -> None:
     record = FaithfulnessRecord(
-        qid="q1", question="one", answer="answer", claims=(),
-        citations_parsed=False, citations=(), answer_match=False,
+        qid="q1",
+        question="one",
+        answer="answer",
+        claims=(),
+        citations_parsed=False,
+        citations=(),
+        answer_match=False,
     )
 
     assert "citation_precision" not in {metric.name for metric in _aggregate([record])}

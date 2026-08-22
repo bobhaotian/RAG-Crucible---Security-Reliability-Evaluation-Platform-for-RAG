@@ -81,9 +81,7 @@ def test_duplicate_spec_requires_force(store: ResultStore, tmp_path: Path) -> No
     assert store.submit_run(spec)
 
 
-def test_claim_is_fifo(
-    store: ResultStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_claim_is_fifo(store: ResultStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ids = iter(
         [
             "ZZZZZZZZZZZZZZZZZZZZZZZZZZ",  # first insertion sorts after the second ID

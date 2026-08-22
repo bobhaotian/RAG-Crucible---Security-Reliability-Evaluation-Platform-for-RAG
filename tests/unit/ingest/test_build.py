@@ -38,9 +38,7 @@ class RecordingEmbedder:
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], EmbedInputType]] = []
 
-    async def embed(
-        self, texts: Sequence[str], *, input_type: EmbedInputType
-    ) -> EmbedResult:
+    async def embed(self, texts: Sequence[str], *, input_type: EmbedInputType) -> EmbedResult:
         self.calls.append((list(texts), input_type))
         return EmbedResult(
             vectors=[[float(i + 1), 1.0] for i in range(len(texts))],

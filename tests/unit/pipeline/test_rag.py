@@ -31,9 +31,7 @@ def _config(*, rerank_enabled: bool = True, injection_filter: bool = False) -> P
     return PipelineConfig(
         embedder=ProviderRef(provider="fake", model="embed"),
         retriever=RetrieverConfig(k=4),
-        reranker=RerankerConfig(
-            provider="fake", model="rerank", enabled=rerank_enabled, top_n=2
-        ),
+        reranker=RerankerConfig(provider="fake", model="rerank", enabled=rerank_enabled, top_n=2),
         generator=GeneratorConfig(provider="fake", model="generate"),
         defenses=DefensesConfig(injection_filter=injection_filter),
     )
@@ -56,9 +54,7 @@ class StubEmbedder:
     def __init__(self) -> None:
         self.calls: list[tuple[list[str], EmbedInputType]] = []
 
-    async def embed(
-        self, texts: Sequence[str], *, input_type: EmbedInputType
-    ) -> EmbedResult:
+    async def embed(self, texts: Sequence[str], *, input_type: EmbedInputType) -> EmbedResult:
         self.calls.append((list(texts), input_type))
         return EmbedResult(
             vectors=[[1.0, 0.0] for _ in texts],
@@ -83,8 +79,7 @@ class StubIndex:
     async def search(self, vector: Sequence[float], k: int) -> list[SearchHit]:
         self.search_calls.append((list(vector), k))
         return [
-            SearchHit(chunk=chunk, score=1.0 - rank / 10)
-            for rank, chunk in enumerate(self.chunks)
+            SearchHit(chunk=chunk, score=1.0 - rank / 10) for rank, chunk in enumerate(self.chunks)
         ]
 
     async def count(self) -> int:
@@ -95,9 +90,7 @@ class StubReranker:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[str], int]] = []
 
-    async def rerank(
-        self, query: str, documents: Sequence[str], *, top_n: int
-    ) -> RerankResult:
+    async def rerank(self, query: str, documents: Sequence[str], *, top_n: int) -> RerankResult:
         self.calls.append((query, list(documents), top_n))
         ranking = [RerankItem(index=i, score=float(top_n - i)) for i in reversed(range(top_n))]
         return RerankResult(ranking=ranking, model="stub", usage=Usage())
@@ -108,9 +101,7 @@ class StubGenerator:
         self.text = text
         self.calls: list[tuple[list[Message], GenParams]] = []
 
-    async def generate(
-        self, messages: Sequence[Message], *, params: GenParams
-    ) -> GenerateResult:
+    async def generate(self, messages: Sequence[Message], *, params: GenParams) -> GenerateResult:
         self.calls.append((list(messages), params))
         return GenerateResult(
             text=self.text,

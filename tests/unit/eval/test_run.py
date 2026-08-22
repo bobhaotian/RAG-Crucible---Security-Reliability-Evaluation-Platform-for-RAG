@@ -48,7 +48,13 @@ async def test_run_eval_selects_privacy_suite_seed_and_generator_warmup(
             warmups.append(generator)
 
     async def privacy_suite(
-        pipeline, spec_arg, config, seed, collector, *, concurrency  # type: ignore[no-untyped-def]
+        pipeline,
+        spec_arg,
+        config,
+        seed,
+        collector,
+        *,
+        concurrency,  # type: ignore[no-untyped-def]
     ) -> SuiteResult:
         received_seeds.append(seed)
         return SuiteResult(suite="privacy", metrics=(), records=())
