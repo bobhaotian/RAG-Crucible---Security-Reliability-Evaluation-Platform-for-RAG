@@ -15,7 +15,6 @@ dist/
 
 # run artifacts (indexes, results, plots) — reproducible from specs
 artifacts/
-results/
 
 # fetched public benchmarks — regenerate with scripts/fetch_scifact.py
 datasets/scifact/
