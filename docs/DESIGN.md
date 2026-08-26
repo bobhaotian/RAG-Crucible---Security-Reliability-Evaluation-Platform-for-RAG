@@ -437,6 +437,14 @@ Inside the worker:
 - Suite-level failure isolation: one suite failing marks that `suite_result` failed
   and the run `failed`, but completed suites' results are persisted — partial results
   are never thrown away.
+- Worker persistence is dual-purpose: normalized metrics/records go to SQLite for the
+  API and dashboard, and the same `EvalRunResult` is rendered through the CLI's report
+  writer to `results/<spec-name>/<run-id>/` for GitHub or sharing. The run id makes
+  forced reruns collision-free; `CRUCIBLE_RESULTS_DIR` overrides the report root.
+- `crucible submit` is synchronous by default: it atomically claims the run it just
+  submitted, acts as an inline worker, and waits for the terminal status. It never
+  drains unrelated queued jobs. `--queue-only` retains enqueue-and-return behavior for
+  deployments with a background worker; HTTP `POST /runs` remains asynchronous.
 - Run lifecycle: `pending → running → succeeded | failed | cancelled`. Idempotent
   re-submission: same `spec_hash` warns and requires `--force` to re-run.
 

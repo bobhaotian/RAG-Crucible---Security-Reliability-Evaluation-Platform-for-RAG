@@ -159,6 +159,25 @@ class ResultStore:
             return None
         return ClaimedRun(id=row["id"], name=row["name"], spec_json=row["spec_json"])
 
+    def claim_run(self, run_id: str, worker_id: str) -> ClaimedRun | None:
+        """Atomically claim one specific pending run.
+
+        The synchronous CLI submission path uses this so it executes the run
+        it just created without draining older jobs from the shared queue. A
+        concurrent background worker may win the claim; in that case this
+        returns ``None`` and the CLI waits for that worker to finish.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "UPDATE runs SET status = 'running', claimed_by = ?, started_at = ? "
+                "WHERE id = ? AND status = 'pending' "
+                "RETURNING id, name, spec_json",
+                (worker_id, _now(), run_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ClaimedRun(id=row["id"], name=row["name"], spec_json=row["spec_json"])
+
     def mark_succeeded(self, run_id: str) -> None:
         self._finish(run_id, "succeeded", None)
 

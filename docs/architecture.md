@@ -37,6 +37,7 @@ flowchart LR
     DASH -->|HTTP| API
     API -->|enqueue / read| DB
     API -->|/query| PIPE
+    CLI -->|submit + claim by id| WORKER
     WORKER -->|claim jobs| DB
     WORKER --> EVAL
     EVAL --> ATTACKS
@@ -46,7 +47,8 @@ flowchart LR
     PIPE --> IDX
     INGEST --> IDX
     IDX --> VS
-    WORKER -->|persist results| DB
+    WORKER -->|persist queryable results| DB
+    WORKER -->|render portable report| REPORTS[results/spec-name/run-id<br/>JSON · Markdown · plots]
 ```
 
 The CLI, API, and worker are thin shells over one core library. The dashboard is a
@@ -133,10 +135,11 @@ stateDiagram-v2
 flowchart TB
     SPEC[RunSpec YAML] -->|parse + validate| RS[RunSpec pydantic]
     RS -->|canonical JSON + hash| DB[(runs table)]
-    DB -->|claim| W[Worker]
+    DB -->|claim| W[Background or inline worker]
     W --> S1[retrieval suite] & S2[faithfulness suite] & S3[security suite] & S4[privacy suite]
     S1 & S2 & S3 & S4 -->|Metric + EvalRecord| AGG[Aggregate + persist]
     AGG --> DB2[(metrics · records · suite_results · stage_timings)]
+    AGG --> REPORT[results/spec-name/run-id<br/>results.json · summary.md · plots]
     DB2 --> APIQ[GET /runs/:id/results] --> DASHV[Dashboard]
 ```
 

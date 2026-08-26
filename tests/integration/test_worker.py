@@ -1,4 +1,4 @@
-"""Worker end-to-end: claim → build index → evaluate → persist, plus the
+"""Worker end-to-end: claim → build index → evaluate → persist + report, plus the
 failure paths (broken corpus, partial suite failure)."""
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ def store(tmp_path: Path) -> ResultStore:
 @pytest.fixture(autouse=True)
 def _isolated_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
 
 
 async def test_worker_executes_submitted_run(
@@ -41,6 +42,20 @@ async def test_worker_executes_submitted_run(
     assert any(m.name == "recall@5" and m.variant == "rerank=on" for m in results.metrics)
     assert results.stage_stats  # warm-up happened, timings collected
     assert len(store.get_records(run_id, suite="retrieval")) == len(TINY_QA)
+
+    report_dir = tmp_path / "results" / spec.name / run_id
+    assert {path.name for path in report_dir.iterdir()} == {
+        "latency.png",
+        "results.json",
+        "retrieval.png",
+        "summary.md",
+    }
+    portable = json.loads((report_dir / "results.json").read_text(encoding="utf-8"))
+    assert portable["spec_hash"] == spec.spec_hash()
+    assert {suite["suite"] for suite in portable["suites"]} == {
+        "retrieval",
+        "faithfulness",
+    }
 
 
 async def test_worker_marks_broken_run_failed_and_survives(
@@ -92,3 +107,9 @@ async def test_partial_suite_failure_keeps_completed_results(
     assert by_suite["retrieval"].status == "succeeded"
     assert by_suite["faithfulness"].status == "failed"
     assert any(m.suite == "retrieval" for m in results.metrics)  # evidence survived
+
+    # Partial evidence is portable as well as queryable in SQLite.
+    report_dir = tmp_path / "results" / spec.name / run_id
+    portable = json.loads((report_dir / "results.json").read_text(encoding="utf-8"))
+    statuses = {suite["suite"]: suite["status"] for suite in portable["suites"]}
+    assert statuses == {"retrieval": "succeeded", "faithfulness": "failed"}

@@ -15,13 +15,11 @@ flowchart LR
     P --> R[answer + citations<br/>+ per-stage timings]
     P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy]
     K[attacks<br/>poison · injection · canaries] -.->|seeded index| E
-    E --> F[results.json · summary.md · plots]
+    E -->|CLI + worker| F[results.json · summary.md · plots]
+    A3[crucible submit<br/>inline worker] --> E
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
-    E -.-> D[dashboard]
-    style D stroke-dasharray: 5 5
+    E -->|worker only| S[(SQLite<br/>result store)] --> D[dashboard]
 ```
-
-*(dashed = lands in Phase 6; solid = working today)*
 
 ## Why this exists
 
@@ -191,13 +189,26 @@ an API + worker + dashboard, and a green CI on every push.
 
 ## Run it as a service
 
-The same evaluation runs as jobs behind an API — submit a spec, a worker claims it
-from a SQLite-backed queue, results land in the store; `/query` serves the configured
-pipeline live with citations and timings:
+For local use, one command now performs the complete official workflow: it creates the
+SQLite run, executes it through an inline worker, waits for completion, and writes both
+the database records and portable report bundle:
 
 ```sh
-make serve    # API on :8000 (or: docker compose up --build — zero keys, zero downloads)
-make worker   # the evaluation worker, in a second terminal
+crucible submit specs/demo.yaml
+```
+
+For asynchronous service use, keep a worker running and opt into queue-only submission.
+The HTTP API is always asynchronous and therefore also requires the worker service:
+
+```sh
+# terminal 1
+make worker
+
+# terminal 2: CLI queue submission returns immediately
+crucible submit specs/demo.yaml --queue-only
+
+# or serve the API on :8000 and submit through HTTP
+make serve
 
 curl -s -X POST localhost:8000/query \
   -H 'content-type: application/json' \
@@ -207,6 +218,31 @@ curl -s -X POST localhost:8000/query \
 curl -s -X POST localhost:8000/runs -H 'content-type: application/json' -d @spec.json
 curl -s localhost:8000/runs/<run_id>/results
 ```
+
+`docker compose up --build` starts the API and background worker together, so HTTP
+submissions are processed without another manual command.
+
+For a submitted spec named `demo-local-baseline`, the worker writes the portable copy
+to `results/demo-local-baseline/<run_id>/`:
+
+```text
+results/demo-local-baseline/<run_id>/
+├── results.json
+├── summary.md
+├── retrieval.png
+├── security.png       # when the suite is configured
+├── privacy.png        # when the suite is configured
+└── latency.png
+```
+
+Each run gets its own directory, so `crucible submit --force` never overwrites an
+earlier report. Set `CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
+it under the persistent `/data/artifacts` volume. A suite-level failure still exports
+the partial evidence produced by the other suites, matching what is retained in
+SQLite. `--queue-only` is the explicit escape hatch for users who want the previous
+enqueue-and-return behavior. If an identical run is already `pending` or `running`,
+the default command attaches to it and waits instead of creating duplicate work;
+re-running a completed spec still requires `--force`.
 
 Queue semantics worth knowing: identical specs dedupe by hash (409 with the existing
 run id; `?force=true` re-runs), a failing suite is recorded with its error while

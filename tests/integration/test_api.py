@@ -19,6 +19,7 @@ from .test_eval_e2e import _eval_spec
 @pytest.fixture(autouse=True)
 def _isolated_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
 
 
 @pytest.fixture
@@ -70,6 +71,7 @@ def test_submit_poll_results_roundtrip(
     results = client.get(f"/runs/{run_id}/results").json()
     assert {s["suite"] for s in results["suites"]} == {"retrieval", "faithfulness"}
     assert any(m["name"] == "mrr" for m in results["metrics"])
+    assert (tmp_path / "results" / "api-run" / run_id / "results.json").is_file()
 
     page = client.get(f"/runs/{run_id}/records", params={"suite": "retrieval", "limit": 2}).json()
     assert len(page["records"]) == 2

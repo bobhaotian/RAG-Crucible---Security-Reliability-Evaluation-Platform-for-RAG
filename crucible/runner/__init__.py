@@ -10,7 +10,12 @@ from crucible.runner.models import (
     SuiteSummary,
 )
 from crucible.runner.store import DuplicateRunError, ResultStore, RunNotFoundError
-from crucible.runner.worker import default_worker_id, execute_run, worker_loop
+from crucible.runner.worker import (
+    default_worker_id,
+    execute_or_wait_for_run,
+    execute_run,
+    worker_loop,
+)
 
 __all__ = [
     "ClaimedRun",
@@ -23,6 +28,7 @@ __all__ = [
     "RunStatus",
     "SuiteSummary",
     "default_worker_id",
+    "execute_or_wait_for_run",
     "execute_run",
     "new_run_id",
     "worker_loop",

@@ -1,0 +1,11 @@
+{
+  "failures": {},
+  "issue_keys_by_commit": {},
+  "local_noops": [],
+  "processed_event_ids": [],
+  "stale_issue_cache": {
+    "issues": [],
+    "updated_at": null
+  },
+  "synced_commit_shas": []
+}

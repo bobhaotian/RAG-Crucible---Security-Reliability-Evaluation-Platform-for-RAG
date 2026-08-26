@@ -2,6 +2,7 @@
 
     crucible ingest specs/demo.yaml          # corpus → filters → chunks → index
     crucible query  specs/demo.yaml "..."    # retrieve → rerank → generate
+    crucible submit specs/demo.yaml          # queue → evaluate → DB + portable report
 
 The API and runner (Phase 3) front the same core library; the CLI exists so
 the spine works and is demoable before any service does.
@@ -21,10 +22,10 @@ from crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
 from crucible.eval.report import write_report
 from crucible.index import IndexMeta, VectorIndex, open_saved_index
 from crucible.ingest import build_index
-from crucible.paths import default_db_path, index_dir_for
+from crucible.paths import default_db_path, index_dir_for, submitted_run_results_dir
 from crucible.pipeline import Answer, build_pipeline
 from crucible.providers import ProviderError
-from crucible.runner import DuplicateRunError, ResultStore, worker_loop
+from crucible.runner import DuplicateRunError, ResultStore, execute_or_wait_for_run, worker_loop
 
 app = typer.Typer(
     name="crucible",
@@ -179,19 +180,52 @@ def eval_command(
 def submit(
     spec_path: SpecPathArg,
     force: Annotated[bool, typer.Option("--force", help="Re-run an identical spec")] = False,
+    queue_only: Annotated[
+        bool,
+        typer.Option(
+            "--queue-only",
+            help="Enqueue and return immediately; requires a separate `crucible worker`",
+        ),
+    ] = False,
     db: DbOption = None,
 ) -> None:
-    """Enqueue an evaluation run for the worker (returns the run id)."""
+    """Submit and complete an evaluation run; persist DB rows and reports.
+
+    By default this command acts as an inline worker and returns only after the
+    run reaches a terminal state. Use ``--queue-only`` when a long-running
+    worker service should execute the job asynchronously.
+    """
     spec = _load_spec_or_exit(spec_path)
     if spec.suites is None:
         typer.echo(f"error: spec {spec.name!r} configures no `suites:`", err=True)
         raise typer.Exit(code=2)
+    store = _store(db)
     try:
-        run_id = _store(db).submit_run(spec, force=force)
+        run_id = store.submit_run(spec, force=force)
     except DuplicateRunError as exc:
-        typer.echo(f"error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+        existing = store.get_run(exc.existing_run_id)
+        if queue_only or existing.status not in ("pending", "running"):
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        # A matching active job may be left from an earlier queue-only
+        # submission or already owned by a background worker. Attach to it so
+        # the default command still fulfills its submit-and-complete contract.
+        run_id = existing.id
+        typer.echo(f"attaching to existing {existing.status} run")
     typer.echo(run_id)
+    if queue_only:
+        typer.echo("queued; a `crucible worker` must process this run")
+        return
+
+    typer.echo("running evaluation…")
+    row = asyncio.run(execute_or_wait_for_run(store, run_id))
+    report_dir = submitted_run_results_dir(spec.name, run_id)
+    if report_dir.is_dir():
+        typer.echo(f"report: {report_dir}")
+    if row.status != "succeeded":
+        typer.echo(f"{row.status}: {row.error or 'run did not complete'}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("succeeded")
 
 
 @app.command()

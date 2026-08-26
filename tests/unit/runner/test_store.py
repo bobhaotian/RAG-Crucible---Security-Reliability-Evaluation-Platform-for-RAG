@@ -99,6 +99,22 @@ def test_claim_is_fifo(store: ResultStore, tmp_path: Path, monkeypatch: pytest.M
     assert claimed_second is not None and claimed_second.id == second
 
 
+def test_claim_run_targets_one_job_without_draining_older_work(
+    store: ResultStore, tmp_path: Path
+) -> None:
+    older = store.submit_run(_spec(tmp_path, name="older"))
+    target = store.submit_run(_spec(tmp_path, name="target"))
+
+    claimed = store.claim_run(target, "inline")
+    assert claimed is not None and claimed.id == target
+    assert store.get_run(target).status == "running"
+    assert store.get_run(older).status == "pending"
+    assert store.claim_run(target, "other") is None
+
+    next_claim = store.claim_next("background")
+    assert next_claim is not None and next_claim.id == older
+
+
 def test_save_and_read_results(store: ResultStore, tmp_path: Path) -> None:
     spec = _spec(tmp_path)
     run_id = store.submit_run(spec)

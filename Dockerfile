@@ -12,7 +12,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_PREFERENCE=only-system \
     CRUCIBLE_ARTIFACTS_DIR=/data/artifacts \
-    CRUCIBLE_DB=/data/artifacts/crucible.db
+    CRUCIBLE_DB=/data/artifacts/crucible.db \
+    CRUCIBLE_RESULTS_DIR=/data/artifacts/results
 
 WORKDIR /app
 ARG WITH_LOCAL=0

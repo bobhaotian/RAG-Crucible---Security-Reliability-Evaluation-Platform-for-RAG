@@ -1,4 +1,5 @@
-# API + worker sharing one SQLite store and index directory via a volume.
+# API + worker sharing one SQLite store, index directory, and worker-generated
+# portable reports via a volume.
 # Defaults to the fake-provider spec so `docker compose up` answers /query and
 # completes submitted runs with zero downloads. To serve the local-model
 # pipeline instead, build with WITH_LOCAL=1 and set CRUCIBLE_SERVE_SPEC.
