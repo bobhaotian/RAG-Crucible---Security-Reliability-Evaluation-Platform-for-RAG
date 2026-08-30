@@ -82,13 +82,15 @@ class DefensesConfig(StrictConfig):
 
     ``prompt_isolation`` swaps in a hardened system prompt that frames
     retrieved text as untrusted data; ``injection_filter`` screens candidate
-    chunks for adversarial instructions before they reach the prompt. The
-    security suite flips these per-condition to report attack success with and
-    without each defense.
+    chunks for adversarial instructions; ``answer_integrity`` uses
+    server-assigned provenance and cross-document numeric consistency to keep
+    trusted evidence or abstain. The security suite flips these per-condition
+    to report attack success with and without each defense.
     """
 
     prompt_isolation: bool = False
     injection_filter: bool = False
+    answer_integrity: bool = False
 
 
 class PipelineConfig(StrictConfig):
@@ -150,7 +152,12 @@ class FaithfulnessSuiteConfig(StrictConfig):
     sample_size: int | None = Field(default=None, ge=1)  # None = all QA items
 
 
-DefenseName = Literal["none", "prompt_isolation", "injection_filter"]
+DefenseName = Literal[
+    "none",
+    "prompt_isolation",
+    "injection_filter",
+    "answer_integrity",
+]
 
 
 class AttackKindConfig(StrictConfig):

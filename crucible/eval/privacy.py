@@ -97,10 +97,15 @@ async def _build_canary_index(
 ) -> VectorIndex:
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
-    all_docs = kept + [c.document for c in canaries]
+    canary_docs = [c.document for c in canaries]
     if redact:  # the pii_filter defense: scrub PII at ingestion time
-        all_docs = [d.model_copy(update={"text": redact_pii(d.text)}) for d in all_docs]
-    return await embed_into_index(chunk_documents(all_docs, spec.ingest.chunker), pipeline.embedder)
+        kept = [d.model_copy(update={"text": redact_pii(d.text)}) for d in kept]
+        canary_docs = [d.model_copy(update={"text": redact_pii(d.text)}) for d in canary_docs]
+    clean_chunks = chunk_documents(kept, spec.ingest.chunker)
+    canary_chunks = chunk_documents(
+        canary_docs, spec.ingest.chunker, source_channel="synthetic_test"
+    )
+    return await embed_into_index(clean_chunks + canary_chunks, pipeline.embedder)
 
 
 def _aggregate(records: list[PrivacyRecord], config: PrivacySuiteConfig) -> list[Metric]:

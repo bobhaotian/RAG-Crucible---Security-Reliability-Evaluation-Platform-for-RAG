@@ -91,6 +91,14 @@ async def test_injection_filter_removes_injected_chunks(tiny_corpus: Path, tmp_p
     )
 
 
+async def test_answer_integrity_blocks_poison_corruption(tiny_corpus: Path, tmp_path: Path) -> None:
+    result = await _run(
+        _security_spec(tiny_corpus, tmp_path, ("none", "answer_integrity")), tmp_path
+    )
+
+    assert result.metric("security", "knowledge_corruption_rate", "defense=answer_integrity") == 0.0
+
+
 async def test_security_is_deterministic_and_reports(tiny_corpus: Path, tmp_path: Path) -> None:
     spec = _security_spec(tiny_corpus, tmp_path, ("none", "prompt_isolation", "injection_filter"))
     first = await _run(spec, tmp_path)

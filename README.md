@@ -125,10 +125,11 @@ defenses that don't, measured rather than assumed.
   0.5B local model is not, and the longer prompt makes it *worse*. Prompt-level
   defenses need a capable generator; that's precisely what the Cohere Command provider
   (Phase 6) is for, and the platform will quantify the difference.
-- **No defense fixes knowledge corruption** — a poisoned fact isn't syntactically
-  adversarial, so a pattern filter can't flag it and an isolation prompt can't
-  un-believe it. Defending answer integrity needs provenance/consistency checks
-  (future work). See [docs/threat-model.md](docs/threat-model.md).
+- **The prompt-level defenses do not fix knowledge corruption** — a poisoned fact
+  is not syntactically adversarial. The `answer_integrity` defense now addresses
+  this with server-assigned provenance, cross-document numeric consistency, and
+  safe abstention. Its deterministic benchmark is in
+  `results/integrity-smoke/summary.md`. See [docs/threat-model.md](docs/threat-model.md).
 
 Reporting both directions — the undefended attack succeeding, and each defense measured
 on the identical poisoned index — is the point: it shows the system being both broken
@@ -363,8 +364,9 @@ make test-local            # tests that exercise the real local models
 - Prompt-level defenses (`prompt_isolation`) are only as good as the generator that
   follows them — on the 0.5B local model the hardened prompt backfires (see Security).
   This is reported, not hidden; a capable generator (Cohere Command) is the answer.
-- No defense addresses knowledge corruption (poisoned facts aren't syntactically
-  adversarial); provenance/consistency defenses are future work.
+- `answer_integrity` addresses benchmark knowledge corruption with provenance,
+  numeric consistency checks, and abstention; its intentionally narrow extractor
+  is scoped to the benchmark's quantity-valued claims.
 - Privacy leakage is measured with the deterministic `pii_filter` defense (an
   ingestion-time redactor); the broader settings sweep (top_k, chunk size,
   temperature) is done at the dashboard level by comparing runs, not in one run.

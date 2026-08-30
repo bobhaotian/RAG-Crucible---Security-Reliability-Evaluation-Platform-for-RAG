@@ -6,7 +6,7 @@ from itertools import pairwise
 
 from crucible.config import ChunkerConfig
 from crucible.ingest import chunk_document
-from crucible.types import DocMeta, Document, doc_id_for
+from crucible.types import DocMeta, Document, Provenance, doc_id_for
 
 
 def _doc(text: str, source: str = "doc.md") -> Document:
@@ -42,6 +42,31 @@ def test_fixed_chunking_is_deterministic() -> None:
     second = chunk_document(_doc(text), config)
     assert [c.chunk_id for c in first] == [c.chunk_id for c in second]
     assert [(c.start, c.end) for c in first] == [(c.start, c.end) for c in second]
+
+
+def test_chunks_preserve_document_provenance() -> None:
+    provenance = Provenance(
+        source_type="official_manual",
+        verified=True,
+        trust_score=1.0,
+        version="4.2",
+        published_at="2026-05-01",
+    )
+    text = "AT-300 battery life is 14 hours. " * 40
+    document = Document(
+        doc_id=doc_id_for("products/at-300-spec.md", text),
+        source="products/at-300-spec.md",
+        text=text,
+        meta=DocMeta(filetype="md", provenance=provenance),
+    )
+
+    chunks = chunk_document(
+        document,
+        ChunkerConfig(type="fixed", size_tokens=30, overlap_tokens=6),
+    )
+
+    assert chunks
+    assert all(chunk.provenance == provenance for chunk in chunks)
 
 
 def test_structure_chunker_labels_sections() -> None:

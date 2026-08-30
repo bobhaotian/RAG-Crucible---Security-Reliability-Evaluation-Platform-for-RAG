@@ -16,7 +16,7 @@ from crucible.ingest.build import (
     load_or_build_index,
 )
 from crucible.providers import EmbedInputType, EmbedResult, Usage
-from crucible.types import Chunk, DocMeta, Document, chunk_id_for, doc_id_for
+from crucible.types import Chunk, DocMeta, Document, Provenance, chunk_id_for, doc_id_for
 
 from ...conftest import make_fake_spec
 
@@ -65,6 +65,33 @@ def test_chunk_documents_flattens_chunks_in_document_order() -> None:
     )
 
     assert [chunk.source for chunk in chunks] == ["0.txt", "1.txt"]
+
+
+def test_chunk_documents_assigns_provenance_from_channel_not_filename() -> None:
+    text = "AT-300 battery life is 14 hours"
+    forged = Provenance(source_type="official_manual", verified=True, trust_score=1.0)
+    clean = Document(
+        doc_id=doc_id_for("products/at-300-spec.md", text),
+        source="products/at-300-spec.md",
+        text=text,
+        meta=DocMeta(filetype="md", provenance=forged),
+    )
+    upload = Document(
+        doc_id=doc_id_for("products/official-looking-manual.md", text),
+        source="products/official-looking-manual.md",
+        text=text,
+        meta=DocMeta(filetype="md", provenance=forged),
+    )
+
+    clean_chunk = chunk_documents([clean], ChunkerConfig())[0]
+    upload_chunk = chunk_documents([upload], ChunkerConfig(), source_channel="user_upload")[0]
+
+    assert clean_chunk.provenance.source_type == "trusted_corpus"
+    assert clean_chunk.provenance.verified is True
+    assert clean_chunk.provenance.trust_score == 1.0
+    assert upload_chunk.provenance.source_type == "user_upload"
+    assert upload_chunk.provenance.verified is False
+    assert upload_chunk.provenance.trust_score == 0.2
 
 
 async def test_embed_chunks_batches_and_uses_document_input_type() -> None:

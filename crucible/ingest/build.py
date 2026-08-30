@@ -16,6 +16,7 @@ from crucible.index import FaissIndex, IndexItem, IndexMeta, VectorIndex
 from crucible.ingest.chunkers import chunk_document
 from crucible.ingest.filters import FilterStats, apply_filters
 from crucible.ingest.loaders import load_corpus
+from crucible.ingest.provenance import SourceChannel, assign_document_provenance
 from crucible.paths import index_dir_for
 from crucible.providers import Embedder, EmbedInputType, build_embedder
 from crucible.types import Chunk, Document, StrictModel
@@ -33,10 +34,16 @@ class IngestReport(StrictModel):
     duration_s: float
 
 
-def chunk_documents(docs: list[Document], chunker: ChunkerConfig) -> list[Chunk]:
+def chunk_documents(
+    docs: list[Document],
+    chunker: ChunkerConfig,
+    *,
+    source_channel: SourceChannel = "trusted_corpus",
+) -> list[Chunk]:
     chunks: list[Chunk] = []
     for doc in docs:
-        chunks.extend(chunk_document(doc, chunker))
+        assigned_doc = assign_document_provenance(doc, source_channel)
+        chunks.extend(chunk_document(assigned_doc, chunker))
     return chunks
 
 

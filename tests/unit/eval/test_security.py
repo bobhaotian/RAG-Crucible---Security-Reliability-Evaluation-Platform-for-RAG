@@ -37,12 +37,26 @@ def test_aggregate_separates_retrieval_from_defense_success() -> None:
 
 
 @pytest.mark.parametrize(
-    ("condition", "prompt_isolation", "injection_filter"),
-    [("none", False, False), ("prompt_isolation", True, False), ("injection_filter", False, True)],
+    (
+        "condition",
+        "prompt_isolation",
+        "injection_filter",
+        "answer_integrity",
+    ),
+    [
+        ("none", False, False, False),
+        ("prompt_isolation", True, False, False),
+        ("injection_filter", False, True, False),
+        ("answer_integrity", False, False, True),
+    ],
 )
 def test_defenses_for_enables_only_the_selected_condition(
-    condition: DefenseName, prompt_isolation: bool, injection_filter: bool
+    condition: DefenseName,
+    prompt_isolation: bool,
+    injection_filter: bool,
+    answer_integrity: bool,
 ) -> None:
     defenses = _defenses_for(condition)
     assert defenses.prompt_isolation is prompt_isolation
     assert defenses.injection_filter is injection_filter
+    assert defenses.answer_integrity is answer_integrity

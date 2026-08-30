@@ -111,9 +111,10 @@ Every stage is wrapped in a `StageTimer`; the `Answer` carries per-stage wall ti
 token usage, which the runner aggregates into p50/p95 per run.
 
 Defense toggles live in the prompt-build step (`prompt_isolation`) and between
-retrieval and prompt-build (`injection_filter` screens candidate chunks) — both are
-config flags on `pipeline.defenses`, so the security suite can measure each condition
-in one run.
+retrieval and prompt-build (`injection_filter` screens instructions;
+`answer_integrity` checks provenance and numeric consistency, then filters or
+abstains). They are config flags on `pipeline.defenses`, so the security suite can
+measure each condition in one run.
 
 ---
 

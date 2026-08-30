@@ -70,6 +70,7 @@ def test_overlap_must_be_smaller_than_size() -> None:
 def test_defenses_are_configurable() -> None:
     assert DefensesConfig(prompt_isolation=True).prompt_isolation
     assert DefensesConfig(injection_filter=True).injection_filter
+    assert DefensesConfig(answer_integrity=True).answer_integrity
     assert not DefensesConfig().prompt_isolation
 
 

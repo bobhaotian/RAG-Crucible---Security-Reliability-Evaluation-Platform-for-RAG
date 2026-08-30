@@ -47,6 +47,7 @@ def _defenses_for(condition: DefenseName) -> DefensesConfig:
     return DefensesConfig(
         prompt_isolation=condition == "prompt_isolation",
         injection_filter=condition == "injection_filter",
+        answer_integrity=condition == "answer_integrity",
     )
 
 
@@ -124,7 +125,7 @@ async def _build_poisoned_index(
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
-    attack_chunks = chunk_documents(attack_docs, spec.ingest.chunker)
+    attack_chunks = chunk_documents(attack_docs, spec.ingest.chunker, source_channel="user_upload")
     return await embed_into_index(clean_chunks + attack_chunks, pipeline.embedder)
 
 
