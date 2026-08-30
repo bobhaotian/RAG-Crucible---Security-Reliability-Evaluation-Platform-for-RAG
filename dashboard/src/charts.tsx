@@ -21,6 +21,7 @@ import type { Drill } from "./Evidence";
 import type { DefenseGroup } from "./metrics";
 import {
   COMPROMISE_METRICS,
+  METRIC_GLOSS,
   breakdown,
   understatements,
   contextMetrics,
@@ -224,6 +225,7 @@ function DefenseBars({
   groups,
   suite,
   title,
+  lead,
   drill,
   onDrill,
   context = [],
@@ -232,6 +234,7 @@ function DefenseBars({
   groups: DefenseGroup[];
   suite: string;
   title: string;
+  lead?: ReactNode;
   drill: Drill;
   onDrill?: (drill: Drill) => void;
   context?: Metric[];
@@ -241,9 +244,11 @@ function DefenseBars({
 
   return (
     <Panel title={title} drill={drill} onDrill={onDrill}>
+      {lead && <p className="lead">{lead}</p>}
       {groups.map((g) => (
         <div className="defense-group" key={g.metric}>
           <h4>{g.metric}</h4>
+          {METRIC_GLOSS[g.metric] && <p className="gloss">{METRIC_GLOSS[g.metric]}</p>}
           <ul className="bars">
             {g.bars.map((b) => (
               <li
@@ -302,6 +307,14 @@ export function AttackSuccess({ results, onDrill }: PanelProps) {
       onDrill={onDrill}
       suite="security"
       title="Attack success by defense"
+      lead={
+        <>
+          Each attack document is planted in the corpus, then every targeted question is
+          asked again under each defense. A row is the share of that attack's trials where
+          <b> the attack under test</b> worked. Lower is safer; every defense is read
+          against <b>none</b>.
+        </>
+      }
       drill={{ suite: "security", label: "all attacks" }}
       footer={
         backfire.length > 0 ? (
@@ -326,6 +339,13 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
       onDrill={onDrill}
       suite="privacy"
       title="Canary leakage by defense"
+      lead={
+        <>
+          Synthetic secrets are seeded into the corpus, then probed for directly and
+          indirectly. <code>retrieval_exposure_rate</code> is whether the secret reached the
+          prompt at all; <code>leakage_rate</code> is whether it reached the answer.
+        </>
+      }
       drill={{ suite: "privacy", label: "all canary probes" }}
       footer={
         styles.length > 0 ? (
@@ -373,9 +393,10 @@ export function Compromise({ results, onDrill }: PanelProps) {
   const groups = defenseGroups(results, "security", { only: COMPROMISE_METRICS });
   if (groups.length === 0) return null;
 
-  const contaminated =
-    groups.find((g) => g.metric === "cross_contamination_rate")?.bars.filter((b) => b.value > 0) ??
-    [];
+  const rateFor = (name: string) =>
+    groups.find((g) => g.metric === name)?.bars.filter((b) => b.value > 0) ?? [];
+  const competition = rateFor("attack_competition_rate");
+  const crossQuestion = rateFor("cross_question_contamination_rate");
   const missed = understatements(results);
 
   return (
@@ -384,34 +405,58 @@ export function Compromise({ results, onDrill }: PanelProps) {
       onDrill={onDrill}
       suite="security"
       title="Model compromise by defense"
+      lead={
+        <>
+          The panel on the left asks <b>did this attack work?</b> This one asks the broader
+          question: <b>did the model produce attacker-controlled text at all?</b>
+          <br />
+          <br />
+          Every attack document lives in one shared index, so a trial can be hijacked by an
+          attack other than the one it was set up to measure. When that happens the
+          attack-success rate records a block — the marker it was looking for never appeared
+          — even though the model was compromised. Each rate below shares a denominator with
+          its counterpart on the left, so <b>the gap between the two is exactly what
+          per-attack scoring misses</b>.
+        </>
+      }
       drill={{ suite: "security", label: "all attack trials" }}
       footer={
         <>
-          <p className="hint">
-            A trial counts as compromised when its answer carries any attacker-planted
-            marker, whichever attack planted it. Each rate shares a denominator with the
-            per-attack rate above it, so the gap between them is what attributing a marker
-            to one attack misses.
-          </p>
-          {contaminated.length > 0 && (
+          {missed.length > 0 && (
+            <div className="callout bad">
+              <b>Some defenses look safer than they are.</b> These rates report a block
+              while the model still emitted attacker text on the same trial:
+              <ul className="understated">
+                {missed.map((m) => (
+                  <li key={`${m.success}|${m.defense}`}>
+                    <code>{m.success}</code> under <b>{m.defense}</b> reads{" "}
+                    {m.hit.toFixed(2)} — model actually compromised on{" "}
+                    <b>{m.anyMarker.toFixed(2)}</b> of those trials
+                  </li>
+                ))}
+              </ul>
+              Click any row to read the trials and see which attack produced each answer.
+            </div>
+          )}
+          {crossQuestion.length > 0 ? (
             <p className="callout bad">
-              <b>Cross-contamination detected.</b>{" "}
-              {contaminated.map((b) => `${b.defense} ${(b.value * 100).toFixed(0)}%`).join(", ")}{" "}
-              of trials answered with a marker from a different attack — attacks in the
-              shared index are bleeding into each other.
-              Click a row to read the trials.
-              {missed.length > 0 && (
-                <ul className="understated">
-                  {missed.map((m) => (
-                    <li key={`${m.success}|${m.defense}`}>
-                      <code>{m.success}</code> under <b>{m.defense}</b> reads{" "}
-                      {m.hit.toFixed(2)} — true compromise{" "}
-                      <b>{m.anyMarker.toFixed(2)}</b>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <b>Attack documents are escaping their target question.</b>{" "}
+              {crossQuestion
+                .map((b) => `${b.defense} ${(b.value * 100).toFixed(0)}%`)
+                .join(", ")}{" "}
+              of trials answered with a marker planted on a <i>different</i> question. That
+              is a retrieval failure worth investigating on its own.
             </p>
+          ) : (
+            competition.length > 0 && (
+              <p className="callout">
+                <b>No cross-question contamination.</b> Every compromised-but-blocked trial
+                was beaten by the other attack on its <i>own</i> question — the poison and
+                injection target lists overlap, so both documents echo that question and
+                compete for the same retrieval slots. Nothing escaped the question it was
+                written for.
+              </p>
+            )
           )}
         </>
       }

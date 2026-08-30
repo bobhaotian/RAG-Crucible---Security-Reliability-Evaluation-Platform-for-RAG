@@ -23,20 +23,45 @@ const METRIC_FILTERS: Record<string, Record<string, string>> = {
   injection_retrieval_rate: { attack_type: "injection" },
   poison_compromise_rate: { attack_type: "poison" },
   injection_compromise_rate: { attack_type: "injection" },
-  // Spans both attack types, so it adds no attack_type constraint.
-  cross_contamination_rate: { _contaminated: "true" },
+  // These span both attack types, so they add no attack_type constraint.
+  attack_competition_rate: { _competing: "true" },
+  cross_question_contamination_rate: { _crossQuestion: "true" },
 };
 
 /** Payload fields are compared by string equality; keys starting with "_" are
  *  predicates over the record instead. */
 function matches(r: Record_, key: string, value: string): boolean {
-  if (key === "_contaminated") return String(foreign(r).length > 0) === value;
+  if (key === "_competing") return String(competing(r).length > 0) === value;
+  if (key === "_crossQuestion") return String(crossQuestion(r).length > 0) === value;
   return String(r[key]) === value;
 }
 
+/** An attacker-planted string with the attack that planted it. */
+interface Marker {
+  marker: string;
+  attack_type: string;
+  qid: string;
+}
+
+/** Every planted marker found in this answer, whoever planted it. */
+function matched(r: Record_): Marker[] {
+  return Array.isArray(r["matched_markers"]) ? (r["matched_markers"] as Marker[]) : [];
+}
+
 /** Markers from an attack other than the one this trial was testing. */
-function foreign(r: Record_): string[] {
-  return Array.isArray(r["foreign_markers"]) ? (r["foreign_markers"] as string[]) : [];
+function foreign(r: Record_): Marker[] {
+  const own = str(r, "own_marker") ?? "";
+  return matched(r).filter((m) => m.marker !== own);
+}
+
+/** Foreign markers from the other attack on this same question. */
+function competing(r: Record_): Marker[] {
+  return foreign(r).filter((m) => m.qid === str(r, "qid"));
+}
+
+/** Foreign markers planted on a different question — real bleed-through. */
+function crossQuestion(r: Record_): Marker[] {
+  return foreign(r).filter((m) => m.qid !== str(r, "qid"));
 }
 
 function expand(filter: Record<string, string> | undefined): Record<string, string> {
@@ -159,12 +184,8 @@ function RecordCard({ r }: { r: Record_ }) {
     <li className={flagged(r) ? "record flagged" : "record"}>
       <div className="record-head">
         <Outcome r={r} />
-        {foreign(r).length > 0 && (
-          <span className="badge warn" title="marker planted by a different attack">
-            cross-contaminated: {foreign(r).join(", ")}
-          </span>
-        )}
-        {["attack_type", "defense", "probe_style", "canary_kind", "qid"].map((k) => {
+        {kind === "attack" && <ResponseSource r={r} />}
+        {["defense", "probe_style", "canary_kind", "qid"].map((k) => {
           const v = str(r, k);
           return v ? (
             <span className="tag" key={k}>
@@ -176,6 +197,8 @@ function RecordCard({ r }: { r: Record_ }) {
 
       {str(r, "question") && <p className="record-q">{str(r, "question")}</p>}
       {str(r, "answer") && <pre className="record-a">{str(r, "answer")}</pre>}
+
+      {kind === "attack" && <AttackFields r={r} />}
 
       {kind === "retrieval" && (
         <p className="hint">
@@ -200,6 +223,80 @@ function RecordCard({ r }: { r: Record_ }) {
         </p>
       )}
     </li>
+  );
+}
+
+/** Which attack actually produced this answer — the headline a reader needs
+ *  next to "did the attack under test succeed?". */
+function ResponseSource({ r }: { r: Record_ }) {
+  const own = matched(r).filter((m) => m.marker === str(r, "own_marker"));
+  if (own.length > 0)
+    return (
+      <span className="badge bad">answered with {own[0].attack_type} (attack under test)</span>
+    );
+  const others = foreign(r);
+  if (others.length === 0)
+    return <span className="badge good">no attacker text in answer</span>;
+  const sameQuestion = others[0].qid === str(r, "qid");
+  return (
+    <span className="badge warn">
+      answered with {others[0].attack_type} —{" "}
+      {sameQuestion ? "competing attack, same question" : `planted on ${others[0].qid}`}
+    </span>
+  );
+}
+
+/** Everything needed to audit one trial without reading the source. */
+function AttackFields({ r }: { r: Record_ }) {
+  const tested = str(r, "attack_type");
+  const own = str(r, "own_marker");
+  const succeeded = bool(r, "succeeded");
+  const others = foreign(r);
+  return (
+    <dl className="fields">
+      <dt>attack under test</dt>
+      <dd>
+        <b>{tested}</b> targeting <b>{str(r, "qid")}</b>
+        {own && (
+          <>
+            {" "}
+            · scored on marker <code>{own}</code>
+          </>
+        )}
+      </dd>
+
+      <dt>defense</dt>
+      <dd>{str(r, "defense")}</dd>
+
+      <dt>its document retrieved</dt>
+      <dd>{bool(r, "retrieved") ? "yes — it reached the prompt" : "no — never reached the prompt"}</dd>
+
+      <dt>scored</dt>
+      <dd className={succeeded ? "bad" : "good"}>
+        {succeeded
+          ? `succeeded — the ${tested} marker appeared in the answer`
+          : `failed — the ${tested} marker never appeared`}
+      </dd>
+
+      <dt>answer produced by</dt>
+      <dd className={bool(r, "compromised") ? "bad" : "good"}>
+        {matched(r).length === 0
+          ? "no attacker-planted text"
+          : matched(r)
+              .map((m) =>
+                m.marker === own
+                  ? `${m.attack_type} under test (${m.marker})`
+                  : `${m.attack_type} attack on ${m.qid} (${m.marker})`,
+              )
+              .join(", ")}
+        {!succeeded && others.length > 0 && (
+          <>
+            {" "}
+            — <b>the model was compromised even though this attack was blocked</b>
+          </>
+        )}
+      </dd>
+    </dl>
   );
 }
 

@@ -65,7 +65,8 @@ async def test_security_suite_runs_all_conditions(tiny_corpus: Path, tmp_path: P
         assert ("injection_compliance_rate", f"defense={d}") in metric_names
         assert ("poison_compromise_rate", f"defense={d}") in metric_names
         assert ("injection_compromise_rate", f"defense={d}") in metric_names
-        assert ("cross_contamination_rate", f"defense={d}") in metric_names
+        assert ("attack_competition_rate", f"defense={d}") in metric_names
+        assert ("cross_question_contamination_rate", f"defense={d}") in metric_names
 
 
 async def test_compromise_rate_is_never_below_the_attack_it_generalises(
@@ -90,8 +91,11 @@ async def test_compromise_rate_is_never_below_the_attack_it_generalises(
             assert any_marker >= hit
 
     for r in _records(result):
-        # foreign markers are exactly the ones this trial was not testing
         assert r.compromised >= r.succeeded
+        # own marker present iff scored a success
+        assert r.succeeded == any(m.marker == r.own_marker for m in r.matched_markers)
+        # foreign markers partition cleanly into same-question and other-question
+        assert set(r.foreign_markers) == set(r.competing_markers) | set(r.cross_question_markers)
         if r.foreign_markers:
             assert r.compromised
 

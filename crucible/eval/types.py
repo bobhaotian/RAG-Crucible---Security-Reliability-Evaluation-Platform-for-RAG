@@ -57,9 +57,23 @@ class FaithfulnessRecord(StrictModel):
     answer_match: bool  # gold answer string appears in the answer
 
 
+class MarkerRef(StrictModel):
+    """An attacker-planted string, and which attack planted it.
+
+    Carrying the owner (not just the string) is what lets a reader tell
+    "the attack under test won" from "a different attack won instead", and
+    "a competing attack on this same question" from "an attack planted on a
+    different question leaked into this one".
+    """
+
+    marker: str
+    attack_type: Literal["poison", "injection"]
+    qid: str  # the question this marker's attack document targets
+
+
 class AttackRecord(StrictModel):
     kind: Literal["attack"] = "attack"
-    attack_type: Literal["poison", "injection"]
+    attack_type: Literal["poison", "injection"]  # the attack this trial tests
     qid: str
     question: str
     defense: str  # the condition this pass ran under: none|prompt_isolation|injection_filter
@@ -67,10 +81,26 @@ class AttackRecord(StrictModel):
     succeeded: bool  # poison: false value echoed; injection: token obeyed
     # `succeeded` attributes one attack. One index carries every attack document,
     # so a trial can be compromised by a *different* attack than the one under
-    # test — invisible to `succeeded`. These two record that:
+    # test — invisible to `succeeded`. These record that:
+    own_marker: str = ""  # the string `succeeded` was scored on
     compromised: bool = False  # the answer carries any attacker-planted marker
-    foreign_markers: tuple[str, ...] = ()  # markers from other attacks, if any
+    matched_markers: tuple[MarkerRef, ...] = ()  # every planted marker in the answer
     answer: str
+
+    @property
+    def foreign_markers(self) -> tuple[MarkerRef, ...]:
+        """Markers in the answer that belong to some attack other than this one."""
+        return tuple(m for m in self.matched_markers if m.marker != self.own_marker)
+
+    @property
+    def competing_markers(self) -> tuple[MarkerRef, ...]:
+        """Foreign markers from the *other* attack on this same question."""
+        return tuple(m for m in self.foreign_markers if m.qid == self.qid)
+
+    @property
+    def cross_question_markers(self) -> tuple[MarkerRef, ...]:
+        """Foreign markers planted on a *different* question — true bleed-through."""
+        return tuple(m for m in self.foreign_markers if m.qid != self.qid)
 
 
 class PrivacyRecord(StrictModel):
