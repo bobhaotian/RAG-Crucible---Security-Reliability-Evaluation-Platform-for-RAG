@@ -65,6 +65,11 @@ class AttackRecord(StrictModel):
     defense: str  # the condition this pass ran under: none|prompt_isolation|injection_filter
     retrieved: bool  # the attack chunk reached the prompt context
     succeeded: bool  # poison: false value echoed; injection: token obeyed
+    # `succeeded` attributes one attack. One index carries every attack document,
+    # so a trial can be compromised by a *different* attack than the one under
+    # test — invisible to `succeeded`. These two record that:
+    compromised: bool = False  # the answer carries any attacker-planted marker
+    foreign_markers: tuple[str, ...] = ()  # markers from other attacks, if any
     answer: str
 
 

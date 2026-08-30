@@ -64,8 +64,8 @@ export function kpis(results: RunResults): Kpi[] {
     },
     {
       key: "security",
-      label: "Attack success",
-      detail: "no defense, worst case",
+      label: "Worst-case attack",
+      detail: "poison vs injection, no defense",
       value: attack,
       direction: "down",
       suite: "security",
@@ -215,19 +215,75 @@ export interface DefenseGroup {
 
 const BASELINE = "none";
 
+/** Suite-level rollups: "was the model compromised at all?", as opposed to the
+ *  per-attack rates that ask "did *this* attack work?". Shown in their own
+ *  panel, so the per-attack panel filters them out. */
+export const COMPROMISE_METRICS = [
+  "poison_compromise_rate",
+  "injection_compromise_rate",
+  "cross_contamination_rate",
+];
+
+/** Each compromise rate and the per-attack rate it generalises. They share a
+ *  denominator, so the difference is the share of trials the per-attack rate
+ *  scores as blocked while the model still emitted attacker-controlled text. */
+export const COMPROMISE_PAIRS: [compromise: string, success: string][] = [
+  ["poison_compromise_rate", "knowledge_corruption_rate"],
+  ["injection_compromise_rate", "injection_compliance_rate"],
+];
+
+export interface Understatement {
+  defense: string;
+  success: string;
+  hit: number;
+  anyMarker: number;
+}
+
+/** Where a per-attack rate understates how often the model was compromised. */
+export function understatements(results: RunResults): Understatement[] {
+  const value = (name: string, defense: string) =>
+    metric(results, "security", name, `defense=${defense}`);
+  const defenses = unique(
+    results.metrics
+      .filter((m) => m.suite === "security" && m.variant.startsWith("defense="))
+      .map((m) => m.variant.replace("defense=", "")),
+  );
+  return COMPROMISE_PAIRS.flatMap(([compromise, success]) =>
+    defenses.flatMap((defense) => {
+      const anyMarker = value(compromise, defense);
+      const hit = value(success, defense);
+      return anyMarker !== undefined && hit !== undefined && anyMarker > hit
+        ? [{ defense, success, hit, anyMarker }]
+        : [];
+    }),
+  );
+}
+
 /** Metrics measured once per defense condition, grouped so each defense is
  *  read against the baseline it is supposed to improve on. Both suites that
  *  use this shape (security, privacy) are lower-is-better. */
-export function defenseGroups(results: RunResults, suite: string): DefenseGroup[] {
+export function defenseGroups(
+  results: RunResults,
+  suite: string,
+  opts: { only?: string[]; except?: string[] } = {},
+): DefenseGroup[] {
   const scoped = results.metrics.filter(
-    (m) => m.suite === suite && m.variant.startsWith("defense="),
+    (m) =>
+      m.suite === suite &&
+      m.variant.startsWith("defense=") &&
+      (opts.only ? opts.only.includes(m.name) : true) &&
+      (opts.except ? !opts.except.includes(m.name) : true),
   );
   const defenseOf = (m: Metric) => m.variant.replace("defense=", "");
   const defenses = unique(scoped.map(defenseOf)).sort((a, b) =>
     a === BASELINE ? -1 : b === BASELINE ? 1 : a.localeCompare(b),
   );
 
-  return unique(scoped.map((m) => m.name)).map((name) => {
+  // `only` doubles as the display order; otherwise fall back to encounter order.
+  const names = unique(scoped.map((m) => m.name));
+  const ordered = opts.only ? opts.only.filter((n) => names.includes(n)) : names;
+
+  return ordered.map((name) => {
     const valueFor = (d: string) =>
       scoped.find((m) => m.name === name && defenseOf(m) === d)?.value;
     const baseline = valueFor(BASELINE);

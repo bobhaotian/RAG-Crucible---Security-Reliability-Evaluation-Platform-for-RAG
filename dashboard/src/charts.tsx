@@ -16,10 +16,13 @@ import {
   RadarChart,
   ResponsiveContainer,
 } from "recharts";
-import type { RunResults } from "./api";
+import type { Metric, RunResults } from "./api";
 import type { Drill } from "./Evidence";
+import type { DefenseGroup } from "./metrics";
 import {
+  COMPROMISE_METRICS,
   breakdown,
+  understatements,
   contextMetrics,
   defenseGroups,
   faithfulness,
@@ -218,16 +221,23 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
  *  Colour encodes direction of change, not defense identity: a defense that
  *  makes things worse is the finding worth seeing first. */
 function DefenseBars({
-  results,
+  groups,
   suite,
   title,
   drill,
   onDrill,
+  context = [],
   footer,
-}: PanelProps & { suite: string; title: string; drill: Drill; footer?: ReactNode }) {
-  const groups = defenseGroups(results, suite);
+}: {
+  groups: DefenseGroup[];
+  suite: string;
+  title: string;
+  drill: Drill;
+  onDrill?: (drill: Drill) => void;
+  context?: Metric[];
+  footer?: ReactNode;
+}) {
   if (groups.length === 0) return null;
-  const context = contextMetrics(results, suite);
 
   return (
     <Panel title={title} drill={drill} onDrill={onDrill}>
@@ -280,14 +290,15 @@ function DefenseBars({
 }
 
 export function AttackSuccess({ results, onDrill }: PanelProps) {
-  const groups = defenseGroups(results, "security");
+  const groups = defenseGroups(results, "security", { except: COMPROMISE_METRICS });
   const backfire = groups
     .flatMap((g) => g.bars.map((b) => ({ ...b, metric: g.metric })))
     .filter((b) => b.delta !== undefined && b.delta > 0);
 
   return (
     <DefenseBars
-      results={results}
+      groups={groups}
+      context={contextMetrics(results, "security")}
       onDrill={onDrill}
       suite="security"
       title="Attack success by defense"
@@ -311,7 +322,7 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
   const styles = breakdown(results, "privacy", "leakage_rate");
   return (
     <DefenseBars
-      results={results}
+      groups={defenseGroups(results, "privacy")}
       onDrill={onDrill}
       suite="privacy"
       title="Canary leakage by defense"
@@ -350,6 +361,59 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
             </ul>
           </div>
         ) : undefined
+      }
+    />
+  );
+}
+
+/** The rollup the per-attack rates cannot express. One index carries every
+ *  attack document, so a trial can be compromised by an attack other than the
+ *  one under test — `knowledge_corruption_rate` scores that as a block. */
+export function Compromise({ results, onDrill }: PanelProps) {
+  const groups = defenseGroups(results, "security", { only: COMPROMISE_METRICS });
+  if (groups.length === 0) return null;
+
+  const contaminated =
+    groups.find((g) => g.metric === "cross_contamination_rate")?.bars.filter((b) => b.value > 0) ??
+    [];
+  const missed = understatements(results);
+
+  return (
+    <DefenseBars
+      groups={groups}
+      onDrill={onDrill}
+      suite="security"
+      title="Model compromise by defense"
+      drill={{ suite: "security", label: "all attack trials" }}
+      footer={
+        <>
+          <p className="hint">
+            A trial counts as compromised when its answer carries any attacker-planted
+            marker, whichever attack planted it. Each rate shares a denominator with the
+            per-attack rate above it, so the gap between them is what attributing a marker
+            to one attack misses.
+          </p>
+          {contaminated.length > 0 && (
+            <p className="callout bad">
+              <b>Cross-contamination detected.</b>{" "}
+              {contaminated.map((b) => `${b.defense} ${(b.value * 100).toFixed(0)}%`).join(", ")}{" "}
+              of trials answered with a marker from a different attack — attacks in the
+              shared index are bleeding into each other.
+              Click a row to read the trials.
+              {missed.length > 0 && (
+                <ul className="understated">
+                  {missed.map((m) => (
+                    <li key={`${m.success}|${m.defense}`}>
+                      <code>{m.success}</code> under <b>{m.defense}</b> reads{" "}
+                      {m.hit.toFixed(2)} — true compromise{" "}
+                      <b>{m.anyMarker.toFixed(2)}</b>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </p>
+          )}
+        </>
       }
     />
   );

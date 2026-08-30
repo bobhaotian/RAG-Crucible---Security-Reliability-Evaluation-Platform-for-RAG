@@ -3,6 +3,7 @@ import type { RunResults, RunRow } from "./api";
 import { getResults, getSpec, listRuns } from "./api";
 import {
   AttackSuccess,
+  Compromise,
   Faithfulness,
   Latency,
   PrivacyLeakage,
@@ -203,6 +204,7 @@ function SingleRun({
         <RerankLift results={results} onDrill={onDrill} />
         <Faithfulness results={results} onDrill={onDrill} />
         <AttackSuccess results={results} onDrill={onDrill} />
+        <Compromise results={results} onDrill={onDrill} />
         <PrivacyLeakage results={results} onDrill={onDrill} />
         <Latency results={results} />
       </div>

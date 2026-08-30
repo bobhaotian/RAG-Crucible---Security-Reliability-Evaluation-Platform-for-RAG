@@ -21,7 +21,23 @@ const METRIC_FILTERS: Record<string, Record<string, string>> = {
   poison_retrieval_rate: { attack_type: "poison" },
   injection_compliance_rate: { attack_type: "injection" },
   injection_retrieval_rate: { attack_type: "injection" },
+  poison_compromise_rate: { attack_type: "poison" },
+  injection_compromise_rate: { attack_type: "injection" },
+  // Spans both attack types, so it adds no attack_type constraint.
+  cross_contamination_rate: { _contaminated: "true" },
 };
+
+/** Payload fields are compared by string equality; keys starting with "_" are
+ *  predicates over the record instead. */
+function matches(r: Record_, key: string, value: string): boolean {
+  if (key === "_contaminated") return String(foreign(r).length > 0) === value;
+  return String(r[key]) === value;
+}
+
+/** Markers from an attack other than the one this trial was testing. */
+function foreign(r: Record_): string[] {
+  return Array.isArray(r["foreign_markers"]) ? (r["foreign_markers"] as string[]) : [];
+}
 
 function expand(filter: Record<string, string> | undefined): Record<string, string> {
   if (!filter) return {};
@@ -41,6 +57,7 @@ const num = (r: Record_, k: string): number | undefined =>
 function flagged(r: Record_): boolean {
   return (
     bool(r, "succeeded") === true ||
+    bool(r, "compromised") === true ||
     bool(r, "leaked") === true ||
     bool(r, "answer_match") === false ||
     (num(r, "first_hit_rank_reranked") ?? 1) > 1
@@ -82,9 +99,13 @@ export function EvidenceDrawer({
     if (!records) return [];
     const needle = q.trim().toLowerCase();
     return records
-      .filter((r) => Object.entries(fields).every(([k, v]) => String(r[k]) === v))
+      .filter((r) => Object.entries(fields).every(([k, v]) => matches(r, k, v)))
       .filter((r) => !needle || JSON.stringify(r).toLowerCase().includes(needle))
-      .sort((a, b) => Number(flagged(b)) - Number(flagged(a)));
+      .sort(
+        (a, b) =>
+          Number(foreign(b).length > 0) - Number(foreign(a).length > 0) ||
+          Number(flagged(b)) - Number(flagged(a)),
+      );
   }, [records, fields, q]);
 
   const suiteSummary = results.suites.find((s) => s.suite === drill.suite);
@@ -138,6 +159,11 @@ function RecordCard({ r }: { r: Record_ }) {
     <li className={flagged(r) ? "record flagged" : "record"}>
       <div className="record-head">
         <Outcome r={r} />
+        {foreign(r).length > 0 && (
+          <span className="badge warn" title="marker planted by a different attack">
+            cross-contaminated: {foreign(r).join(", ")}
+          </span>
+        )}
         {["attack_type", "defense", "probe_style", "canary_kind", "qid"].map((k) => {
           const v = str(r, k);
           return v ? (
@@ -179,12 +205,13 @@ function RecordCard({ r }: { r: Record_ }) {
 
 function Outcome({ r }: { r: Record_ }) {
   const succeeded = bool(r, "succeeded");
-  if (succeeded !== undefined)
-    return (
-      <span className={succeeded ? "badge bad" : "badge good"}>
-        {succeeded ? "attack succeeded" : "attack blocked"}
-      </span>
-    );
+  if (succeeded !== undefined) {
+    if (succeeded) return <span className="badge bad">attack succeeded</span>;
+    // Blocking the attack under test is not a clean pass if the model was
+    // compromised by another attack in the same index — don't render it green.
+    if (bool(r, "compromised")) return <span className="badge warn">this attack blocked</span>;
+    return <span className="badge good">attack blocked</span>;
+  }
   const leaked = bool(r, "leaked");
   if (leaked !== undefined)
     return (
