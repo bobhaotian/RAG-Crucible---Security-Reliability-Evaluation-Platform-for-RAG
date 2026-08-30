@@ -7,6 +7,7 @@ No evaluation logic lives here. Endpoints:
     GET    /runs/{id}           status row
     GET    /runs/{id}/results   metrics, suite summaries, stage timings
     GET    /runs/{id}/records   per-item evidence, paginated
+    GET    /runs/{id}/spec      the spec the run was executed from
     DELETE /runs/{id}           cancel a pending run
     POST   /query               live answer through the serving pipeline
     GET    /health
@@ -20,6 +21,7 @@ Execution of submitted runs belongs to the worker process, never the API.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Annotated, Any
@@ -133,6 +135,16 @@ def create_app(*, db_path: Path | None = None, serve_spec_path: Path | None = No
         except RunNotFoundError as exc:
             raise HTTPException(status_code=404, detail=f"no run {run_id}") from exc
         return RecordsPage(run_id=run_id, suite=suite, offset=offset, limit=limit, records=records)
+
+    @app.get("/runs/{run_id}/spec")
+    def get_run_spec(run_id: str) -> dict[str, Any]:
+        """The spec a run was executed from — what pipeline the numbers describe."""
+        try:
+            raw = store.get_spec_json(run_id)
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=f"no run {run_id}") from exc
+        spec: dict[str, Any] = json.loads(raw)
+        return spec
 
     @app.delete("/runs/{run_id}")
     def cancel_run(run_id: str) -> Response:
