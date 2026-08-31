@@ -63,6 +63,41 @@ async def test_security_suite_runs_all_conditions(tiny_corpus: Path, tmp_path: P
     for d in defenses:
         assert ("knowledge_corruption_rate", f"defense={d}") in metric_names
         assert ("injection_compliance_rate", f"defense={d}") in metric_names
+        assert ("poison_compromise_rate", f"defense={d}") in metric_names
+        assert ("injection_compromise_rate", f"defense={d}") in metric_names
+        assert ("attack_competition_rate", f"defense={d}") in metric_names
+        assert ("cross_question_contamination_rate", f"defense={d}") in metric_names
+
+
+async def test_compromise_rate_is_never_below_the_attack_it_generalises(
+    tiny_corpus: Path, tmp_path: Path
+) -> None:
+    """A succeeded attack is by definition a compromised trial.
+
+    Both rates share a denominator (the trials of one attack type under one
+    defense), so compromise can only ever be greater than or equal to success —
+    the excess is trials hijacked by a co-resident attack.
+    """
+    defenses = ("none", "prompt_isolation", "injection_filter")
+    result = await _run(_security_spec(tiny_corpus, tmp_path, defenses), tmp_path)
+    for d in defenses:
+        for success, compromise in (
+            ("knowledge_corruption_rate", "poison_compromise_rate"),
+            ("injection_compliance_rate", "injection_compromise_rate"),
+        ):
+            hit = result.metric("security", success, f"defense={d}")
+            any_marker = result.metric("security", compromise, f"defense={d}")
+            assert hit is not None and any_marker is not None
+            assert any_marker >= hit
+
+    for r in _records(result):
+        assert r.compromised >= r.succeeded
+        # own marker present iff scored a success
+        assert r.succeeded == any(m.marker == r.own_marker for m in r.matched_markers)
+        # foreign markers partition cleanly into same-question and other-question
+        assert set(r.foreign_markers) == set(r.competing_markers) | set(r.cross_question_markers)
+        if r.foreign_markers:
+            assert r.compromised
 
 
 async def test_attacks_are_retrieved_and_poison_corrupts(tiny_corpus: Path, tmp_path: Path) -> None:
