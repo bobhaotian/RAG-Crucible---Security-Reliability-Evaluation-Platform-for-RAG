@@ -120,7 +120,7 @@ async def _judge_answer(item: QAItem, answer: Answer, judge: EntailmentJudge) ->
         claims=tuple(judgments),
         citations_parsed=bool(parsed_citations),
         citations=tuple(citation_judgments),
-        answer_match=answer_matches(answer.text, item),
+        answer_match=answer_matches(answer.text, item) if item.answer is not None else None,
     )
 
 
@@ -138,15 +138,22 @@ def _aggregate(records: list[FaithfulnessRecord]) -> list[Metric]:
         ),
         Metric(
             suite=SUITE,
-            name="answer_accuracy",
-            value=round(mean([float(r.answer_match) for r in records]), 4),
-        ),
-        Metric(
-            suite=SUITE,
             name="citation_parse_rate",
             value=round(mean([float(r.citations_parsed) for r in records]), 4),
         ),
     ]
+    # Only items carrying a gold answer string can be scored. A doc-id-labeled
+    # corpus has none, and averaging unscorable items in would publish a
+    # confident 0.0 for a metric that was never measured.
+    gradable = [r for r in records if r.answer_match is not None]
+    if gradable:
+        metrics.append(
+            Metric(
+                suite=SUITE,
+                name="answer_accuracy",
+                value=round(mean([float(bool(r.answer_match)) for r in gradable]), 4),
+            )
+        )
     all_citations = [c for r in records for c in r.citations]
     if all_citations:
         metrics.append(
