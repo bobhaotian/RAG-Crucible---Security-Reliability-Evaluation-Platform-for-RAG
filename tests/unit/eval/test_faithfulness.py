@@ -58,3 +58,53 @@ def test_aggregate_omits_precision_without_citations() -> None:
     )
 
     assert "citation_precision" not in {metric.name for metric in _aggregate([record])}
+
+
+def test_aggregate_omits_answer_accuracy_when_no_item_carries_a_gold_answer() -> None:
+    """A doc-id-labeled corpus (BEIR `gold_docs`) has no answer strings.
+
+    Scoring those items as misses would publish `answer_accuracy 0.0000` as if it
+    were measured, on the one metric the README calls deterministic.
+    """
+    records = [
+        FaithfulnessRecord(
+            qid=qid,
+            question="q",
+            answer="answer",
+            claims=(ClaimJudgment(claim="c", supported=True, parse_ok=True, cached=False),),
+            citations_parsed=False,
+            citations=(),
+            answer_match=None,
+        )
+        for qid in ("q1", "q2")
+    ]
+    names = {metric.name for metric in _aggregate(records)}
+
+    assert "answer_accuracy" not in names
+    assert "groundedness" in names  # the rest of the suite still reports
+
+
+def test_aggregate_scores_answer_accuracy_over_gradable_items_only() -> None:
+    records = [
+        FaithfulnessRecord(
+            qid="q1",
+            question="q",
+            answer="answer",
+            claims=(),
+            citations_parsed=False,
+            citations=(),
+            answer_match=True,
+        ),
+        FaithfulnessRecord(
+            qid="q2",
+            question="q",
+            answer="answer",
+            claims=(),
+            citations_parsed=False,
+            citations=(),
+            answer_match=None,  # unlabelled: must not dilute the rate
+        ),
+    ]
+    metrics = {m.name: m.value for m in _aggregate(records)}
+
+    assert metrics["answer_accuracy"] == 1.0

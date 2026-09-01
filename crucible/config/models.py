@@ -164,6 +164,12 @@ class SecuritySuiteConfig(StrictConfig):
     # Each named condition is evaluated and reported as its own variant, so
     # attack success is shown with and without each defense.
     defenses: tuple[DefenseName, ...] = ("none", "prompt_isolation", "injection_filter")
+    # Poison and injection targets are drawn independently from the same QA pool,
+    # so they overlap by chance. On an overlapping question both attack documents
+    # echo it and compete for the same retrieval slots, and the two trials become
+    # the same query scored against different markers. Setting this partitions the
+    # pool so every question carries at most one attack.
+    disjoint_targets: bool = False
 
     @model_validator(mode="after")
     def _has_an_attack_and_defenses(self) -> SecuritySuiteConfig:
