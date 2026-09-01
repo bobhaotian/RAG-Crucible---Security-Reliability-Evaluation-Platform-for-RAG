@@ -103,8 +103,18 @@ async def run_security_suite(
         if config.poisoning.enabled
         else []
     )
+    # Poison picks first; with disjoint_targets the injection pool excludes those
+    # questions, so no question carries both attacks. `select_targets` returns the
+    # whole pool when the request exceeds it, so a small remainder silently yields
+    # fewer injection targets than asked for rather than failing.
+    injection_pool = qa_items
+    if config.disjoint_targets and poison:
+        taken = {attack.qid for attack in poison}
+        injection_pool = [item for item in qa_items if item.qid not in taken]
     injections = (
-        generate_injection_attacks(qa_items, config.injection.targets, seed + _INJECT_SEED_OFFSET)
+        generate_injection_attacks(
+            injection_pool, config.injection.targets, seed + _INJECT_SEED_OFFSET
+        )
         if config.injection.enabled
         else []
     )

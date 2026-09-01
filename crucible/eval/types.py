@@ -54,7 +54,10 @@ class FaithfulnessRecord(StrictModel):
     claims: tuple[ClaimJudgment, ...]
     citations_parsed: bool  # did the generator emit usable [n] markers?
     citations: tuple[CitationJudgment, ...]  # judged parsed citations only
-    answer_match: bool  # gold answer string appears in the answer
+    # Gold answer string appears in the answer. None when the corpus labels
+    # documents rather than answers (BEIR-style `gold_docs`), so there is no
+    # answer string to check — scoring those as False would report a real 0.0.
+    answer_match: bool | None = None
 
 
 class MarkerRef(StrictModel):

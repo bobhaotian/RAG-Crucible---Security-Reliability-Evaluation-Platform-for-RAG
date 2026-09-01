@@ -1,0 +1,48 @@
+# The disjoint-target ablation (docs/experiments/disjoint-targets.md).
+#
+# Identical to specs/demo.yaml except that the security suite partitions the QA
+# pool so no question is targeted by both poison and injection, and only the
+# security suite runs. Its purpose is to answer one question: is the gap between
+# the *_compromise_rate metrics and their *_success siblings a real measurement,
+# or an artifact of the two target sets overlapping by chance?
+name: demo-local-disjoint
+seed: 42
+
+corpus:
+  documents: datasets/seeded/corpus
+  qa: datasets/seeded/qa.jsonl
+
+ingest:
+  filters: [dedup, language, boilerplate]
+  chunker:
+    type: fixed
+    size_tokens: 350
+    overlap_tokens: 60
+
+index:
+  store: faiss
+  metric: cosine
+
+pipeline:
+  embedder:
+    provider: local
+    model: sentence-transformers/all-MiniLM-L6-v2
+  retriever:
+    k: 20
+  reranker:
+    provider: local
+    model: cross-encoder/ms-marco-MiniLM-L-6-v2
+    enabled: true
+    top_n: 5
+  generator:
+    provider: local
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    temperature: 0.0
+    max_tokens: 256
+
+suites:
+  security:
+    poisoning: {targets: 10}
+    injection: {targets: 10}
+    defenses: [none, prompt_isolation, injection_filter]
+    disjoint_targets: true

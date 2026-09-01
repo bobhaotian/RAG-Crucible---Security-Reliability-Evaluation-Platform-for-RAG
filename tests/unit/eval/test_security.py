@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
+from crucible.attacks import generate_injection_attacks, generate_poison_attacks
 from crucible.config import DefenseName, SecuritySuiteConfig
 from crucible.eval.security import _aggregate, _defenses_for, _markers_present
 from crucible.eval.types import AttackRecord, MarkerRef
+from crucible.qa import QAItem
 
 
 def test_aggregate_separates_retrieval_from_defense_success() -> None:
@@ -161,3 +163,46 @@ def test_a_marker_from_another_question_is_contamination_not_competition() -> No
     assert metrics[("poison_compromise_rate", "defense=none")] == 0.5
     assert metrics[("attack_competition_rate", "defense=none")] == 0.0
     assert metrics[("cross_question_contamination_rate", "defense=none")] == 0.5
+
+
+def _qa(n: int) -> list[QAItem]:
+    return [
+        QAItem(
+            qid=f"q{i:03d}",
+            question=f"question {i}?",
+            answer=f"{i} hours",
+            gold_fact=f"Fact {i} is {i} hours.",
+        )
+        for i in range(n)
+    ]
+
+
+def test_targets_overlap_by_default_because_both_draw_from_the_whole_pool() -> None:
+    items = _qa(20)
+    poison = generate_poison_attacks(items, 10, 11)
+    injections = generate_injection_attacks(items, 10, 13)
+
+    # Not asserting a specific overlap — only that nothing prevents one, which is
+    # the property `disjoint_targets` exists to change.
+    assert {a.qid for a in poison} & {a.qid for a in injections}
+
+
+def test_disjoint_targets_partitions_the_pool_so_no_question_carries_both() -> None:
+    items = _qa(20)
+    poison = generate_poison_attacks(items, 10, 11)
+    remaining = [item for item in items if item.qid not in {a.qid for a in poison}]
+    injections = generate_injection_attacks(remaining, 10, 13)
+
+    assert not ({a.qid for a in poison} & {a.qid for a in injections})
+    assert len(injections) == 10
+
+
+def test_disjoint_targets_yields_fewer_injections_when_the_remainder_is_small() -> None:
+    """select_targets returns the whole pool when asked for more than it holds."""
+    items = _qa(12)
+    poison = generate_poison_attacks(items, 10, 11)
+    remaining = [item for item in items if item.qid not in {a.qid for a in poison}]
+    injections = generate_injection_attacks(remaining, 10, 13)
+
+    assert len(injections) == 2
+    assert not ({a.qid for a in poison} & {a.qid for a in injections})
