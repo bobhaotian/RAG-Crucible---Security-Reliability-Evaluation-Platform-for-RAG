@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StrictModel(BaseModel):
@@ -24,9 +24,20 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class Provenance(StrictModel):
+    """Server-assigned information about where a document came from."""
+
+    source_type: str = "unknown"
+    verified: bool = False
+    trust_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    version: str | None = None
+    published_at: str | None = None
+
+
 class DocMeta(StrictModel):
     title: str | None = None
     filetype: str
+    provenance: Provenance = Field(default_factory=Provenance)
 
 
 class Document(StrictModel):
@@ -41,10 +52,11 @@ class Chunk(StrictModel):
     doc_id: str
     source: str
     text: str
-    start: int  # char offset into the (filtered) document text
+    start: int
     end: int
     section: str | None = None
     tags: tuple[str, ...] = ()
+    provenance: Provenance = Field(default_factory=Provenance)
 
 
 def doc_id_for(source: str, text: str) -> str:

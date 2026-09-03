@@ -10,7 +10,7 @@ from crucible.config import ChunkerConfig, ProviderRef
 from crucible.index import FaissIndex, IndexItem, IndexMeta
 from crucible.providers import EmbedInputType
 from crucible.providers.fake import FakeEmbedder
-from crucible.types import Chunk, chunk_id_for
+from crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _chunk(text: str, i: int) -> Chunk:
@@ -21,6 +21,7 @@ def _chunk(text: str, i: int) -> Chunk:
         text=text,
         start=i * 100,
         end=i * 100 + len(text),
+        provenance=Provenance(source_type="trusted_corpus", verified=True, trust_score=1.0),
     )
 
 
@@ -82,6 +83,10 @@ async def test_save_load_roundtrip(tmp_path: Path) -> None:
     original_hits = await index.search(query.vectors[0], k=2)
     loaded_hits = await loaded.search(query.vectors[0], k=2)
     assert [h.chunk.chunk_id for h in loaded_hits] == [h.chunk.chunk_id for h in original_hits]
+    assert all(
+        hit.chunk.provenance == original.chunk.provenance
+        for hit, original in zip(loaded_hits, original_hits, strict=True)
+    )
 
 
 async def test_load_missing_index_is_actionable(tmp_path: Path) -> None:

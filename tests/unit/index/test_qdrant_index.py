@@ -13,7 +13,7 @@ from crucible.index import IndexItem
 from crucible.index.qdrant_index import QdrantIndex
 from crucible.providers import EmbedInputType
 from crucible.providers.fake import FakeEmbedder
-from crucible.types import Chunk, chunk_id_for
+from crucible.types import Chunk, Provenance, chunk_id_for
 
 TEXTS = [
     "the drone battery lasts eighteen hours in flight",
@@ -30,6 +30,7 @@ def _chunk(text: str, i: int) -> Chunk:
         text=text,
         start=i,
         end=i + len(text),
+        provenance=Provenance(source_type="trusted_corpus", verified=True, trust_score=1.0),
     )
 
 
@@ -54,6 +55,9 @@ async def test_search_returns_most_similar_chunk_with_payload() -> None:
     hits = await index.search(query.vectors[0], k=3)
     assert len(hits) == 3
     assert hits[0].chunk.text == TEXTS[0]  # full Chunk round-trips through the payload
+    assert hits[0].chunk.provenance == Provenance(
+        source_type="trusted_corpus", verified=True, trust_score=1.0
+    )
     assert hits[0].score >= hits[1].score
 
 

@@ -24,7 +24,7 @@ from crucible.providers import (
     RerankResult,
     Usage,
 )
-from crucible.types import Chunk, chunk_id_for
+from crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _config(*, rerank_enabled: bool = True, injection_filter: bool = False) -> PipelineConfig:
@@ -201,6 +201,56 @@ async def test_answer_applies_filter_builds_citations_and_propagates_usage() -> 
     assert answer.usage == Usage(input_tokens=7, output_tokens=3)
     assert "untrusted" in generator.calls[0][0][0].content.lower()
     assert answer.timings.total_ms >= 0
+
+
+async def test_answer_abstains_on_unresolved_trusted_conflict_without_generation() -> None:
+    trusted = Provenance(source_type="trusted_corpus", verified=True, trust_score=1.0)
+    first = _chunk(1, "Battery life is 14 hours.").model_copy(update={"provenance": trusted})
+    second = _chunk(2, "Battery life is 12 hours.").model_copy(update={"provenance": trusted})
+    pipeline, _, _, _, generator = _pipeline([first, second], rerank_enabled=False)
+
+    answer = await pipeline.answer(
+        "What is the battery life?", defenses=DefensesConfig(answer_integrity=True)
+    )
+
+    assert "sources conflict" in answer.text
+    assert "hours: 12, 14" in answer.text
+    assert answer.citations == []
+    assert answer.usage == Usage()
+    assert answer.timings.generate_ms == 0.0
+    assert generator.calls == []
+
+
+async def test_answer_filters_lower_trust_conflict_then_generates() -> None:
+    trusted = Provenance(source_type="trusted_corpus", verified=True, trust_score=1.0)
+    upload = Provenance(source_type="user_upload", verified=False, trust_score=0.2)
+    official = _chunk(1, "Battery life is 14 hours.").model_copy(update={"provenance": trusted})
+    poisoned = _chunk(2, "Battery life is 12 hours.").model_copy(update={"provenance": upload})
+    generator = StubGenerator("Battery life is 14 hours [1].")
+    pipeline, _, _, _, _ = _pipeline(
+        [official, poisoned], rerank_enabled=False, generator=generator
+    )
+
+    answer = await pipeline.answer(
+        "What is the battery life?", defenses=DefensesConfig(answer_integrity=True)
+    )
+
+    assert [candidate.chunk for candidate in answer.context.candidates] == [official]
+    assert len(generator.calls) == 1
+
+
+async def test_answer_integrity_abstains_when_only_unverified_evidence_exists() -> None:
+    upload = Provenance(source_type="user_upload", verified=False, trust_score=0.2)
+    unverified = _chunk(1, "Battery life is 12 hours.").model_copy(update={"provenance": upload})
+    pipeline, _, _, _, generator = _pipeline([unverified], rerank_enabled=False)
+
+    answer = await pipeline.answer(
+        "What is the battery life?", defenses=DefensesConfig(answer_integrity=True)
+    )
+
+    assert "no sufficiently trusted source" in answer.text
+    assert answer.context.candidates == []
+    assert generator.calls == []
 
 
 def test_with_index_reuses_providers_with_a_new_index() -> None:

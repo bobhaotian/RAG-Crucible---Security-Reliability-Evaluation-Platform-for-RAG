@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from crucible.pipeline import build_messages, filter_injected_chunks, looks_like_injection
+from crucible.pipeline import (
+    build_messages,
+    filter_injected_chunks,
+    filter_untrusted_chunks,
+    looks_like_injection,
+)
 from crucible.pipeline.types import Candidate, RankedContext
-from crucible.types import Chunk, chunk_id_for
+from crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _candidate(text: str, i: int, source: str = "doc.md") -> Candidate:
@@ -48,6 +53,39 @@ def test_filter_is_noop_when_clean() -> None:
     filtered, removed = filter_injected_chunks(context)
     assert removed == 0
     assert filtered is context
+
+
+def test_provenance_filter_drops_unverified_and_low_trust_chunks() -> None:
+    trusted = _candidate("Official value: 14 hours.", 0)
+    trusted = trusted.model_copy(
+        update={
+            "chunk": trusted.chunk.model_copy(
+                update={
+                    "provenance": Provenance(
+                        source_type="trusted_corpus", verified=True, trust_score=1.0
+                    )
+                }
+            )
+        }
+    )
+    poisoned = _candidate("Uploaded value: 12 hours.", 1)
+    poisoned = poisoned.model_copy(
+        update={
+            "chunk": poisoned.chunk.model_copy(
+                update={
+                    "provenance": Provenance(
+                        source_type="poison_attack", verified=False, trust_score=0.0
+                    )
+                }
+            )
+        }
+    )
+    context = RankedContext(candidates=[trusted, poisoned], rerank_applied=True)
+
+    filtered, removed = filter_untrusted_chunks(context)
+
+    assert removed == 1
+    assert filtered.candidates == [trusted]
 
 
 def test_isolation_changes_system_prompt_not_block_format() -> None:

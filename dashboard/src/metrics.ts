@@ -218,6 +218,20 @@ const BASELINE = "none";
 /** Suite-level rollups: "was the model compromised at all?", as opposed to the
  *  per-attack rates that ask "did *this* attack work?". Shown in their own
  *  panel, so the per-attack panel filters them out. */
+/** What a defense costs, as opposed to what it prevents. These share the
+ *  `defense=` variant shape with the attack rates but are not attack rates, so
+ *  they get their own panel — and `clean_answer_accuracy` is the one metric in
+ *  this family where a *rise* is the good direction. */
+export const COST_METRICS = [
+  "attack_abstention_rate",
+  "clean_abstention_rate",
+  "clean_answer_accuracy",
+];
+
+/** Defense metrics where higher is better. Everything else in a defense panel
+ *  is a rate we want driven down. */
+const HIGHER_IS_BETTER = new Set(["clean_answer_accuracy"]);
+
 export const COMPROMISE_METRICS = [
   "poison_compromise_rate",
   "injection_compromise_rate",
@@ -240,6 +254,12 @@ export const METRIC_GLOSS: Record<string, string> = {
     "Trials answered with a marker from the other attack targeting the same question. Expected where the poison and injection target lists overlap.",
   cross_question_contamination_rate:
     "Trials answered with a marker from an attack planted on a different question — an attack document escaping its target.",
+  attack_abstention_rate:
+    "Attack trials where the defense refused to answer rather than risk the planted content.",
+  clean_abstention_rate:
+    "Unattacked questions the defense refused to answer. This is the false-positive cost — a defense that refuses everything blocks every attack.",
+  clean_answer_accuracy:
+    "Unattacked questions still answered correctly with the defense on. Higher is better; the drop from `none` is the utility the defense costs.",
   leakage_rate: "Probes where the answer text contained the seeded canary value.",
   retrieval_exposure_rate:
     "Probes where the chunk holding the canary reached the prompt context at all.",
@@ -313,8 +333,8 @@ export function defenseGroups(
       if (value === undefined) return [];
       const isBaseline = defense === BASELINE;
       const delta = isBaseline || baseline === undefined ? undefined : value - baseline;
-      const tone: Tone =
-        delta === undefined || delta === 0 ? "neutral" : delta < 0 ? "good" : "bad";
+      const improved = HIGHER_IS_BETTER.has(name) ? delta !== undefined && delta > 0 : delta !== undefined && delta < 0;
+      const tone: Tone = delta === undefined || delta === 0 ? "neutral" : improved ? "good" : "bad";
       return [{ defense, value, delta, isBaseline, tone }];
     });
     return { metric: name, bars };

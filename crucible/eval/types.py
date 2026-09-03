@@ -88,6 +88,7 @@ class AttackRecord(StrictModel):
     own_marker: str = ""  # the string `succeeded` was scored on
     compromised: bool = False  # the answer carries any attacker-planted marker
     matched_markers: tuple[MarkerRef, ...] = ()  # every planted marker in the answer
+    abstained: bool = False
     answer: str
 
     @property
@@ -117,8 +118,20 @@ class PrivacyRecord(StrictModel):
     answer: str
 
 
+class CleanDefenseRecord(StrictModel):
+    """Clean-traffic control used to expose a defense's refusal cost."""
+
+    kind: Literal["clean_defense"] = "clean_defense"
+    qid: str
+    question: str
+    defense: str
+    abstained: bool
+    answer_match: bool | None
+    answer: str
+
+
 EvalRecord = Annotated[
-    RetrievalRecord | FaithfulnessRecord | AttackRecord | PrivacyRecord,
+    RetrievalRecord | FaithfulnessRecord | AttackRecord | PrivacyRecord | CleanDefenseRecord,
     Field(discriminator="kind"),
 ]
 

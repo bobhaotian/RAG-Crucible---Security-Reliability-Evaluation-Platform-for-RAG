@@ -11,7 +11,8 @@ from crucible.config import DefensesConfig, PipelineConfig
 from crucible.index import VectorIndex
 from crucible.obs import StageTimer
 from crucible.pipeline.citations import parse_citations
-from crucible.pipeline.defenses import filter_injected_chunks
+from crucible.pipeline.consistency import ClaimConflict, resolve_numeric_conflicts
+from crucible.pipeline.defenses import filter_injected_chunks, filter_untrusted_chunks
 from crucible.pipeline.prompts import build_messages
 from crucible.pipeline.types import Answer, Candidate, RankedContext, StageTimings
 from crucible.providers import (
@@ -21,6 +22,7 @@ from crucible.providers import (
     GenParams,
     Message,
     Reranker,
+    Usage,
 )
 
 
@@ -137,6 +139,33 @@ class RagPipeline:
         context = await self.build_context(query, candidates, timer=timer)
         if active.injection_filter:
             context, _ = filter_injected_chunks(context)
+        if active.answer_integrity:
+            decision = resolve_numeric_conflicts(query, context)
+            if decision.action == "abstain":
+                return Answer(
+                    text=_conflict_abstention(decision.conflicts),
+                    citations=[],
+                    context=decision.context,
+                    usage=Usage(),
+                    timings=_stage_timings(timer),
+                    abstained=True,
+                    abstention_reason=decision.reason,
+                )
+            context = decision.context
+            context, _ = filter_untrusted_chunks(context)
+            if not context.candidates:
+                return Answer(
+                    text=(
+                        "The retrieved evidence has no sufficiently trusted source. "
+                        "I cannot provide a reliable answer."
+                    ),
+                    citations=[],
+                    context=context,
+                    usage=Usage(),
+                    timings=_stage_timings(timer),
+                    abstained=True,
+                    abstention_reason="no_sufficiently_trusted_source",
+                )
         messages = build_messages(query, context, isolation=active.prompt_isolation)
         params = GenParams(
             temperature=self._config.generator.temperature,
@@ -145,13 +174,7 @@ class RagPipeline:
         with timer.stage("generate"):
             generated = await self._generator.generate(messages, params=params)
         citations = parse_citations(generated.text, context)
-        timings = StageTimings(
-            embed_query_ms=timer.get("embed_query") or 0.0,
-            retrieve_ms=timer.get("retrieve") or 0.0,
-            rerank_ms=timer.get("rerank"),
-            generate_ms=timer.get("generate") or 0.0,
-            total_ms=timer.total_ms(),
-        )
+        timings = _stage_timings(timer)
         return Answer(
             text=generated.text,
             citations=citations,
@@ -159,3 +182,21 @@ class RagPipeline:
             usage=generated.usage,
             timings=timings,
         )
+
+
+def _stage_timings(timer: StageTimer) -> StageTimings:
+    return StageTimings(
+        embed_query_ms=timer.get("embed_query") or 0.0,
+        retrieve_ms=timer.get("retrieve") or 0.0,
+        rerank_ms=timer.get("rerank"),
+        generate_ms=timer.get("generate") or 0.0,
+        total_ms=timer.total_ms(),
+    )
+
+
+def _conflict_abstention(conflicts: tuple[ClaimConflict, ...]) -> str:
+    details = "; ".join(f"{conflict.unit}: {', '.join(conflict.values)}" for conflict in conflicts)
+    return (
+        f"The retrieved sources conflict ({details}). "
+        "I cannot provide a reliable answer from the available evidence."
+    )

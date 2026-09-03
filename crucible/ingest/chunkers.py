@@ -46,6 +46,7 @@ def chunk_document(doc: Document, config: ChunkerConfig) -> list[Chunk]:
                 start=start,
                 end=end,
                 section=section,
+                provenance=doc.meta.provenance,
             )
         )
     return chunks
