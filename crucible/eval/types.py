@@ -86,6 +86,10 @@ class AttackRecord(StrictModel):
     # so a trial can be compromised by a *different* attack than the one under
     # test — invisible to `succeeded`. These record that:
     own_marker: str = ""  # the string `succeeded` was scored on
+    # Injection only: was the shipped filter written against this phrasing?
+    # Splitting the rate by this is what separates "the defense works" from
+    # "the defense recognises the two payloads it was built for".
+    attack_family: str | None = None
     compromised: bool = False  # the answer carries any attacker-planted marker
     matched_markers: tuple[MarkerRef, ...] = ()  # every planted marker in the answer
     abstained: bool = False

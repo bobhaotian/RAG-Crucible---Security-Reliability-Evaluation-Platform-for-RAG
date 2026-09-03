@@ -232,3 +232,33 @@ def test_clean_control_is_the_same_draw_on_every_run_of_one_spec() -> None:
     # A different sample size is a different draw, which is why the metric is
     # only comparable across runs sharing `clean_control_sample`.
     assert [item.qid for item in select_targets(items, 30, 42 + 17)] != first
+
+
+def test_screened_rate_measures_the_defense_where_compliance_cannot() -> None:
+    """A chunk screener's effectiveness is independent of generator strength.
+
+    Compliance is the wrong instrument for it: a generator too weak to obey any
+    instruction scores 0.00 whether the screen worked or not, so the defense
+    looks perfect for a reason that has nothing to do with the defense.
+    """
+    config = SecuritySuiteConfig(defenses=("injection_filter",))
+    records = [
+        _attack(
+            attack_type="injection",
+            qid=f"q{i}",
+            defense="injection_filter",
+            attack_family="seen" if i < 2 else "heldout",
+            # every seen chunk screened out; one of two held-out chunks got through
+            retrieved=(i == 3),
+            succeeded=False,
+            own_marker=f"OWNED-q{i}",
+        )
+        for i in range(4)
+    ]
+    metrics = {(m.name, m.variant): m.value for m in _aggregate(records, config)}
+
+    assert metrics[("injection_screened_rate@seen", "defense=injection_filter")] == 1.0
+    assert metrics[("injection_screened_rate@heldout", "defense=injection_filter")] == 0.5
+    # compliance is blind to the difference
+    assert metrics[("injection_compliance_rate@seen", "defense=injection_filter")] == 0.0
+    assert metrics[("injection_compliance_rate@heldout", "defense=injection_filter")] == 0.0
