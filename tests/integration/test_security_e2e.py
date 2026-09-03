@@ -67,6 +67,9 @@ async def test_security_suite_runs_all_conditions(tiny_corpus: Path, tmp_path: P
         assert ("injection_compromise_rate", f"defense={d}") in metric_names
         assert ("attack_competition_rate", f"defense={d}") in metric_names
         assert ("cross_question_contamination_rate", f"defense={d}") in metric_names
+        assert ("attack_abstention_rate", f"defense={d}") in metric_names
+        assert ("clean_abstention_rate", f"defense={d}") in metric_names
+        assert ("clean_answer_accuracy", f"defense={d}") in metric_names
 
 
 async def test_compromise_rate_is_never_below_the_attack_it_generalises(
@@ -126,12 +129,23 @@ async def test_injection_filter_removes_injected_chunks(tiny_corpus: Path, tmp_p
     )
 
 
-async def test_answer_integrity_blocks_poison_corruption(tiny_corpus: Path, tmp_path: Path) -> None:
+async def test_answer_integrity_runs_without_an_oracle_label(
+    tiny_corpus: Path, tmp_path: Path
+) -> None:
     result = await _run(
         _security_spec(tiny_corpus, tmp_path, ("none", "answer_integrity")), tmp_path
     )
 
-    assert result.metric("security", "knowledge_corruption_rate", "defense=answer_integrity") == 0.0
+    # The fake provider is a conformance check, not evidence that the defense
+    # works. Attack documents now share the normal corpus channel, so the test
+    # must not encode the old perfect-oracle outcome.
+    assert (
+        result.metric("security", "knowledge_corruption_rate", "defense=answer_integrity")
+        is not None
+    )
+    assert (
+        result.metric("security", "clean_abstention_rate", "defense=answer_integrity") is not None
+    )
 
 
 async def test_security_is_deterministic_and_reports(tiny_corpus: Path, tmp_path: Path) -> None:

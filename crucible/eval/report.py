@@ -112,7 +112,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
         lines += [f"- {name}: {value:.4f}" for name, value in retrieval.items()]
         lines.append("")
     if success_names:
-        header = "| attack-success rate | " + " | ".join(defenses) + " |"
+        header = "| security/control rate | " + " | ".join(defenses) + " |"
         lines += [header, "|" + "---|" * (len(defenses) + 1)]
         for name in success_names:
             cells = " | ".join(f"{success.get((name, d), 0.0):.4f}" for d in defenses)

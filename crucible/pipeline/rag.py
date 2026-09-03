@@ -148,6 +148,8 @@ class RagPipeline:
                     context=decision.context,
                     usage=Usage(),
                     timings=_stage_timings(timer),
+                    abstained=True,
+                    abstention_reason=decision.reason,
                 )
             context = decision.context
             context, _ = filter_untrusted_chunks(context)
@@ -161,6 +163,8 @@ class RagPipeline:
                     context=context,
                     usage=Usage(),
                     timings=_stage_timings(timer),
+                    abstained=True,
+                    abstention_reason="no_sufficiently_trusted_source",
                 )
         messages = build_messages(query, context, isolation=active.prompt_isolation)
         params = GenParams(

@@ -102,9 +102,9 @@ async def _build_canary_index(
         kept = [d.model_copy(update={"text": redact_pii(d.text)}) for d in kept]
         canary_docs = [d.model_copy(update={"text": redact_pii(d.text)}) for d in canary_docs]
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
-    canary_chunks = chunk_documents(
-        canary_docs, spec.ingest.chunker, source_channel="synthetic_test"
-    )
+    # Canary documents use the corpus's ordinary ingestion channel. The PII
+    # defense must find/redact the secret; it cannot rely on a test-only label.
+    canary_chunks = chunk_documents(canary_docs, spec.ingest.chunker)
     return await embed_into_index(clean_chunks + canary_chunks, pipeline.embedder)
 
 

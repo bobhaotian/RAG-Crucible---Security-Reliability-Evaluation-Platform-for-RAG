@@ -99,7 +99,7 @@ without** it (and the clean `none` baseline):
 |---|---|---|---|
 | `injection_filter` | retrieval → prompt | heuristic classifier drops candidate chunks that match injection patterns before they enter the prompt | indirect prompt injection |
 | `prompt_isolation` | prompt → generation | hardened system prompt that frames retrieved text as untrusted data and instructs the model to never obey instructions within it | indirect prompt injection |
-| `answer_integrity` | retrieval → prompt | applies server-owned provenance, resolves conflicting numeric claims in favor of a unique verified winner, and otherwise abstains | knowledge corruption |
+| `answer_integrity` | retrieval → prompt | detects conflicting numeric claims and abstains unless evidence supports a unique verified winner; clean abstention and accuracy expose its cost | quantity-valued knowledge corruption |
 | `pii_filter` | ingestion | redacts PII-shaped strings (emails, keys, phone numbers) before indexing | canary extraction |
 
 Neither injection defense is expected to fix **knowledge corruption** — a
@@ -108,9 +108,11 @@ it and an isolation prompt won't un-believe it. For privacy, `pii_filter` acts
 at ingestion: it leaves **retrieval exposure** largely intact (the topical host
 text survives) while driving **generation leakage** to zero — the secret is no
 longer in the index to emit. The suite reports all of this honestly: it is a
-finding, not a gap. `answer_integrity` supplies the provenance/consistency layer
-for the benchmark's quantity-valued poisoning claims and abstains when the
-available evidence cannot support a unique trusted answer.
+finding, not a gap. `answer_integrity` is an experimental consistency layer for
+quantity-valued claims. Attack documents enter through the same ingestion
+channel as clean documents, so the harness does not label the poison for the
+defense. Clean-traffic abstention and accuracy are reported beside attack
+reduction, making refusal cost visible rather than treating it as a free win.
 
 ## What "with and without defenses" demonstrates
 

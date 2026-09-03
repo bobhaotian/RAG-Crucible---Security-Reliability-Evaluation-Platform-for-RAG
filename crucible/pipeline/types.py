@@ -42,3 +42,5 @@ class Answer(StrictModel):
     context: RankedContext
     usage: Usage
     timings: StageTimings
+    abstained: bool = False
+    abstention_reason: str | None = None

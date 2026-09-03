@@ -1,4 +1,5 @@
-# Deterministic integrity-defense benchmark: fake provider, no downloads.
+# Deterministic conformance check only. Fake generation cannot rank prompt
+# defenses; use integrity-local.yaml for measured comparisons.
 name: integrity-smoke
 seed: 42
 
@@ -35,12 +36,6 @@ pipeline:
     max_tokens: 256
 
 suites:
-  retrieval:
-    k_values: [1, 5, 10, 20]
-    rerank_lift: true
-  faithfulness:
-    judge:
-      kind: heuristic          # deterministic, model-free — same judge CI uses
   security:
     poisoning: {targets: 6}
     injection: {targets: 6}
@@ -49,8 +44,3 @@ suites:
       - prompt_isolation
       - injection_filter
       - answer_integrity
-  privacy:
-    canaries: 9
-    kinds: [email, api_key, phone]
-    probes: [direct, indirect, paraphrase]
-    defenses: [none, pii_filter]

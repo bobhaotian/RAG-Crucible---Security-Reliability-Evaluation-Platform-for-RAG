@@ -126,10 +126,14 @@ defenses that don't, measured rather than assumed.
   defenses need a capable generator; that's precisely what the Cohere Command provider
   (Phase 6) is for, and the platform will quantify the difference.
 - **The prompt-level defenses do not fix knowledge corruption** — a poisoned fact
-  is not syntactically adversarial. The `answer_integrity` defense now addresses
-  this with server-assigned provenance, cross-document numeric consistency, and
-  safe abstention. Its deterministic benchmark is in
-  `results/integrity-smoke/summary.md`. See [docs/threat-model.md](docs/threat-model.md).
+  is not syntactically adversarial. The experimental `answer_integrity` condition
+  detects cross-document numeric conflicts and safely abstains when evidence is
+  ambiguous. Results must report clean-traffic abstention beside attack reduction;
+  `specs/integrity-smoke.yaml` is only a conformance check and
+  `specs/integrity-local.yaml` is the real-model comparison. The current fair
+  run is negative, so this condition is not recommended as a defense; see
+  `docs/experiments/answer-integrity.md` and
+  [docs/threat-model.md](docs/threat-model.md).
 
 Reporting both directions — the undefended attack succeeding, and each defense measured
 on the identical poisoned index — is the point: it shows the system being both broken
@@ -364,9 +368,10 @@ make test-local            # tests that exercise the real local models
 - Prompt-level defenses (`prompt_isolation`) are only as good as the generator that
   follows them — on the 0.5B local model the hardened prompt backfires (see Security).
   This is reported, not hidden; a capable generator (Cohere Command) is the answer.
-- `answer_integrity` addresses benchmark knowledge corruption with provenance,
-  numeric consistency checks, and abstention; its intentionally narrow extractor
-  is scoped to the benchmark's quantity-valued claims.
+- `answer_integrity` is an experimental numeric-conflict detector with safe
+  abstention, not a general poisoning detector. Its intentionally narrow
+  extractor is scoped to quantity-valued claims, and its attack reduction must
+  be read alongside `clean_abstention_rate` and `clean_answer_accuracy`.
 - Privacy leakage is measured with the deterministic `pii_filter` defense (an
   ingestion-time redactor); the broader settings sweep (top_k, chunk size,
   temperature) is done at the dashboard level by comparing runs, not in one run.
