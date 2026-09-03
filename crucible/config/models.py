@@ -86,6 +86,11 @@ class DefensesConfig(StrictConfig):
     server-assigned provenance and cross-document numeric consistency to keep
     trusted evidence or abstain. The security suite flips these per-condition
     to report attack success with and without each defense.
+
+    ``answer_integrity`` is EXPERIMENTAL and off by default. Measured without
+    oracle labels it does not reduce knowledge corruption and refuses most
+    legitimate traffic — see docs/experiments/answer-integrity.md. It ships as
+    infrastructure for that negative result, not as a recommended mitigation.
     """
 
     prompt_isolation: bool = False
@@ -177,6 +182,12 @@ class SecuritySuiteConfig(StrictConfig):
     # the same query scored against different markers. Setting this partitions the
     # pool so every question carries at most one attack.
     disjoint_targets: bool = False
+    # Clean-traffic control: every defense is also run on unattacked questions so
+    # its refusal cost is visible beside its attack reduction. This is one
+    # generation per question per defense on top of the attack trials, so it is
+    # sampled by default — the full pool triples a CPU run's wall clock. None =
+    # every labeled question.
+    clean_control_sample: int | None = Field(default=20, ge=1)
 
     @model_validator(mode="after")
     def _has_an_attack_and_defenses(self) -> SecuritySuiteConfig:

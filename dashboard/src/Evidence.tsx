@@ -23,6 +23,10 @@ const METRIC_FILTERS: Record<string, Record<string, string>> = {
   injection_retrieval_rate: { attack_type: "injection" },
   poison_compromise_rate: { attack_type: "poison" },
   injection_compromise_rate: { attack_type: "injection" },
+  // The clean-traffic control is a different record kind entirely.
+  clean_abstention_rate: { kind: "clean_defense" },
+  clean_answer_accuracy: { kind: "clean_defense" },
+  attack_abstention_rate: { kind: "attack" },
   // These span both attack types, so they add no attack_type constraint.
   attack_competition_rate: { _competing: "true" },
   cross_question_contamination_rate: { _crossQuestion: "true" },
@@ -185,6 +189,9 @@ function RecordCard({ r }: { r: Record_ }) {
       <div className="record-head">
         <Outcome r={r} />
         {kind === "attack" && <ResponseSource r={r} />}
+        {str(r, "kind") === "clean_defense" && (
+          <span className="tag" title="unattacked control question">clean control</span>
+        )}
         {["defense", "probe_style", "canary_kind", "qid"].map((k) => {
           const v = str(r, k);
           return v ? (
@@ -301,6 +308,9 @@ function AttackFields({ r }: { r: Record_ }) {
 }
 
 function Outcome({ r }: { r: Record_ }) {
+  // Refusing to answer is the defense's cost, and it is invisible if the card
+  // only reports whether the gold answer was present.
+  if (bool(r, "abstained")) return <span className="badge warn">refused to answer</span>;
   const succeeded = bool(r, "succeeded");
   if (succeeded !== undefined) {
     if (succeeded) return <span className="badge bad">attack succeeded</span>;

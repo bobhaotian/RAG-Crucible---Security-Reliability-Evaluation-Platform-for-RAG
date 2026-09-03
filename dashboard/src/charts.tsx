@@ -21,6 +21,7 @@ import type { Drill } from "./Evidence";
 import type { DefenseGroup } from "./metrics";
 import {
   COMPROMISE_METRICS,
+  COST_METRICS,
   METRIC_GLOSS,
   breakdown,
   understatements,
@@ -295,7 +296,9 @@ function DefenseBars({
 }
 
 export function AttackSuccess({ results, onDrill }: PanelProps) {
-  const groups = defenseGroups(results, "security", { except: COMPROMISE_METRICS });
+  const groups = defenseGroups(results, "security", {
+    except: [...COMPROMISE_METRICS, ...COST_METRICS],
+  });
   const backfire = groups
     .flatMap((g) => g.bars.map((b) => ({ ...b, metric: g.metric })))
     .filter((b) => b.delta !== undefined && b.delta > 0);
@@ -459,6 +462,44 @@ export function Compromise({ results, onDrill }: PanelProps) {
             )
           )}
         </>
+      }
+    />
+  );
+}
+
+/** What the defenses cost. A defense that refuses everything blocks every
+ *  attack, so an attack-reduction number is only readable next to this. */
+export function DefenseCost({ results, onDrill }: PanelProps) {
+  const groups = defenseGroups(results, "security", { only: COST_METRICS });
+  if (groups.length === 0) return null;
+
+  const accuracy = groups.find((g) => g.metric === "clean_answer_accuracy");
+  const worst = accuracy?.bars
+    .filter((b) => b.delta !== undefined && b.delta < 0)
+    .sort((a, b) => (a.delta ?? 0) - (b.delta ?? 0))[0];
+
+  return (
+    <DefenseBars
+      groups={groups}
+      onDrill={onDrill}
+      suite="security"
+      title="What the defenses cost"
+      lead={
+        <>
+          Every defense is also run on <b>unattacked</b> questions. A defense that refuses
+          enough traffic will drive attack success to zero without defending anything, so
+          these are the numbers that decide whether an attack reduction is real.
+        </>
+      }
+      drill={{ suite: "security", label: "clean-traffic control" }}
+      footer={
+        worst ? (
+          <p className="callout bad">
+            <b>{worst.defense} is not free.</b> It costs{" "}
+            {Math.abs(worst.delta as number).toFixed(2)} of answer accuracy on questions
+            nobody attacked — read its attack-success row against that, not on its own.
+          </p>
+        ) : undefined
       }
     />
   );

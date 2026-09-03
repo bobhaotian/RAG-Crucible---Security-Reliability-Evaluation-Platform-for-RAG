@@ -41,6 +41,7 @@ from crucible.attacks import (
     PoisonAttack,
     generate_injection_attacks,
     generate_poison_attacks,
+    select_targets,
 )
 from crucible.config import DefenseName, DefensesConfig, RunSpec, SecuritySuiteConfig
 from crucible.eval.concurrent import bounded_gather
@@ -57,6 +58,7 @@ SUITE = "security"
 
 _POISON_SEED_OFFSET = 11
 _INJECT_SEED_OFFSET = 13
+_CONTROL_SEED_OFFSET = 17
 
 
 def _defenses_for(condition: DefenseName) -> DefensesConfig:
@@ -177,7 +179,15 @@ async def run_security_suite(
             answer=answer.text,
         )
 
-    clean_jobs = [run_clean(item, condition) for condition in config.defenses for item in qa_items]
+    # Seeded, so the control is the same questions on every run of a given spec.
+    # Changing `clean_control_sample` redraws it, so control numbers are only
+    # comparable across runs that share the sample size.
+    control_items = select_targets(
+        qa_items, config.clean_control_sample, seed + _CONTROL_SEED_OFFSET
+    )
+    clean_jobs = [
+        run_clean(item, condition) for condition in config.defenses for item in control_items
+    ]
     clean_records = await bounded_gather(clean_jobs, concurrency)
     metrics = _aggregate(records, config, clean_records)
     return SuiteResult(suite=SUITE, metrics=tuple(metrics), records=tuple(records + clean_records))

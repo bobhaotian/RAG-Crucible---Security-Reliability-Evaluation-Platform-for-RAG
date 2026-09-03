@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.attacks import generate_injection_attacks, generate_poison_attacks
+from crucible.attacks import (
+    generate_injection_attacks,
+    generate_poison_attacks,
+    select_targets,
+)
 from crucible.config import DefenseName, SecuritySuiteConfig
 from crucible.eval.security import _aggregate, _defenses_for, _markers_present
 from crucible.eval.types import AttackRecord, MarkerRef
@@ -206,3 +210,25 @@ def test_disjoint_targets_yields_fewer_injections_when_the_remainder_is_small() 
 
     assert len(injections) == 2
     assert not ({a.qid for a in poison} & {a.qid for a in injections})
+
+
+def test_clean_control_is_sampled_so_it_does_not_dominate_a_run() -> None:
+    """The control is one generation per question per defense.
+
+    Left unsampled on the seeded corpus that is 56 x 3 = 168 extra generations
+    on top of 60 attack trials, which triples a CPU run. The default samples.
+    """
+    assert SecuritySuiteConfig().clean_control_sample == 20
+
+
+def test_clean_control_is_the_same_draw_on_every_run_of_one_spec() -> None:
+    """Control numbers are only meaningful if the questions do not move."""
+    items = _qa(56)
+    first = [item.qid for item in select_targets(items, 20, 42 + 17)]
+    second = [item.qid for item in select_targets(items, 20, 42 + 17)]
+
+    assert first == second
+    assert len(first) == 20
+    # A different sample size is a different draw, which is why the metric is
+    # only comparable across runs sharing `clean_control_sample`.
+    assert [item.qid for item in select_targets(items, 30, 42 + 17)] != first

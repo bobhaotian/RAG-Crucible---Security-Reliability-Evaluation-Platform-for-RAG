@@ -4,6 +4,7 @@ import { getResults, getSpec, listRuns } from "./api";
 import {
   AttackSuccess,
   Compromise,
+  DefenseCost,
   Faithfulness,
   Latency,
   PrivacyLeakage,
@@ -205,6 +206,7 @@ function SingleRun({
         <Faithfulness results={results} onDrill={onDrill} />
         <AttackSuccess results={results} onDrill={onDrill} />
         <Compromise results={results} onDrill={onDrill} />
+        <DefenseCost results={results} onDrill={onDrill} />
         <PrivacyLeakage results={results} onDrill={onDrill} />
         <Latency results={results} />
       </div>
