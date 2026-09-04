@@ -19,7 +19,7 @@ the same index and returns metrics, per-item records, plots, and a dashboard.
 
 | Suite | The question it answers | Needs labels? |
 |---|---|---|
-| **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Questions only |
+| **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Gold labels today — needs only questions once [P0-B](docs/ROADMAP.md) lands |
 | **privacy** | Does a secret in your documents escape into an answer? Seeded PII canaries, split into *reached the prompt* vs *reached the answer*. | No |
 | **retrieval** | Is the right passage being found? recall@k, nDCG@k, MRR, and the lift a reranker actually buys. | Yes — gold labels |
 | **faithfulness** | Is the answer grounded in what was retrieved? Groundedness, hallucination rate, citation precision. | Partly |
@@ -65,10 +65,15 @@ a negative result about code this repo ships, published with its method:
 
 | Finding | Where |
 |---|---|
-| Its own `prompt_isolation` defense *raises* attack success above baseline | [attack-defense-split](docs/experiments/attack-defense-split.md) |
-| Its injection filter screens 1.00 of the phrasings it was written from and 0.20 of held-out ones — a blocklist, not a detector | [attack-defense-split](docs/experiments/attack-defense-split.md) |
+| Its injection filter screens 1.00 of the phrasings it was written from and 0.20 of held-out ones — a blocklist, not a detector (Fisher *p* = 0.0007) | [attack-defense-split](docs/experiments/attack-defense-split.md) |
+| Its filter's "zero clean-traffic cost" is a property of the demo corpus, not the filter — 0 of 35 seeded chunks deleted, 6 of 7 ordinary enterprise sentences | [attack-defense-split](docs/experiments/attack-defense-split.md) |
 | A "cross-attack compromise" finding it had published was a sampling artifact, killed by its own ablation | [disjoint-targets](docs/experiments/disjoint-targets.md) |
 | A provenance-based defense that scored a perfect 0.00 was reading a label the harness gave it | [answer-integrity](docs/experiments/answer-integrity.md) |
+
+> **On sample sizes.** The demo runs 10 attacks per arm. That is enough to establish
+> the screening gap above (*p* = 0.0007, disjoint intervals) and **not** enough to rank
+> defenses against each other — a two-trial difference at n=10 is noise. Where a number
+> here is underpowered, it says so. Raising the arms is [P0-3](docs/ROADMAP.md).
 
 ## Why this exists
 
