@@ -1,10 +1,84 @@
 # rag-crucible
 
-**A security, faithfulness, and privacy evaluation platform for RAG pipelines.**
-Point it at a document corpus and a pipeline configuration (embedder, vector store,
-reranker, generator); it builds the index through a real ingestion pipeline, serves
-the pipeline, and quantifies four properties in tension — **retrieval quality, answer
-faithfulness, adversarial robustness, and privacy leakage**.
+**Every LLM red-teaming tool attacks your RAG system through the chat box.
+rag-crucible attacks it through the corpus.**
+
+It builds the vector index it then attacks — planting poisoned documents,
+indirect-injection payloads, and PII canaries into an index built from *your*
+documents, through *your* ingestion settings — and reports what got through,
+what each defense stopped, and what that defense cost you on ordinary traffic.
+
+[![ci](https://github.com/bobhaotian/RAG-Crucible---Security-Reliability-Evaluation-Platform-for-RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/bobhaotian/RAG-Crucible---Security-Reliability-Evaluation-Platform-for-RAG/actions/workflows/ci.yml)
+![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+
+## What it does
+
+You give it a corpus and a pipeline spec. It runs four evidence-backed suites over
+the same index and returns metrics, per-item records, plots, and a dashboard.
+
+| Suite | The question it answers | Needs labels? |
+|---|---|---|
+| **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Questions only |
+| **privacy** | Does a secret in your documents escape into an answer? Seeded PII canaries, split into *reached the prompt* vs *reached the answer*. | No |
+| **retrieval** | Is the right passage being found? recall@k, nDCG@k, MRR, and the lift a reranker actually buys. | Yes — gold labels |
+| **faithfulness** | Is the answer grounded in what was retrieved? Groundedness, hallucination rate, citation precision. | Partly |
+
+**Why the index matters.** Every other RAG evaluator reaches your system through an
+HTTP endpoint or a `model_callback`, so it cannot plant a document in your corpus —
+promptfoo's own poisoning docs say getting the generated documents into your
+knowledge base "will depend on your specific system." Because rag-crucible owns
+ingestion and the index, it can do things a black-box harness structurally cannot:
+
+- **Defense counterfactuals on one identical poisoned index** — the same attack, the
+  same corpus, each defense on and off, so the comparison is paired.
+- **Retrieval-stage vs generation-stage decomposition** — a PII canary that reaches
+  the prompt but not the answer is a different failure from one that never gets
+  retrieved. Same for attacks: a defense that screens a chunk is doing something
+  different from a model that ignores it.
+- **What a defense costs you** — every defense is also run on unattacked questions,
+  so its refusal rate and answer-accuracy loss are reported beside its attack
+  reduction. A defense that refuses everything blocks every attack.
+
+**Every number has receipts.** No aggregate ships without the per-item records
+behind it, browsable in the dashboard: the poisoned answer, the leaked canary, the
+claim the judge rejected.
+
+## What it does not do — yet
+
+Stated up front, because the project's credibility depends on it:
+
+- **It does not attach to your existing vector store, retriever, or deployed RAG
+  endpoint.** Today you bring a local corpus and Crucible builds its own index.
+  Qdrant support means "Crucible stores its own index in Qdrant," not "connect to
+  your collection." That gap is the top item on [the roadmap](docs/ROADMAP.md).
+- **It never mutates a production index.** Attacks run in a run-owned sandbox.
+- **It does not recommend a defense.** It reports what each one prevents and costs
+  on your data; the choice is yours. A tool that ranks defenses and also ships the
+  winner cannot be trusted to publish negative results — and this project publishes
+  them, including about its own defenses.
+
+## What it found about its own defenses
+
+The most useful thing here is the discipline, not the numbers. Every result below is
+a negative result about code this repo ships, published with its method:
+
+| Finding | Where |
+|---|---|
+| Its own `prompt_isolation` defense *raises* attack success above baseline | [attack-defense-split](docs/experiments/attack-defense-split.md) |
+| Its injection filter screens 1.00 of the phrasings it was written from and 0.20 of held-out ones — a blocklist, not a detector | [attack-defense-split](docs/experiments/attack-defense-split.md) |
+| A "cross-attack compromise" finding it had published was a sampling artifact, killed by its own ablation | [disjoint-targets](docs/experiments/disjoint-targets.md) |
+| A provenance-based defense that scored a perfect 0.00 was reading a label the harness gave it | [answer-integrity](docs/experiments/answer-integrity.md) |
+
+## Why this exists
+
+Enterprise RAG systems sit on a trade-off frontier: the settings that maximize answer
+quality (bigger context, higher top-k, aggressive retrieval) are often exactly the
+settings that make a system easier to poison, easier to prompt-inject through its own
+corpus, and leakier with sensitive documents. `rag-crucible` makes that frontier
+*measurable* — one YAML spec describes a pipeline and its evaluation; the platform
+reports the numbers with and without defenses, so hardening decisions are driven by
+evidence instead of vibes.
 
 ```mermaid
 flowchart LR
@@ -20,18 +94,6 @@ flowchart LR
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
     E -->|worker only| S[(SQLite<br/>result store)] --> D[dashboard]
 ```
-
-## Why this exists
-
-Enterprise RAG systems sit on a trade-off frontier: the settings that maximize answer
-quality (bigger context, higher top-k, aggressive retrieval) are often exactly the
-settings that make a system easier to poison, easier to prompt-inject through its own
-corpus, and leakier with sensitive documents. `rag-crucible` makes that frontier
-*measurable* — one YAML spec describes a pipeline and its evaluation; the platform
-reports the numbers with and without defenses, so hardening decisions are driven by
-evidence instead of vibes. It is the RAG-era continuation of classic
-utility–robustness–privacy work on classifiers (adversarial training,
-membership inference), applied to the system enterprises actually deploy.
 
 ## Quickstart (no API keys)
 
@@ -176,21 +238,22 @@ the standard RAG profile, now measured rather than assumed.
 
 ## Status
 
-Built in phases, each ending with tests + CI green ([CHANGELOG](CHANGELOG.md)):
+All six original build phases are complete — four evaluation suites measured from real
+runs, a provider-agnostic core (local / Cohere / OpenAI / deterministic fake), FAISS and
+Qdrant stores, an API + worker + dashboard, and green CI on every push. The phase-by-phase
+breakdown lives in the [CHANGELOG](CHANGELOG.md); what happens next is below.
 
-| Phase | Scope | Status |
-|---|---|---|
-| 0 | Design docs ([DESIGN.md](docs/DESIGN.md), [architecture.md](docs/architecture.md)) | ✅ |
-| 1 | Core spine: providers, ingestion, FAISS, RAG pipeline + citations, CLI | ✅ |
-| 2 | Retrieval + faithfulness metrics, rerank lift, `make demo` with plots | ✅ |
-| 3 | API + async runner + result store, docker-compose *(MVP cut line)* | ✅ |
-| 4 | Security suite: corpus poisoning, indirect prompt injection, defenses | ✅ |
-| 5 | Privacy suite: PII canaries, leakage measurement | ✅ |
-| 6 | Dashboard, Cohere + OpenAI providers, Qdrant adapter, polish | ✅ |
+## Roadmap
 
-All six phases are complete: four evaluation properties measured from real runs, a
-provider-agnostic core with Cohere/OpenAI/local/fake providers, FAISS + Qdrant stores,
-an API + worker + dashboard, and a green CI on every push.
+The original build phases are complete. The living
+[improvement roadmap](docs/ROADMAP.md) now tracks the next priorities: trustworthy data
+provenance and metrics, backend-faithful attack variants, safe evaluation of existing RAG
+endpoints/retrievers/vector stores, CI regression workflows, a plugin SDK, and open-source
+community/release readiness.
+
+The current supported product boundary is still **bring a corpus and spec to Crucible's
+managed reference pipeline**. Existing user-owned collections, framework pipelines, and
+black-box RAG endpoints are roadmap items, not shipped compatibility claims.
 
 ## Run it as a service
 
