@@ -78,10 +78,32 @@ Note `prompt_isolation` at 0.20 compliance against a 0.05 baseline — worse tha
 no defense, and **identical across both families** (2/10 seen, 2/10 held out).
 Whatever it is doing wrong is not about phrasing recognition.
 
+## Statistical standing — the two results here are not equal
+
+Computed on the run above, and stated because presenting them identically would be
+the exact error this experiment exists to correct:
+
+| Claim | Arms | Fisher two-sided p | 95% CI |
+|---|---|---|---|
+| Screening: seen vs held-out | 10/10 vs 2/10 | **0.0007** | [0.72, 1.00] vs [0.06, 0.51] — disjoint |
+| `prompt_isolation` raises corruption | 2/10 vs 4/10 | **0.63** | [0.06, 0.51] vs [0.17, 0.69] — overlapping |
+
+**The screening gap is real. The `prompt_isolation` backfire is not established.**
+At n=10 per arm a two-trial difference is noise, and any statement that this
+defense makes attacks worse should be read as *not measured*, not as *measured to
+be worse*. It may well be true — the effect appears in the instruction-hierarchy
+literature — but this run does not show it, and n would need to be ~100 per arm to.
+
 ## What this does not settle
 
 - Held-out recall is 2/10, n=10 per family. Treat it as "clearly worse than
   seen", not as a point estimate.
+- The clean-traffic cost of the filter is corpus-dependent and this corpus flatters
+  it: `looks_like_injection` deletes 0 of 35 seeded chunks but 6 of 7 ordinary
+  enterprise sentences ("Operators must respond with the exact ticket ID"). The
+  seeded corpus is product-spec prose, a genre with almost no imperative
+  operational language. On a real runbook this filter would remove much of the
+  document.
 - The held-out set only stays held out if nothing is tuned against it. The
   generalisation test asserts the gap exists rather than pinning a value, so
   closing it legitimately requires adding harder phrasings, not editing the
