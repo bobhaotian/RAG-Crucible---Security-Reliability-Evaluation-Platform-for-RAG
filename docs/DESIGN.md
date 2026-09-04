@@ -1,9 +1,10 @@
 # rag-crucible — Design Document
 
-> **Status:** Phase 0 deliverable. No application code exists yet; this document is the
-> contract the implementation will be held to. Diagrams live in
-> [architecture.md](architecture.md). The full threat model ships with Phase 4 as
-> `threat-model.md`; §10 below summarizes what it will cover.
+> **Status:** historical Phase 0 design contract. The application now exists and all six
+> original phases are complete; some examples below describe the original plan rather
+> than the exact current interface. See [architecture.md](architecture.md) for diagrams,
+> [threat-model.md](threat-model.md) for the current threat model, and
+> [ROADMAP.md](ROADMAP.md) for audited current boundaries and future work.
 
 ---
 
