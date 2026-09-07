@@ -147,27 +147,40 @@ def test_schema_1_that_did_record_the_scan_keeps_every_value() -> None:
     assert [m.qid for m in migrated.cross_question_markers] == ["q9"]
 
 
-def test_committed_smoke_fake_run_keeps_its_recorded_scans() -> None:
-    """The concrete artifact the bug above was found on.
+_PRESERVED_ATTACK_FIELDS = ("own_marker", "matched_markers", "abstained")
 
-    It carries no `schema_version`, so it migrates as schema 1 — while having
-    recorded all 36 marker scans. Every one must survive the upgrade.
-    """
-    path = REPO_ROOT / "results/smoke-fake/results.json"
+
+def _recorded_counts(path: Path) -> dict[str, int]:
+    """How many attack records on disk carry each preserved field."""
     raw = json.loads(path.read_text(encoding="utf-8"))
-    on_disk = [r for s in raw["suites"] for r in s["records"] if r["kind"] == "attack"]
-    recorded = [r for r in on_disk if r.get("matched_markers") is not None]
-    assert recorded, "fixture no longer exercises the case this guards"
+    records = [r for s in raw["suites"] for r in s["records"] if r["kind"] == "attack"]
+    return {f: sum(1 for r in records if r.get(f) is not None) for f in _PRESERVED_ATTACK_FIELDS}
 
+
+@pytest.mark.parametrize("path", RESULT_ARTIFACTS, ids=lambda p: p.parent.name)
+def test_migration_preserves_every_recorded_scan(path: Path) -> None:
+    """No real artifact loses a value it recorded.
+
+    Stated as a property over whatever artifacts exist rather than against one
+    named file, because the file this bug was found on turned out to be an
+    uncommitted local run — the earlier version of this test passed locally and
+    failed in CI. `test_the_artifact_corpus_exercises_preservation` below keeps
+    the property from going vacuous.
+    """
+    on_disk = _recorded_counts(path)
     loaded = [r for s in load_result_file(path).suites for r in s.records if r.kind == "attack"]
-    assert len(loaded) == len(on_disk)
-    assert sum(1 for r in loaded if r.matched_markers is not None) == len(recorded)
-    assert sum(1 for r in loaded if r.own_marker is not None) == sum(
-        1 for r in on_disk if r.get("own_marker") is not None
-    )
-    assert sum(1 for r in loaded if r.abstained is not None) == sum(
-        1 for r in on_disk if r.get("abstained") is not None
-    )
+    for field in _PRESERVED_ATTACK_FIELDS:
+        after = sum(1 for r in loaded if getattr(r, field) is not None)
+        assert after == on_disk[field], (
+            f"{path}: {field} recorded on {on_disk[field]} records but only {after} survived"
+        )
+
+
+def test_the_artifact_corpus_exercises_preservation() -> None:
+    """At least one committed artifact must actually carry a recorded scan,
+    or the parametrized preservation test above proves nothing."""
+    total = sum(_recorded_counts(p)["matched_markers"] for p in RESULT_ARTIFACTS)
+    assert total > 0, "no artifact carries a recorded marker scan; preservation is untested"
 
 
 def test_stored_foreign_markers_key_is_dropped_not_reinterpreted() -> None:
