@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from crucible.attacks import (
     INJECT_SOURCE_PREFIX,
     POISON_SOURCE_PREFIX,
@@ -61,11 +63,78 @@ def test_injection_doc_carries_token_and_rotates_templates() -> None:
         assert attack.token in attack.document.text
         assert attack.question in attack.document.text  # retrievable
         assert attack.document.source.startswith(INJECT_SOURCE_PREFIX)
-    assert {a.template for a in attacks} == {"ignore_previous", "exfil_token"}
+    # Families alternate, so a small target count still samples both.
+    assert {a.family for a in attacks} == {"seen", "heldout"}
+    assert len([a for a in attacks if a.family == "seen"]) == 3
 
 
-def test_injection_payloads_trip_the_filter() -> None:
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z]+", text.lower())
+
+
+def test_no_defense_pattern_reproduces_a_phrase_from_the_attack_set() -> None:
+    """A defense may not be written by copying phrases out of the test set.
+
+    Shared vocabulary is unavoidable — both sides talk about instructions and
+    answers. Reproducing a *phrase* is not: it means the pattern was authored by
+    reading the payload rather than the threat model.
+    """
+    from crucible.attacks.injection import _PAYLOADS
+    from crucible.pipeline.defenses import _INJECTION_PATTERNS
+
+    payload_trigrams = set()
+    for text in _PAYLOADS.values():
+        words = _words(text)
+        payload_trigrams |= {tuple(words[i : i + 3]) for i in range(len(words) - 2)}
+
+    for pattern in _INJECTION_PATTERNS:
+        literal = re.sub(r"\\s\+|\\b|[()?|\\]|\{[^}]*\}", " ", pattern.pattern)
+        words = _words(literal)
+        quoted = [
+            tuple(words[i : i + 3])
+            for i in range(len(words) - 2)
+            if tuple(words[i : i + 3]) in payload_trigrams
+        ]
+        assert not quoted, f"pattern {pattern.pattern!r} quotes the attack set: {quoted}"
+
+
+def test_the_filter_generalises_worse_than_it_scores_on_its_own_family() -> None:
+    """The generalisation gap, pinned as a property rather than assumed away.
+
+    The old version of this test asserted the filter trips on *every* generated
+    payload — true only because every payload was one of the two its regexes
+    encoded, which is what made `injection_compliance_rate 0.00` a self-match.
+
+    This asserts the honest shape instead: full recall on the phrasings the
+    filter was designed against, strictly worse on phrasings it was not. If a
+    change makes held-out recall match seen recall, the filter has either
+    genuinely generalised or been tuned against the held-out set — either way
+    the response is a new held-out phrasing, not deleting this assertion.
+    """
     from crucible.pipeline import looks_like_injection
 
-    for attack in generate_injection_attacks(ITEMS, n=6, seed=3):
-        assert looks_like_injection(attack.document.text)
+    attacks = generate_injection_attacks(ITEMS, n=8, seed=3)
+    seen = [a for a in attacks if a.family == "seen"]
+    heldout = [a for a in attacks if a.family == "heldout"]
+    assert seen and heldout
+
+    seen_recall = sum(looks_like_injection(a.document.text) for a in seen) / len(seen)
+    heldout_recall = sum(looks_like_injection(a.document.text) for a in heldout) / len(heldout)
+
+    assert seen_recall == 1.0
+    assert heldout_recall < seen_recall
+
+
+def test_the_isolation_prompt_does_not_enumerate_payload_behaviours() -> None:
+    """A prompt that recites the test set measures recall of that list."""
+    from crucible.attacks.injection import _PAYLOADS
+    from crucible.pipeline.prompts import ISOLATION_SYSTEM_PROMPT
+
+    prompt_trigrams = {
+        tuple(_words(ISOLATION_SYSTEM_PROMPT)[i : i + 3])
+        for i in range(len(_words(ISOLATION_SYSTEM_PROMPT)) - 2)
+    }
+    for name, text in _PAYLOADS.items():
+        words = _words(text)
+        shared = {tuple(words[i : i + 3]) for i in range(len(words) - 2)} & prompt_trigrams
+        assert not shared, f"isolation prompt quotes the {name} payload: {shared}"
