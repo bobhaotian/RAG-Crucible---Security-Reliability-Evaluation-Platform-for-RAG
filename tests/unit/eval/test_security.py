@@ -86,6 +86,7 @@ def _attack(**overrides: object) -> AttackRecord:
         "own_marker": "",
         "matched_markers": (),
         "abstained": False,
+        "compromised": False,
         "answer": "",
     }
     return AttackRecord.model_validate(base | overrides)

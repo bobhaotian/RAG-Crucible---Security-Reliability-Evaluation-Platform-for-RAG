@@ -38,8 +38,12 @@ def _spec_json() -> dict[str, Any]:
 
 
 def _schema_1_artifact() -> dict[str, Any]:
-    """A schema-1 result: no schema_version, no run_id, attack records that
-    stored `foreign_markers` and never recorded the marker scan."""
+    """A schema-1 result shaped like the oldest real one in the repo.
+
+    Modelled on the committed `results/demo` run: no `schema_version`, no
+    `run_id`, and attack records that stored `foreign_markers` while recording
+    neither the marker scan nor `compromised`.
+    """
     return {
         "name": "legacy-run",
         "spec_hash": "a" * 64,
@@ -63,7 +67,6 @@ def _schema_1_artifact() -> dict[str, Any]:
                         "defense": "none",
                         "retrieved": True,
                         "succeeded": False,
-                        "compromised": False,
                         "foreign_markers": [],
                         "answer": "14 hours",
                     }
@@ -89,6 +92,7 @@ def test_fields_schema_1_never_recorded_read_as_unavailable() -> None:
     assert record.abstained is None, "unrecorded refusal must not read as 'did not refuse'"
     assert record.matched_markers is None, "an unscanned answer is not an empty scan"
     assert record.own_marker is None
+    assert record.compromised is None, "an unscanned trial is not an uncompromised one"
 
 
 def test_derived_markers_are_unavailable_not_empty_for_schema_1() -> None:
@@ -147,7 +151,59 @@ def test_schema_1_that_did_record_the_scan_keeps_every_value() -> None:
     assert [m.qid for m in migrated.cross_question_markers] == ["q9"]
 
 
-_PRESERVED_ATTACK_FIELDS = ("own_marker", "matched_markers", "abstained")
+def test_compromised_is_unavailable_when_the_scan_was_not_recorded() -> None:
+    """`compromised` is the boolean view of the same scan `matched_markers`
+    details, so it cannot be available when that scan is not. Defaulting it to
+    False would say "not compromised" about a trial nobody scanned."""
+    record = load_result_json(json.dumps(_schema_1_artifact())).suites[0].records[0]
+    assert isinstance(record, AttackRecord)
+    assert record.compromised is None
+
+
+def test_compromise_rate_is_omitted_not_zeroed_for_unrecorded_trials() -> None:
+    """The metric that would otherwise report a fabricated 0.0.
+
+    It also must not be computed over just the subset that recorded the scan:
+    its documented meaning is `compromise - success` on a shared denominator,
+    which a subset silently breaks.
+    """
+    from crucible.config import SecuritySuiteConfig
+    from crucible.eval.security import _aggregate
+
+    def rec(**kw: Any) -> AttackRecord:
+        base = {
+            "attack_type": "poison",
+            "qid": "q1",
+            "question": "q?",
+            "defense": "none",
+            "retrieved": True,
+            "succeeded": False,
+            "answer": "",
+        }
+        return AttackRecord.model_validate({**base, **kw})
+
+    config = SecuritySuiteConfig(defenses=("none",))
+
+    unrecorded = [rec(qid="q1"), rec(qid="q2")]  # compromised defaults to None
+    names = {m.name for m in _aggregate(unrecorded, config)}
+    assert "knowledge_corruption_rate" in names, "success is still measurable"
+    assert "poison_compromise_rate" not in names, "must not report a 0.0 nobody measured"
+
+    # Mixed: one trial recorded the scan, one did not -> still omitted, because
+    # a partial denominator breaks the pair's stated relationship.
+    mixed = [rec(qid="q1", compromised=True, matched_markers=()), rec(qid="q2")]
+    assert "poison_compromise_rate" not in {m.name for m in _aggregate(mixed, config)}
+
+    # Fully recorded -> reported, on the same denominator as success.
+    full = [
+        rec(qid="q1", compromised=True, matched_markers=()),
+        rec(qid="q2", compromised=False, matched_markers=()),
+    ]
+    metrics = {(m.name, m.variant): m.value for m in _aggregate(full, config)}
+    assert metrics[("poison_compromise_rate", "defense=none")] == 0.5
+
+
+_PRESERVED_ATTACK_FIELDS = ("own_marker", "matched_markers", "abstained", "compromised")
 
 
 def _recorded_counts(path: Path) -> dict[str, int]:

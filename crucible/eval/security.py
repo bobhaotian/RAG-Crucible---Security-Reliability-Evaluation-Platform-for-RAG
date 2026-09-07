@@ -249,10 +249,19 @@ def _aggregate(
             at_condition = [r for r in of_type if r.defense == condition]
             # Same denominator for both, so `compromise - success` is exactly
             # the share of trials this attack type's rate fails to account for.
-            for name, values in (
-                (success_name, [float(r.succeeded) for r in at_condition]),
-                (compromise_name, [float(r.compromised) for r in at_condition]),
-            ):
+            # That subtraction is only meaningful while the denominators match,
+            # so the compromise rate is emitted only when *every* trial in the
+            # condition recorded its marker scan — computing it over the subset
+            # that did would silently break the relationship the pair exists to
+            # express. A live run records all of them; an older result may not.
+            pairs: list[tuple[str, list[float]]] = [
+                (success_name, [float(r.succeeded) for r in at_condition])
+            ]
+            if at_condition and all(r.compromised is not None for r in at_condition):
+                pairs.append((compromise_name, [float(bool(r.compromised)) for r in at_condition]))
+            for name, values in pairs:
+                if not values:
+                    continue
                 metrics.append(
                     Metric(
                         suite=SUITE,

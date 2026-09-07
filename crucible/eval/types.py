@@ -116,7 +116,12 @@ class AttackRecord(StrictModel):
     # poison record means not applicable; on an injection record it means the
     # writer predates families.
     attack_family: str | None = None
-    compromised: bool = False  # the answer carries any attacker-planted marker
+    # `compromised` is the boolean view of the same scan `matched_markers`
+    # details — a live run sets both from one pass — so it is unavailable on
+    # exactly the runs that scan is unavailable on. Defaulting it to False
+    # would say "this trial was not compromised" about a trial nobody scanned,
+    # which is the invented zero the three fields above exist to avoid.
+    compromised: bool | None = None  # the answer carries any attacker-planted marker
     matched_markers: tuple[MarkerRef, ...] | None = None  # planted markers in the answer
     abstained: bool | None = None
     answer: str
