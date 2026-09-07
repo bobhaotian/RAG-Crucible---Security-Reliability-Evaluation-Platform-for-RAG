@@ -1,7 +1,8 @@
 # rag-crucible
 
-**Every LLM red-teaming tool attacks your RAG system through the chat box.
-rag-crucible attacks it through the corpus.**
+**Other red-teaming tools can tell you a planted document changed the answer.
+rag-crucible tells you whether it was even retrieved — and whether your defense
+is what stopped it.**
 
 It builds the vector index it then attacks — planting poisoned documents,
 indirect-injection payloads, and PII canaries into an index built from *your*
@@ -19,13 +20,15 @@ the same index and returns metrics, per-item records, plots, and a dashboard.
 
 | Suite | The question it answers | Needs labels? |
 |---|---|---|
-| **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Gold labels today — needs only questions once [P0-B](docs/ROADMAP.md) lands |
+| **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Gold labels today — needs only questions once [P0-C](docs/ROADMAP.md) lands |
 | **privacy** | Does a secret in your documents escape into an answer? Seeded PII canaries, split into *reached the prompt* vs *reached the answer*. | No |
 | **retrieval** | Is the right passage being found? recall@k, nDCG@k, MRR, and the lift a reranker actually buys. | Yes — gold labels |
 | **faithfulness** | Is the answer grounded in what was retrieved? Groundedness, hallucination rate, citation precision. | Partly |
 
-**Why the index matters.** Every other RAG evaluator reaches your system through an
-HTTP endpoint or a `model_callback`, so it cannot plant a document in your corpus —
+**Why the index matters.** Other tools do generate poisoning payloads — garak ships
+latent-injection probes, and promptfoo has a RAG-poisoning plugin. What they cannot
+do is place one and then watch it move: they reach your system through an HTTP
+endpoint or a `model_callback`, so they see the output string and nothing before it.
 promptfoo's own poisoning docs say getting the generated documents into your
 knowledge base "will depend on your specific system." Because rag-crucible owns
 ingestion and the index, it can do things a black-box harness structurally cannot:
@@ -51,7 +54,10 @@ Stated up front, because the project's credibility depends on it:
 - **It does not attach to your existing vector store, retriever, or deployed RAG
   endpoint.** Today you bring a local corpus and Crucible builds its own index.
   Qdrant support means "Crucible stores its own index in Qdrant," not "connect to
-  your collection." That gap is the top item on [the roadmap](docs/ROADMAP.md).
+  your collection." That is [P1-D](docs/ROADMAP.md) — deliberately sequenced *after*
+  making the managed mode trustworthy and runnable on any folder of documents, because
+  attaching to a live collection is a core refactor and a data-loss hazard, not an
+  adapter.
 - **It never mutates a production index.** Attacks run in a run-owned sandbox.
 - **It does not recommend a defense.** It reports what each one prevents and costs
   on your data; the choice is yours. A tool that ranks defenses and also ships the
@@ -65,15 +71,17 @@ a negative result about code this repo ships, published with its method:
 
 | Finding | Where |
 |---|---|
-| Its injection filter screens 1.00 of the phrasings it was written from and 0.20 of held-out ones — a blocklist, not a detector (Fisher *p* = 0.0007) | [attack-defense-split](docs/experiments/attack-defense-split.md) |
+| Its injection filter screens 1.00 of the phrasings it was written from and 0.20 of held-out ones — a blocklist, not a detector (Fisher *p* = 0.00071) | [attack-defense-split](docs/experiments/attack-defense-split.md) |
 | Its filter's "zero clean-traffic cost" is a property of the demo corpus, not the filter — 0 of 35 seeded chunks deleted, 6 of 7 ordinary enterprise sentences | [attack-defense-split](docs/experiments/attack-defense-split.md) |
 | A "cross-attack compromise" finding it had published was a sampling artifact, killed by its own ablation | [disjoint-targets](docs/experiments/disjoint-targets.md) |
 | A provenance-based defense that scored a perfect 0.00 was reading a label the harness gave it | [answer-integrity](docs/experiments/answer-integrity.md) |
 
 > **On sample sizes.** The demo runs 10 attacks per arm. That is enough to establish
-> the screening gap above (*p* = 0.0007, disjoint intervals) and **not** enough to rank
-> defenses against each other — a two-trial difference at n=10 is noise. Where a number
-> here is underpowered, it says so. Raising the arms is [P0-3](docs/ROADMAP.md).
+> the screening gap above (*p* = 0.00071, disjoint intervals) and **not** enough to rank
+> defenses against each other — the four-trial corruption difference at n=10 reaches
+> only *p* = 0.125 under the paired test its design requires, and four one-directional
+> discordant pairs cannot clear 0.05 at any arrangement. Where a number here is
+> underpowered, it says so. Raising the arms is [P0-A §3](docs/ROADMAP.md).
 
 ## Why this exists
 
@@ -173,25 +181,33 @@ is one YAML line.
 
 The differentiator. Crafted documents are injected into the corpus and re-indexed;
 both attack types are reliably retrieved (poison and injection retrieval rate **1.00**),
-then every targeted query is answered under each defense condition. Seeded demo, 10
-poison + 10 injection targets, local Qwen2.5-0.5B generator:
+then every targeted query is answered under each defense condition. From
+`specs/injection-families.yaml`, seed 42: 10 poison + 20 injection targets (10 phrasings
+the filter was written from, 10 held out), local Qwen2.5-0.5B generator.
 
 | attack success ↓ | no defense | prompt_isolation | injection_filter |
 |---|---|---|---|
-| knowledge corruption (poison) | 0.20 | 0.40 | 0.30 |
-| injection compliance | 0.10 | 0.40 | **0.00** |
+| knowledge corruption (poison, n=10) | 0.20 (2/10) | 0.60 (6/10) | 0.30 (3/10) |
+| injection compliance (n=20) | 0.05 (1/20) | 0.20 (4/20) | **0.00 (0/20)** |
+| ↳ on *held-out* phrasings (n=10) | 0.10 | 0.20 | 0.00 |
+| attack chunk screened out of the prompt @seen / @held-out | 0.00 / 0.00 | 0.00 / 0.00 | **1.00** / **0.20** |
 
 **Honest reading** — this is what the platform is *for*: defenses that work and
-defenses that don't, measured rather than assumed.
+defenses that don't, measured rather than assumed. Every rate here is a count over a
+stated denominator, and none of them is powered to rank one defense against another.
 
-- **`injection_filter` zeroes injection compliance** (0.10 → 0.00): a deterministic
-  classifier drops the injected chunk before it reaches the prompt, so the model never
-  sees the payload. Provider-independent.
-- **`prompt_isolation` backfires here** (0.10 → 0.40): a hardened "treat context as
-  untrusted data" system prompt only helps a model strong enough to follow it — the
-  0.5B local model is not, and the longer prompt makes it *worse*. Prompt-level
-  defenses need a capable generator; that's precisely what the Cohere Command provider
-  (Phase 6) is for, and the platform will quantify the difference.
+- **`injection_filter`'s 0.00 compliance is not evidence it works.** It screens 10/10
+  of the phrasings it was built from and 2/10 it was not — a blocklist, not a detector
+  (Fisher *p* = 0.00071 on disjoint target sets). Eight held-out payloads reached the
+  prompt and the model ignored them anyway, because the baseline is only 0.05: this
+  generator is near-immune to injection by incapacity, which flatters every defense
+  equally. **You cannot measure a defense against an attack that does not work.**
+- **`prompt_isolation` looks worse than no defense, and that is not established.**
+  Corruption goes 2/10 → 6/10 on the same ten targets against the same index, so the
+  comparison is paired: exact McNemar gives *p* = 0.125. All four disagreements point
+  the same way, and McNemar's floor of `2 × 0.5^b` means four discordant pairs cannot
+  reach *p* ≤ 0.05 at any arrangement. Read it as *not measured*, not as measured to
+  be worse. Prompt-level defenses need a capable generator to test at all.
 - **The prompt-level defenses do not fix knowledge corruption** — a poisoned fact
   is not syntactically adversarial. The experimental `answer_integrity` condition
   detects cross-document numeric conflicts and safely abstains when evidence is
@@ -231,15 +247,19 @@ a finding — paraphrased questions extract more than blunt direct ones, and ind
 
 ### Latency per stage (seeded demo, CPU, providers warmed before timing)
 
+From `results/demo/results.json` — the artifact `make demo` writes, committed in this
+repo, all four suites:
+
 | stage | count | mean ms | p50 ms | p95 ms |
 |---|---|---|---|---|
-| embed_query | 76 | 30.0 | 10.6 | 43.7 |
-| retrieve (FAISS) | 76 | 0.1 | 0.1 | 0.2 |
-| rerank | 76 | 113.4 | 101.8 | 186.8 |
-| generate | 20 | 2081.2 | 1903.3 | 3214.5 |
+| embed_query | 190 | 48.8 | 20.3 | 153.5 |
+| retrieve (FAISS) | 190 | 0.2 | 0.1 | 0.4 |
+| rerank | 190 | 150.1 | 124.3 | 230.0 |
+| generate | 134 | 3065.7 | 2755.8 | 5937.4 |
 
-Generation dominates end-to-end latency by ~20× over the entire retrieval side —
-the standard RAG profile, now measured rather than assumed.
+Generation dominates the entire retrieval side by **~15× on the mean** (3065.7 ms vs
+199.1 ms) and ~19× at p50 — the standard RAG profile, now measured rather than assumed.
+An earlier version of this table quoted "~20×" over numbers backed by no committed run.
 
 ## Status
 
@@ -251,10 +271,12 @@ breakdown lives in the [CHANGELOG](CHANGELOG.md); what happens next is below.
 ## Roadmap
 
 The original build phases are complete. The living
-[improvement roadmap](docs/ROADMAP.md) now tracks the next priorities: trustworthy data
-provenance and metrics, backend-faithful attack variants, safe evaluation of existing RAG
-endpoints/retrievers/vector stores, CI regression workflows, a plugin SDK, and open-source
-community/release readiness.
+[improvement roadmap](docs/ROADMAP.md) now tracks the next priorities, in order:
+**P0-A** trustworthy data provenance, metric semantics and honest statistics; **P0-C**
+running on an arbitrary corpus with no hand-written YAML and defenses behind a protocol
+rather than a closed enum; then CI regression workflows, a plugin SDK, open-source
+release readiness, and **P1-D** safe evaluation of existing RAG
+endpoints/retrievers/vector stores.
 
 The current supported product boundary is still **bring a corpus and spec to Crucible's
 managed reference pipeline**. Existing user-owned collections, framework pipelines, and
@@ -409,6 +431,34 @@ model weights, or training is out of scope. Attack payloads are generic and
 educational — the framing throughout is defensive red-teaming of one's own pipeline.
 Full attacker capabilities, assets, success criteria, and the defense mapping:
 [docs/threat-model.md](docs/threat-model.md).
+
+### Mapped to OWASP Top 10 for LLM Applications, Version 2026
+
+Mapped by *tested mechanism* against each entry's own scoping clause, not by topic.
+Always read the year suffix: the 2026 edition reused titles at new numbers
+(2025's `LLM08` Vector and Embedding Weaknesses is 2026's **LLM09**; 2025's `LLM04`
+Data and Model Poisoning is 2026's **LLM05**), so a bare "LLM08" is ambiguous across
+editions.
+
+| What rag-crucible plants and measures | Primary | Justified overlap |
+|---|---|---|
+| **Indirect prompt injection** carried in a retrieved document | **LLM01:2026** Prompt Injection — its *Indirect Prompt Injection* subsection names "a retrieved RAG passage" | **LLM05:2026** where the document persists in the index across sessions |
+| **Corpus poisoning** — a document written to land near the target query | **LLM09:2026** Vector and Embedding Weaknesses — Risk #3 *Retrieval-Time Data Poisoning*; the carrier sentence exists to win the similarity race, so the attack is geometric by construction (MITRE ATLAS **AML.T0070**) | **LLM05:2026**, which owns durable corruption of persistent data |
+| **PII canary leakage**, split into reached-the-prompt vs reached-the-answer | **LLM02:2026** Sensitive Information Disclosure — its inference-time phase names RAG chunks as a disclosure surface | **LLM09:2026** for the retrieval half; LLM02 states that mechanisms are owned by LLM09 |
+| **Retrieval-stage vs generation-stage decomposition** | **LLM09:2026** Risk #3, verbatim: *"A successful attack requires two conditions simultaneously: the poisoned content must be retrieved (geometric) and must steer the response (generation). Defenders can intervene at either layer."* | — |
+
+**What is not covered.** LLM09:2026 names seven risks; this tool exercises one.
+Untested: cross-tenant leakage via shared similarity search, embedding inversion,
+retrieval jamming, membership inference, semantic-cache and deduplication poisoning,
+and multimodal embedding poisoning.
+
+**No conformance is claimed.** The OWASP GenAI Security Project states it "does not
+endorse any product, services, or tools," and there is no OWASP certification or
+coverage scheme. This project is *mapped to* and *informed by* the 2026 edition —
+never compliant with, certified against, or providing full coverage of it. The 2026
+content is published as a downloadable PDF with no per-entry web pages; cite it as
+"Version 2026" from the
+[OWASP GenAI Security Project resource page](https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2026/).
 
 ## Development
 

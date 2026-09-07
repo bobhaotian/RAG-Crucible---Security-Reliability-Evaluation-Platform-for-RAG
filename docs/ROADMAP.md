@@ -90,8 +90,9 @@ green lint/type/test/build CI.
 | Order | Milestone | Exit gate |
 |---:|---|---|
 | P0-A | Trustworthy results | Data identity, metric meaning, backend fidelity, uncertainty, and judge quality are auditable. |
-| P0-B | Bring your own RAG kernel | Native, callable, HTTP, retriever, and offline targets use capability-aware suites safely. |
+| P0-C | Any dataset, and extensible defenses | A folder of documents runs with no hand-written YAML and no gold labels; defenses are a protocol, not a closed enum. |
 | P1-A | Regression-native evaluation | Teams can set policies, compare a baseline, fail CI, and promote findings into tests. |
+| P1-D | Bring your own RAG kernel | Native, callable, HTTP, retriever, and offline targets use capability-aware suites safely. |
 | P1-B | Extension ecosystem | Third-party adapters and data packs install without core edits and pass a conformance kit. |
 | P1-C | Open-source release readiness | Installation, docs, governance, security reporting, releases, and compatibility claims are dependable. |
 | P2 | Broader integrations and research depth | Framework/database adapters and new attacks build on the stable kernel and trusted metrics. |
@@ -277,7 +278,53 @@ Required work:
 results identify their exact spec/data/schema, and the docs clearly separate shipped,
 experimental, and planned functionality.
 
-## P0-B — bring your own RAG safely
+## P0-C — any dataset, and extensible defenses
+
+Trustworthy numbers about a corpus nobody else can supply are worth little. This
+milestone is what makes the tool runnable on a user's own documents, and it is the other
+half of P0.
+
+### 1. Take an arbitrary corpus
+
+Per-item label capabilities (`scores_retrieval`, `scores_answers`, `label_source`) so a
+questions-only `qa.jsonl` loads and only the *retrieval* suite requires gold labels; an
+unlabelled item must yield a typed *unsupported* metric, never a `0.0`. Poison that
+degrades honestly when there is no gold answer, rather than scoring a nonsense assertion
+the model declined to repeat as a defense win. A content-addressed ingest fingerprint, so
+editing one corpus byte changes the run's identity. Ingestion honesty: dropped documents
+reported *with their identities* and persisted in the result, and malformed files skipped
+rather than aborting the load.
+
+### 2. Make labelling cheap rather than automatic
+
+Machine-generated questions do not produce a usable retrieval score — on one unchanged
+index and embedder, recall@1 reads 0.74 from chunk-lifted questions, 0.4967 from human
+labels and 0.30 from our own generator. The error is unsigned, so it cannot be corrected
+for. Propose candidates and require human confirmation; import labels that already exist.
+
+### 3. Defenses as a protocol, not an enum
+
+A minimal `QueryDefense` contract with structured actions and reasons, so adding a
+defense needs no edit to `DefenseName`, `DefensesConfig`, `_defenses_for`, the `rag.py`
+if-chain, or the by-name retrieval carve-out at `security.py`. Report every defense's
+cost on clean traffic beside its attack reduction, always.
+
+**Acceptance:** a folder of documents and a plain-text question list produce a report
+with no hand-written YAML; unsupported suites are named with reasons rather than omitted;
+and a new defense is registered without editing core enums.
+
+## P1-D — bring your own RAG safely
+
+> **Re-ordered out of P0 (2026-09-06).** This was the second milestone; it is now
+> sequenced after P0-A and P0-C. Two reasons, both about the tool being usable at all
+> before it is universal. First, it is not an adapter but a core refactor: both attack
+> suites call `embed_into_index`, which returns FAISS unconditionally and ignores
+> `spec.index.store`. Second, **attaching read-only to a user-owned collection is not
+> read-only today** — the build path calls `delete_collection()` on rebuild, so pointing
+> it at a real collection would destroy data. Until that is designed properly, the
+> managed mode (Crucible creates and owns the evaluation index, controls insertion, and
+> records the ingestion and retrieval evidence) is the only supported mode, and the
+> target contract below is **aspirational design, not queued work**.
 
 ### 1. Capability-negotiated system-under-test contract
 
@@ -542,20 +589,36 @@ These are intentionally issue-sized and ordered by dependency:
    on complete judge configuration.
 8. **P0 / safety:** publish `SECURITY.md` and trusted-local service warning; constrain
    filesystem roots and outbound targets before any hosted deployment guidance.
-9. **P0 / target RFC:** define observations, capability protocols, execution modes, and
-   unsupported semantics with native-pipeline compatibility tests.
-10. **P0 / target extraction:** wrap the current pipeline as `ManagedRagTarget` and make
-    suite orchestration capability-driven.
-11. **P0 / external target:** ship trusted Python callable and generic HTTP answer/context
-    adapters plus an end-to-end example.
-12. **P0 / retrieval target:** ship the raw-query retriever contract and read-only Qdrant
-    adapter with non-mutation tests.
+9. **P0 / any dataset:** per-item label capabilities (`scores_retrieval` /
+   `scores_answers` / `label_source`), so a questions-only corpus loads and an
+   unlabelled item yields a typed *unsupported* metric rather than a 0.0.
+10. **P0 / ingestion honesty:** report dropped documents per filter *with their
+    identities*, persist them in the run result, and skip malformed files instead of
+    aborting the load.
+11. **P0 / front door:** `rag-crucible scan ./docs --questions q.txt` — one command, no
+    hand-written YAML, unsupported suites named with reasons.
+12. **P0 / defense protocol:** a minimal `QueryDefense` seam so adding a defense needs no
+    edit to `DefenseName`, `DefensesConfig`, `_defenses_for`, or the retrieval carve-out.
 13. **P1 / CI:** add policies, pinned-baseline comparison, JUnit/SARIF, and finding
     promotion.
 14. **P1 / plugins:** entry-point registry, version negotiation, conformance kit, and
     adapter template.
 15. **P1 / community:** contributor/governance templates, packaging split, release
     automation, docs site, and tested compatibility matrix.
+16. **P1 / target RFC:** define observations, capability protocols, execution modes, and
+    unsupported semantics with native-pipeline compatibility tests.
+17. **P1 / target extraction:** wrap the current pipeline as `ManagedRagTarget` and make
+    suite orchestration capability-driven.
+18. **P1 / external target:** ship trusted Python callable and generic HTTP answer/context
+    adapters plus an end-to-end example.
+19. **P1 / retrieval target:** ship the raw-query retriever contract and read-only Qdrant
+    adapter with non-mutation tests. **Blocked** until the build path stops calling
+    `delete_collection()` on rebuild — today "read-only" would not be read-only.
+
+Items 16–19 were queued at P0, ahead of what are now items 9–12. They are sequenced
+after them: a tool that cannot yet run on an arbitrary folder of documents, or that
+reports a metric it did not measure, is not ready to attach to somebody else's
+production index.
 
 Every implementation issue should link to one roadmap item and include an owner, status,
 acceptance test, schema/migration impact, documentation impact, and threat-model impact.
