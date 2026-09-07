@@ -298,17 +298,35 @@ def _aggregate(
         at_condition = [r for r in records if r.defense == condition]
         if not at_condition:
             continue
+        # Only records that actually carry the evidence enter the denominator.
+        # `bool(None)` is False, so folding an unrecorded field in would report
+        # "no competing marker" about a trial that was never scanned — a zero
+        # nobody measured. Every live run records all three, so these
+        # denominators only shrink when reading a migrated older result.
         for name, values in (
-            ("attack_abstention_rate", [float(r.abstained) for r in at_condition]),
+            (
+                "attack_abstention_rate",
+                [float(r.abstained) for r in at_condition if r.abstained is not None],
+            ),
             (
                 "attack_competition_rate",
-                [float(bool(r.competing_markers)) for r in at_condition],
+                [
+                    float(bool(r.competing_markers))
+                    for r in at_condition
+                    if r.competing_markers is not None
+                ],
             ),
             (
                 "cross_question_contamination_rate",
-                [float(bool(r.cross_question_markers)) for r in at_condition],
+                [
+                    float(bool(r.cross_question_markers))
+                    for r in at_condition
+                    if r.cross_question_markers is not None
+                ],
             ),
         ):
+            if not values:  # nothing recorded: omit rather than report 0.0
+                continue
             metrics.append(
                 Metric(
                     suite=SUITE,

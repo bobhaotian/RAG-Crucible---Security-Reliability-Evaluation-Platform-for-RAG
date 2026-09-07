@@ -4,6 +4,14 @@ Every headline number is backed by per-item records — a metric is never
 reported without the evidence to audit it. ``variant`` is how one run carries
 its own comparisons (``rerank=on`` / ``rerank=off`` now; defense conditions in
 Phase 4); the result store and dashboard key on it.
+
+**Stored results are versioned.** ``EvalRunResult.schema_version`` names the
+shape an artifact was written in; ``crucible.eval.migrate`` upgrades older ones
+on read. The rule that governs every migration: a field an older writer did not
+record reads as ``None`` — *unavailable* — and never as a value. An empty tuple
+means "measured, and nothing matched"; ``None`` means "this version did not
+look". Collapsing the two is how a run that never measured cross-attack
+contamination comes to report zero of it.
 """
 
 from __future__ import annotations
@@ -15,6 +23,18 @@ from pydantic import Field
 from crucible.config import RunSpec
 from crucible.obs.aggregate import StageStats
 from crucible.types import StrictModel
+
+# Bump when a persisted shape changes, and add a migration in
+# crucible/eval/migrate.py in the same commit. History:
+#   1 — everything written before versioning existed (no schema_version key)
+#   2 — schema_version + run_id on the result; attack records distinguish
+#       "not recorded" from "recorded empty"
+RESULT_SCHEMA_VERSION = 2
+
+# One spelling, imported by both the eval layer and the result store. Spelled
+# twice they drift, and a status one module can produce becomes a status the
+# other rejects — which surfaces as a 500 from the API, not a type error.
+SuiteStatus = Literal["succeeded", "failed", "skipped"]
 
 
 class Metric(StrictModel):
@@ -85,30 +105,45 @@ class AttackRecord(StrictModel):
     # `succeeded` attributes one attack. One index carries every attack document,
     # so a trial can be compromised by a *different* attack than the one under
     # test — invisible to `succeeded`. These record that:
-    own_marker: str = ""  # the string `succeeded` was scored on
+    # The three fields below are `None` when the writer did not record them
+    # (schema 1). `None` is not `""` / `()` / `False`: an empty marker tuple
+    # says the answer was checked and carried nothing, while `None` says this
+    # run never checked. Every new write sets all three.
+    own_marker: str | None = None  # the string `succeeded` was scored on
     # Injection only: was the shipped filter written against this phrasing?
     # Splitting the rate by this is what separates "the defense works" from
-    # "the defense recognises the two payloads it was built for".
+    # "the defense recognises the two payloads it was built for". `None` on a
+    # poison record means not applicable; on an injection record it means the
+    # writer predates families.
     attack_family: str | None = None
     compromised: bool = False  # the answer carries any attacker-planted marker
-    matched_markers: tuple[MarkerRef, ...] = ()  # every planted marker in the answer
-    abstained: bool = False
+    matched_markers: tuple[MarkerRef, ...] | None = None  # planted markers in the answer
+    abstained: bool | None = None
     answer: str
 
     @property
-    def foreign_markers(self) -> tuple[MarkerRef, ...]:
-        """Markers in the answer that belong to some attack other than this one."""
+    def foreign_markers(self) -> tuple[MarkerRef, ...] | None:
+        """Markers in the answer that belong to some attack other than this one.
+
+        ``None`` when the marker scan was not recorded — returning an empty
+        tuple there would report "no other attack won" about a run that never
+        asked.
+        """
+        if self.matched_markers is None or self.own_marker is None:
+            return None
         return tuple(m for m in self.matched_markers if m.marker != self.own_marker)
 
     @property
-    def competing_markers(self) -> tuple[MarkerRef, ...]:
+    def competing_markers(self) -> tuple[MarkerRef, ...] | None:
         """Foreign markers from the *other* attack on this same question."""
-        return tuple(m for m in self.foreign_markers if m.qid == self.qid)
+        foreign = self.foreign_markers
+        return None if foreign is None else tuple(m for m in foreign if m.qid == self.qid)
 
     @property
-    def cross_question_markers(self) -> tuple[MarkerRef, ...]:
+    def cross_question_markers(self) -> tuple[MarkerRef, ...] | None:
         """Foreign markers planted on a *different* question — true bleed-through."""
-        return tuple(m for m in self.foreign_markers if m.qid != self.qid)
+        foreign = self.foreign_markers
+        return None if foreign is None else tuple(m for m in foreign if m.qid != self.qid)
 
 
 class PrivacyRecord(StrictModel):
@@ -142,7 +177,7 @@ EvalRecord = Annotated[
 
 class SuiteResult(StrictModel):
     suite: str
-    status: Literal["succeeded", "failed"] = "succeeded"
+    status: SuiteStatus = "succeeded"
     error: str | None = None
     metrics: tuple[Metric, ...]
     records: tuple[EvalRecord, ...]
@@ -150,8 +185,19 @@ class SuiteResult(StrictModel):
 
 class EvalRunResult(StrictModel):
     """Everything one evaluation run produced. Persisted as results.json in
-    Phase 2; the Phase 3 result store decomposes the same model into tables."""
+    Phase 2; the Phase 3 result store decomposes the same model into tables.
 
+    Read persisted JSON through ``crucible.eval.migrate.load_result_json``
+    rather than ``model_validate_json`` — the latter is strict by design and
+    will reject any artifact written before the current schema version.
+    """
+
+    # Always the current version on a new object; older artifacts are upgraded
+    # to it by the migration chain before they are ever validated.
+    schema_version: int = RESULT_SCHEMA_VERSION
+    # `None` = the writer did not record one (schema 1). Present on every new
+    # write, so an artifact identifies itself without its directory name.
+    run_id: str | None = None
     name: str
     spec_hash: str
     seed: int
