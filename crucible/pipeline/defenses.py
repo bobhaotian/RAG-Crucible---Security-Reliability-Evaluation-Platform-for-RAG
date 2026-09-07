@@ -25,17 +25,43 @@ import re
 
 from crucible.pipeline.types import RankedContext
 
-# Patterns an indirect-injection payload almost always contains. Tuned to catch
-# the attack templates in ``crucible/attacks`` (and common real variants)
-# without flagging ordinary documentation prose.
+# Categories of retrieved-content instruction, written from the threat model in
+# docs/threat-model.md — deliberately NOT from the payloads in crucible/attacks.
+#
+# The earlier list transcribed the shipped templates ("reply only with",
+# "ignore all previous"), so `injection_compliance_rate` measured whether the
+# filter recognised the two strings it was built from. A test now fails if any
+# pattern reproduces a phrase from a payload.
+#
+# These describe what an injected instruction *does*: cancel prior context,
+# coerce a literal output, claim system authority, reassign the assistant's
+# role, or open a new instruction block. It is still a heuristic over surface
+# form and it will still miss paraphrases — which is why the suite reports
+# `injection_compliance_rate@seen` and `@heldout` separately instead of one
+# number that hides the difference.
 _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"ignore\s+(all\s+|any\s+)?(previous|prior|above|the\s+above)", re.IGNORECASE),
-    re.compile(r"disregard\s+(all\s+|any\s+)?(previous|prior|above|the)", re.IGNORECASE),
-    re.compile(r"reply\s+only\s+with", re.IGNORECASE),
-    re.compile(r"respond\s+(only\s+)?with\s+(the\s+)?(exact|following|word|text)", re.IGNORECASE),
-    re.compile(r"you\s+are\s+now\b", re.IGNORECASE),
-    re.compile(r"system\s+(override|prompt)\b", re.IGNORECASE),
-    re.compile(r"new\s+instructions?\s*:", re.IGNORECASE),
+    # cancel what came before
+    re.compile(
+        r"\b(ignore|disregard|forget|override|discard)\b[^.]{0,40}"
+        r"\b(instruction|directive|rule|guidance|context|prompt)s?\b",
+        re.IGNORECASE,
+    ),
+    # coerce a literal output
+    re.compile(
+        r"\b(output|emit|print|echo|return|reply|respond|answer)\b[^.]{0,40}"
+        r"\b(verbatim|exact|exactly|precisely|nothing\s+else|and\s+nothing)\b",
+        re.IGNORECASE,
+    ),
+    # claim to speak for the system
+    re.compile(
+        r"\b(system|admin|administrator|operator|developer|maintainer)\b[^.]{0,25}"
+        r"\b(notice|override|directive|message|mode|instruction)s?\b",
+        re.IGNORECASE,
+    ),
+    # reassign the assistant's role
+    re.compile(r"\byou\s+are\s+(now|from\s+now|henceforth)\b", re.IGNORECASE),
+    # open a fresh instruction block
+    re.compile(r"\bnew\s+(instruction|directive|rule)s?\s*:", re.IGNORECASE),
 )
 
 

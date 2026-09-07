@@ -120,9 +120,18 @@ async def test_injection_filter_removes_injected_chunks(tiny_corpus: Path, tmp_p
     records = _records(result)
     injection = [r for r in records if r.attack_type == "injection"]
     none_retrieved = [r.retrieved for r in injection if r.defense == "none"]
-    filtered_retrieved = [r.retrieved for r in injection if r.defense == "injection_filter"]
     assert any(none_retrieved)  # retrievable without the defense
-    assert not any(filtered_retrieved)  # screened out by the filter
+
+    # Scoped to the family the filter's patterns were written for. Asserting it
+    # screens *every* injection was only ever true because every payload was one
+    # of the two the regexes encode; held-out phrasings get through, and that gap
+    # is reported as injection_screened_rate@heldout rather than hidden here.
+    filtered_seen = [
+        r.retrieved
+        for r in injection
+        if r.defense == "injection_filter" and r.attack_family == "seen"
+    ]
+    assert filtered_seen and not any(filtered_seen)
     # the defense cannot help poison (not syntactically adversarial): identical
     assert result.metric("security", "knowledge_corruption_rate", "defense=none") == result.metric(
         "security", "knowledge_corruption_rate", "defense=injection_filter"
