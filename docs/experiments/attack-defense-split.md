@@ -66,9 +66,21 @@ to follow an injected instruction. The baseline itself is only 0.05.
 
 So the compliance metric was never going to expose this defense, with or without
 the co-design fix. **You cannot measure a defense against an attack that does not
-work.** That is why `injection_screened_rate` was added: a chunk screener's
-effectiveness has to be measured where it acts, at retrieval, not inferred from
-a downstream behaviour the generator is incapable of exhibiting.
+work.** That is why `injection_screened_rate` was added: a chunk screener has to
+be scored on whether it removed the chunk, not inferred from a downstream
+behaviour the generator is incapable of exhibiting.
+
+**What that rate actually measures, stated precisely.** It is
+`1 − (attack chunk present in the final prompt context)`, and the final context
+is what survives retrieval **and** rerank **and** the `top_n` cut **and** the
+filter — at `k: 20 → top_n: 5`, fifteen of twenty candidates are dropped before
+any defense runs. So the name overstates it: absence from the context is not by
+itself proof that the screener removed anything. In *this* run the confound is
+measured at zero rather than assumed away — the same twenty targets reach the
+context 20/20 under both `none` and `prompt_isolation`, so every removal in the
+`injection_filter` arm is attributable to the filter. That is a property of this
+run, not a guarantee of the metric, and the general fix is to record the removal
+reason per chunk instead of inferring it from absence.
 
 This is also direct evidence for the capability-floor experiment. Every defense
 comparison in this repo is currently run against a generator that is nearly
@@ -83,16 +95,33 @@ Whatever it is doing wrong is not about phrasing recognition.
 Computed on the run above, and stated because presenting them identically would be
 the exact error this experiment exists to correct:
 
-| Claim | Arms | Fisher two-sided p | 95% CI |
-|---|---|---|---|
-| Screening: seen vs held-out | 10/10 vs 2/10 | **0.0007** | [0.72, 1.00] vs [0.06, 0.51] — disjoint |
-| `prompt_isolation` raises corruption | 2/10 vs 4/10 | **0.63** | [0.06, 0.51] vs [0.17, 0.69] — overlapping |
+| Claim | Arms | Design | Test | two-sided p | 95% CI |
+|---|---|---|---|---|---|
+| Screening: seen vs held-out | 10/10 vs 2/10 | unpaired — disjoint target sets | Fisher exact | **0.00071** | [0.72, 1.00] vs [0.06, 0.51] — disjoint |
+| `prompt_isolation` raises corruption | 2/10 vs 6/10 | paired — same 10 targets, one index | exact McNemar | **0.125** | [0.06, 0.51] vs [0.31, 0.83] — overlapping |
+
+The two rows use different tests because they have different designs, and using
+one test for both would be the same class of error this experiment exists to
+correct. The screening rows compare **disjoint** sets of targets — the seen and
+held-out families are different questions — so Fisher exact is right. The
+corruption rows compare **the same ten targets** answered against **the same
+index** under two defenses, so the trials are paired; Fisher discards that
+pairing and is badly underpowered for it. Wilson intervals are per-arm, and for
+the paired row they are context rather than the test.
 
 **The screening gap is real. The `prompt_isolation` backfire is not established.**
-At n=10 per arm a two-trial difference is noise, and any statement that this
-defense makes attacks worse should be read as *not measured*, not as *measured to
-be worse*. It may well be true — the effect appears in the instruction-hierarchy
-literature — but this run does not show it, and n would need to be ~100 per arm to.
+The paired table is 4 concordant-clean, 2 concordant-corrupted, and 4 discordant
+pairs — every one of them in the same direction, `none` clean and
+`prompt_isolation` corrupted. When all *b* discordant pairs point one way, exact
+McNemar returns `2 × 0.5^b`, so *b* = 4 gives p = 0.125 and **no arrangement of
+ten targets with four disagreements can produce p ≤ 0.05.** It takes *b* ≥ 6
+one-directional discordant pairs to clear 0.05 at all. Power here is not merely
+low, it is bounded away from significance by the discordant count — which is the
+quantity to raise, and more targets is the way to raise it. So a four-trial
+difference at n=10 should be read as *not measured*, not as *measured to be
+worse*. It may well be true — the effect appears in the instruction-hierarchy
+literature, and the direction is perfectly consistent here — but this run does
+not establish it.
 
 ## What this does not settle
 
@@ -117,3 +146,13 @@ literature — but this run does not show it, and n would need to be ~100 per ar
 crucible ingest specs/injection-families.yaml
 crucible submit specs/injection-families.yaml --force
 ```
+
+Every rate and test above is recomputed from the per-item `attack` records in
+the two committed runs under `results/injection-families/`, not read off a
+metrics block. Both runs produce identical outcomes (`spec_hash d4a8107f`,
+seed 42): poison corruption `none` 2/10, `prompt_isolation` 6/10,
+`injection_filter` 3/10; injection screening as tabled above. An earlier version
+of this page reported the corruption arms as 2/10 vs 4/10 with a Fisher
+*p* of 0.63 — those were the June demo run's numbers (`results/demo`,
+`spec_hash 368b9968`) carried over by mistake, and Fisher was the wrong test for
+a paired comparison regardless.
