@@ -122,6 +122,54 @@ def test_recorded_empty_stays_empty_and_is_distinguishable() -> None:
     assert scanned.foreign_markers is not None
 
 
+def test_schema_1_that_did_record_the_scan_keeps_every_value() -> None:
+    """The other direction of the rule, and the one that is easy to get wrong.
+
+    Schema 1 is not a single shape — it is everything written before
+    versioning existed, spanning writers that recorded the marker scan and
+    writers that did not. Normalising the shape by deleting those keys would
+    erase real measurements. Presence must survive untouched.
+    """
+    raw = _schema_1_artifact()
+    record = raw["suites"][0]["records"][0]
+    record["own_marker"] = "900000"
+    record["matched_markers"] = [{"marker": "900009", "attack_type": "poison", "qid": "q9"}]
+    record["abstained"] = True
+
+    migrated = load_result_json(json.dumps(raw)).suites[0].records[0]
+    assert isinstance(migrated, AttackRecord)
+    assert migrated.own_marker == "900000"
+    assert migrated.abstained is True
+    assert migrated.matched_markers is not None
+    assert [m.marker for m in migrated.matched_markers] == ["900009"]
+    # and the derived view is computable again, not unavailable
+    assert migrated.cross_question_markers is not None
+    assert [m.qid for m in migrated.cross_question_markers] == ["q9"]
+
+
+def test_committed_smoke_fake_run_keeps_its_recorded_scans() -> None:
+    """The concrete artifact the bug above was found on.
+
+    It carries no `schema_version`, so it migrates as schema 1 — while having
+    recorded all 36 marker scans. Every one must survive the upgrade.
+    """
+    path = REPO_ROOT / "results/smoke-fake/results.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    on_disk = [r for s in raw["suites"] for r in s["records"] if r["kind"] == "attack"]
+    recorded = [r for r in on_disk if r.get("matched_markers") is not None]
+    assert recorded, "fixture no longer exercises the case this guards"
+
+    loaded = [r for s in load_result_file(path).suites for r in s.records if r.kind == "attack"]
+    assert len(loaded) == len(on_disk)
+    assert sum(1 for r in loaded if r.matched_markers is not None) == len(recorded)
+    assert sum(1 for r in loaded if r.own_marker is not None) == sum(
+        1 for r in on_disk if r.get("own_marker") is not None
+    )
+    assert sum(1 for r in loaded if r.abstained is not None) == sum(
+        1 for r in on_disk if r.get("abstained") is not None
+    )
+
+
 def test_stored_foreign_markers_key_is_dropped_not_reinterpreted() -> None:
     """`foreign_markers` became a derived property. The stored list cannot be
     turned back into matched_markers + own_marker, so it is discarded rather

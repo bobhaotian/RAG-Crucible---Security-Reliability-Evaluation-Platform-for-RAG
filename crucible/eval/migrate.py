@@ -51,26 +51,28 @@ class ResultSchemaError(Exception):
 def _migrate_1_to_2(raw: dict[str, Any]) -> dict[str, Any]:
     """Schema 1 → 2.
 
-    Schema 1 attack records stored ``foreign_markers`` as data. It is now a
-    property derived from ``matched_markers`` and ``own_marker``, neither of
-    which schema 1 recorded — so the stored list cannot be reconstructed into
-    the new fields, and dropping it while leaving those fields ``None`` is the
-    honest result. The derived properties then return ``None`` rather than an
-    empty tuple, so a schema-1 run reports cross-attack contamination as
-    *unavailable* instead of as zero.
+    Drops exactly one key: ``foreign_markers``. It was stored as data and is
+    now a property derived from ``matched_markers`` and ``own_marker``, so a
+    stored list would be a second, un-recomputable source of truth.
 
-    ``abstained`` is likewise absent in schema 1 and stays ``None``: that run
-    did not record whether the model refused.
+    **Everything else is left exactly as the writer left it**, and that is the
+    whole subtlety of this step. Schema 1 is not one shape — it is every
+    artifact written before versioning existed, which spans writers that did
+    record ``own_marker`` / ``matched_markers`` / ``abstained`` and writers
+    that did not. Deleting those keys to "normalise" the shape would erase
+    real measurements from the artifacts that have them: the committed
+    ``results/smoke-fake`` run records all 36 marker scans, 31 of them
+    non-empty. So presence is preserved and absence is left to the model's
+    ``None`` default, which is what makes absence read as *unavailable*.
+
+    The rule this encodes cuts both ways. Never invent a value the writer did
+    not record — and never destroy one it did.
     """
     for suite in raw.get("suites") or []:
         for record in suite.get("records") or []:
-            if record.get("kind") != "attack":
-                continue
-            record.pop("foreign_markers", None)
-            # Left explicitly unset so the model's `None` default applies.
-            for absent in ("own_marker", "matched_markers", "abstained"):
-                record.pop(absent, None)
-    raw["run_id"] = raw.get("run_id")  # unavailable unless the writer recorded one
+            if record.get("kind") == "attack":
+                record.pop("foreign_markers", None)
+    raw.setdefault("run_id", None)  # unavailable unless the writer recorded one
     return raw
 
 
