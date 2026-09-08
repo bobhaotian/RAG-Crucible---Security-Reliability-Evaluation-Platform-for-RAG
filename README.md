@@ -240,10 +240,11 @@ Leakage by probe style (no defense): paraphrase 0.33 · direct 0.22 · indirect 
 The decomposition is the point. **Retrieval exposure stays at 1.00 under redaction** —
 the host documents are still topically retrieved — while **generation leakage drops to
 zero**, because the secret is no longer in the index to emit. That's a clean, theory-
-matching defense (contrast the security section, where a prompt defense backfired):
-redacting at ingestion is the right layer for PII. The probe-style breakdown is itself
-a finding — paraphrased questions extract more than blunt direct ones, and indirect
-"tell me about X" probes extract nothing from this model.
+matching defense — and note it is an *ingestion-time* one, which is why it can be
+this decisive: the secret never reaches the index, so nothing downstream has to
+resist it. Redacting at ingestion is the right layer for PII. The probe-style
+breakdown is itself a finding — paraphrased questions extract more than blunt
+direct ones, and indirect "tell me about X" probes extract nothing from this model.
 
 ### Latency per stage (seeded demo, CPU, providers warmed before timing)
 
@@ -484,8 +485,11 @@ make test-local            # tests that exercise the real local models
   machinery exists and is tested; the hosted providers are what it's for.
 - The API has no authentication (out of scope for v1; documented in DESIGN.md).
 - Prompt-level defenses (`prompt_isolation`) are only as good as the generator that
-  follows them — on the 0.5B local model the hardened prompt backfires (see Security).
-  This is reported, not hidden; a capable generator (Cohere Command) is the answer.
+  follows them, and **this repo cannot yet tell you how good that is**. On the 0.5B
+  local model its corruption arm reads 6/10 against a 2/10 baseline, but the paired
+  test puts that at *p* = 0.125 — *not measured*, not measured-to-be-worse (see
+  Security). Testing it properly needs a generator the attacks work on at all, which
+  the 0.05 injection baseline says this one is not.
 - `answer_integrity` is an experimental numeric-conflict detector with safe
   abstention, not a general poisoning detector. Its intentionally narrow
   extractor is scoped to quantity-valued claims, and its attack reduction must

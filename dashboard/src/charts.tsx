@@ -220,8 +220,10 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
 // --------------------------------------------------- security / privacy panels
 
 /** Rates measured once per defense, each read against the no-defense baseline.
- *  Colour encodes direction of change, not defense identity: a defense that
- *  makes things worse is the finding worth seeing first. */
+ *  Colour encodes direction of change, not defense identity: a defense whose arm
+ *  sits above the baseline is the row worth reading first. Direction, not verdict —
+ *  the panel has no significance test, so it shows the movement and leaves the
+ *  causal claim to the paired comparison. */
 function DefenseBars({
   groups,
   suite,
@@ -299,7 +301,11 @@ export function AttackSuccess({ results, onDrill }: PanelProps) {
   const groups = defenseGroups(results, "security", {
     except: [...COMPROMISE_METRICS, ...COST_METRICS],
   });
-  const backfire = groups
+  // Arms scoring above `none`. Deliberately NOT called a backfire: the panel has
+  // no significance test to justify that word, and asserting one from a raw delta
+  // is the claim this project keeps having to retract. B2 adds the paired test and
+  // intervals; until then this surfaces the observation and declines the verdict.
+  const higherThanNone = groups
     .flatMap((g) => g.bars.map((b) => ({ ...b, metric: g.metric })))
     .filter((b) => b.delta !== undefined && b.delta > 0);
 
@@ -320,13 +326,18 @@ export function AttackSuccess({ results, onDrill }: PanelProps) {
       }
       drill={{ suite: "security", label: "all attacks" }}
       footer={
-        backfire.length > 0 ? (
-          <p className="callout bad">
-            <b>A defense made it worse.</b>{" "}
-            {backfire
-              .map((b) => `${b.defense} raised ${b.metric} by ${signed(b.delta as number, 2)}`)
+        higherThanNone.length > 0 ? (
+          <p className="callout">
+            <b>A defense scored higher than none.</b>{" "}
+            {higherThanNone
+              .map((b) => `${b.defense} is ${signed(b.delta as number, 2)} on ${b.metric}`)
               .join("; ")}
-            . Lower is safer on every row — click one to read the attacks behind it.
+            .{" "}
+            <b>Observed, not established.</b> These arms run over the same targets on the
+            same index, so the comparison is paired and a difference this size can be
+            noise at these counts — the demo's own 2/10 → 6/10 reaches only <i>p</i> = 0.125.
+            Read it as a flag to investigate, not as a defense making attacks worse. Click a
+            row to read the trials behind it.
           </p>
         ) : undefined
       }
