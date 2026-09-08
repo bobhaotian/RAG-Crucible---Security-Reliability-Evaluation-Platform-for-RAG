@@ -69,6 +69,13 @@ def test_defenses_for_enables_only_the_selected_condition(
 
 
 def _attack(**overrides: object) -> AttackRecord:
+    """A record as a live run writes one: every field actually recorded.
+
+    ``matched_markers`` and ``abstained`` default to *recorded and empty*, not
+    to ``None``. ``None`` means an older writer never scanned, which excludes
+    the trial from those denominators — see
+    ``test_unrecorded_marker_scan_is_excluded_not_counted_as_clean``.
+    """
     base: dict[str, object] = {
         "attack_type": "poison",
         "qid": "q1",
@@ -76,6 +83,10 @@ def _attack(**overrides: object) -> AttackRecord:
         "defense": "none",
         "retrieved": True,
         "succeeded": False,
+        "own_marker": "",
+        "matched_markers": (),
+        "abstained": False,
+        "compromised": False,
         "answer": "",
     }
     return AttackRecord.model_validate(base | overrides)

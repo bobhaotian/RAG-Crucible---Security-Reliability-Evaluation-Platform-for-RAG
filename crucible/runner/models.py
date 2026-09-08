@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from crucible.eval.types import Metric
+from crucible.eval.types import Metric, SuiteStatus
 from crucible.obs.aggregate import StageStats
 from crucible.types import StrictModel
 
@@ -32,7 +32,9 @@ class ClaimedRun(StrictModel):
 
 class SuiteSummary(StrictModel):
     suite: str
-    status: Literal["succeeded", "failed"]
+    # Same alias the eval layer writes with. Spelled separately, a status one
+    # side can produce becomes one the other rejects, and the API 500s.
+    status: SuiteStatus
     error: str | None = None
     metric_count: int
     record_count: int

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from crucible.config import RunSpec
+from crucible.eval.types import RESULT_SCHEMA_VERSION
 from crucible.runner import ResultStore, worker_loop
 
 from .test_eval_e2e import TINY_QA, _eval_spec
@@ -56,6 +57,10 @@ async def test_worker_executes_submitted_run(
         "retrieval",
         "faithfulness",
     }
+    # The artifact identifies itself: the queue's run id travels into the file,
+    # so a results.json is not dependent on the directory it was written to.
+    assert portable["run_id"] == run_id
+    assert portable["schema_version"] == RESULT_SCHEMA_VERSION
 
 
 async def test_worker_marks_broken_run_failed_and_survives(

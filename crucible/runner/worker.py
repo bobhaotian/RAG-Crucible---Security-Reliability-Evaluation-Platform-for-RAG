@@ -33,7 +33,7 @@ async def execute_run(store: ResultStore, claimed: ClaimedRun) -> None:
     try:
         spec = RunSpec.model_validate_json(claimed.spec_json)
         index = await load_or_build_index(spec)
-        result = await run_eval(spec, index, fail_fast=False)
+        result = await run_eval(spec, index, fail_fast=False, run_id=claimed.id)
 
         # SQLite is the dashboard/query source of truth. Once it has the full
         # result, render the same portable artifacts as `crucible eval`. A

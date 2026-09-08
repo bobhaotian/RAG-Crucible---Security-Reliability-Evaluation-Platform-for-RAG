@@ -25,7 +25,13 @@ from crucible.ingest import build_index
 from crucible.paths import default_db_path, index_dir_for, submitted_run_results_dir
 from crucible.pipeline import Answer, build_pipeline
 from crucible.providers import ProviderError
-from crucible.runner import DuplicateRunError, ResultStore, execute_or_wait_for_run, worker_loop
+from crucible.runner import (
+    DuplicateRunError,
+    ResultStore,
+    execute_or_wait_for_run,
+    new_run_id,
+    worker_loop,
+)
 
 app = typer.Typer(
     name="crucible",
@@ -159,8 +165,10 @@ def eval_command(
     index, _ = _load_index_or_exit(spec)
     out_dir = out if out is not None else Path("results") / spec.name
 
+    # Mint an id even outside the queue, so a results.json identifies itself
+    # rather than relying on the directory someone happened to write it to.
     try:
-        result = asyncio.run(run_eval(spec, index))
+        result = asyncio.run(run_eval(spec, index, run_id=new_run_id()))
     except (ProviderError, QADatasetError, JudgeCacheMissError, ValueError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc

@@ -40,7 +40,13 @@ _SUITE_SEED_OFFSETS = {"retrieval": 1, "faithfulness": 2, "security": 3, "privac
 _SuiteCoro = Coroutine[Any, Any, SuiteResult]
 
 
-async def run_eval(spec: RunSpec, index: VectorIndex, *, fail_fast: bool = True) -> EvalRunResult:
+async def run_eval(
+    spec: RunSpec,
+    index: VectorIndex,
+    *,
+    fail_fast: bool = True,
+    run_id: str | None = None,
+) -> EvalRunResult:
     if spec.suites is None:
         raise ValueError(f"spec {spec.name!r} configures no evaluation suites")
     # Only the QA-scored suites need labels; privacy seeds its own canaries.
@@ -121,6 +127,7 @@ async def run_eval(spec: RunSpec, index: VectorIndex, *, fail_fast: bool = True)
     suite_results = await asyncio.gather(*guarded)
 
     return EvalRunResult(
+        run_id=run_id,
         name=spec.name,
         spec_hash=spec.spec_hash(),
         seed=spec.seed,
