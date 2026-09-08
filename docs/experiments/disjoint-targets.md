@@ -100,3 +100,16 @@ a within-run property and is the only quantity this ablation was designed to tes
 crucible submit specs/demo.yaml           # overlapping targets (default)
 crucible submit specs/demo-disjoint.yaml  # partitioned pool
 ```
+
+Both runs are committed, so every number above can be checked rather than taken
+on trust:
+
+| arm | artifact |
+|---|---|
+| overlapping | `results/demo-local-baseline/01M19XHZST1GCPPPGTFQR9KW81/results.json` |
+| partitioned | `results/demo-local-disjoint/01M1CGP9K9J12BJ50BCR19HR58/results.json` |
+
+Each gap cell is `*_compromise_rate − *_success_rate` at the same defense, read
+off the `security` suite's metrics; the two diagnostic rows are
+`attack_competition_rate` and `cross_question_contamination_rate` directly. The
+per-trial `attack` records behind them are in the same files.
