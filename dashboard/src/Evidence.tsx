@@ -47,25 +47,38 @@ interface Marker {
   qid: string;
 }
 
-/** Every planted marker found in this answer, whoever planted it. */
-function matched(r: Record_): Marker[] {
-  return Array.isArray(r["matched_markers"]) ? (r["matched_markers"] as Marker[]) : [];
+/** Every planted marker found in this answer, whoever planted it.
+ *
+ *  `null` means the run never scanned — which is not the same as scanning and
+ *  finding nothing. Collapsing the two here would re-manufacture, one layer
+ *  up, exactly the measurement the Python model was changed to stop inventing. */
+function matched(r: Record_): Marker[] | null {
+  const raw = r["matched_markers"];
+  return Array.isArray(raw) ? (raw as Marker[]) : null;
 }
 
 /** Markers from an attack other than the one this trial was testing. */
-function foreign(r: Record_): Marker[] {
+function foreign(r: Record_): Marker[] | null {
+  const all = matched(r);
+  if (all === null) return null;
   const own = str(r, "own_marker") ?? "";
-  return matched(r).filter((m) => m.marker !== own);
+  return all.filter((m) => m.marker !== own);
 }
 
-/** Foreign markers from the other attack on this same question. */
+/** Foreign markers from the other attack on this same question.
+ *
+ *  An unrecorded scan yields none. That is the right behaviour *here*: these
+ *  drive the "show me the trials behind this rate" filters, and the Python
+ *  side already drops unrecorded trials from those rates, so a null belongs in
+ *  neither bucket. It is not a claim that the trial was clean — the card's own
+ *  badge says "not recorded". */
 function competing(r: Record_): Marker[] {
-  return foreign(r).filter((m) => m.qid === str(r, "qid"));
+  return (foreign(r) ?? []).filter((m) => m.qid === str(r, "qid"));
 }
 
 /** Foreign markers planted on a different question — real bleed-through. */
 function crossQuestion(r: Record_): Marker[] {
-  return foreign(r).filter((m) => m.qid !== str(r, "qid"));
+  return (foreign(r) ?? []).filter((m) => m.qid !== str(r, "qid"));
 }
 
 function expand(filter: Record<string, string> | undefined): Record<string, string> {
@@ -132,7 +145,7 @@ export function EvidenceDrawer({
       .filter((r) => !needle || JSON.stringify(r).toLowerCase().includes(needle))
       .sort(
         (a, b) =>
-          Number(foreign(b).length > 0) - Number(foreign(a).length > 0) ||
+          Number((foreign(b) ?? []).length > 0) - Number((foreign(a) ?? []).length > 0) ||
           Number(flagged(b)) - Number(flagged(a)),
       );
   }, [records, fields, q]);
@@ -236,12 +249,14 @@ function RecordCard({ r }: { r: Record_ }) {
 /** Which attack actually produced this answer — the headline a reader needs
  *  next to "did the attack under test succeed?". */
 function ResponseSource({ r }: { r: Record_ }) {
-  const own = matched(r).filter((m) => m.marker === str(r, "own_marker"));
+  const all = matched(r);
+  if (all === null) return <span className="badge">marker scan not recorded</span>;
+  const own = all.filter((m) => m.marker === str(r, "own_marker"));
   if (own.length > 0)
     return (
       <span className="badge bad">answered with {own[0].attack_type} (attack under test)</span>
     );
-  const others = foreign(r);
+  const others = foreign(r) ?? [];
   if (others.length === 0)
     return <span className="badge good">no attacker text in answer</span>;
   const sameQuestion = others[0].qid === str(r, "qid");
@@ -258,7 +273,8 @@ function AttackFields({ r }: { r: Record_ }) {
   const tested = str(r, "attack_type");
   const own = str(r, "own_marker");
   const succeeded = bool(r, "succeeded");
-  const others = foreign(r);
+  const scan = matched(r);
+  const others = foreign(r) ?? [];
   return (
     <dl className="fields">
       <dt>attack under test</dt>
@@ -286,16 +302,18 @@ function AttackFields({ r }: { r: Record_ }) {
       </dd>
 
       <dt>answer produced by</dt>
-      <dd className={bool(r, "compromised") ? "bad" : "good"}>
-        {matched(r).length === 0
-          ? "no attacker-planted text"
-          : matched(r)
-              .map((m) =>
-                m.marker === own
-                  ? `${m.attack_type} under test (${m.marker})`
-                  : `${m.attack_type} attack on ${m.qid} (${m.marker})`,
-              )
-              .join(", ")}
+      <dd className={scan === null ? "" : bool(r, "compromised") ? "bad" : "good"}>
+        {scan === null
+          ? "not recorded — this run did not scan the answer for planted markers"
+          : scan.length === 0
+            ? "no attacker-planted text"
+            : scan
+                .map((m) =>
+                  m.marker === own
+                    ? `${m.attack_type} under test (${m.marker})`
+                    : `${m.attack_type} attack on ${m.qid} (${m.marker})`,
+                )
+                .join(", ")}
         {!succeeded && others.length > 0 && (
           <>
             {" "}
