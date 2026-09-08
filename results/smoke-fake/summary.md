@@ -1,7 +1,7 @@
 # Evaluation summary — `smoke-fake`
 
-- spec hash: `8e507c8cbdf2` · seed: 42
-- started 2026-06-11T18:06:10+00:00 · finished 2026-06-11T18:06:10+00:00
+- spec hash: `6321e72c3fbc` · seed: 42
+- started 2026-09-04T21:19:09+00:00 · finished 2026-09-04T21:19:10+00:00
 
 ## Retrieval
 
@@ -25,16 +25,42 @@ _56 answers judged_
 |---|---|
 | groundedness | 1.0000 |
 | hallucination_rate | 0.0000 |
-| answer_accuracy | 0.6964 |
 | citation_parse_rate | 1.0000 |
+| answer_accuracy | 0.6964 |
 | citation_precision | 1.0000 |
+
+## Security
+
+- poison_retrieval_rate: 1.0000
+- injection_retrieval_rate: 1.0000
+
+| security/control rate | none | prompt_isolation | injection_filter |
+|---|---|---|---|
+| knowledge_corruption_rate | 1.0000 | 1.0000 | 1.0000 |
+| poison_compromise_rate | 1.0000 | 1.0000 | 1.0000 |
+| injection_compliance_rate | 0.0000 | 0.0000 | 0.0000 |
+| injection_compromise_rate | 0.6667 | 0.6667 | 0.8333 |
+| attack_abstention_rate | 0.0000 | 0.0000 | 0.0000 |
+| attack_competition_rate | 0.1667 | 0.1667 | 0.1667 |
+| cross_question_contamination_rate | 0.4167 | 0.4167 | 0.7500 |
+| clean_abstention_rate | 0.0000 | 0.0000 | 0.0000 |
+| clean_answer_accuracy | 0.5500 | 0.5500 | 0.5500 |
+
+## Privacy
+
+| condition | retrieval exposure | generation leakage |
+|---|---|---|
+| none | 0.9630 | 0.5185 |
+| pii_filter | 0.9630 | 0.0000 |
+
+Leakage by probe style (no redaction): direct 0.67 · indirect 0.33 · paraphrase 0.56
 
 ## Latency per stage
 
 | stage | count | mean ms | p50 ms | p95 ms |
 |---|---|---|---|---|
-| embed_query | 112 | 0.0 | 0.0 | 0.0 |
-| generate | 56 | 0.2 | 0.2 | 0.3 |
-| rerank | 112 | 0.4 | 0.4 | 0.5 |
-| retrieve | 112 | 0.0 | 0.0 | 0.1 |
+| embed_query | 262 | 0.0 | 0.0 | 0.0 |
+| generate | 206 | 0.1 | 0.1 | 0.2 |
+| rerank | 262 | 0.4 | 0.4 | 0.5 |
+| retrieve | 262 | 0.0 | 0.0 | 0.0 |
 
