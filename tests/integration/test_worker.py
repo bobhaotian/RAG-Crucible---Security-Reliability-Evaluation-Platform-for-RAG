@@ -53,6 +53,7 @@ async def test_worker_executes_submitted_run(
     }
     portable = json.loads((report_dir / "results.json").read_text(encoding="utf-8"))
     assert portable["spec_hash"] == spec.spec_hash()
+    assert portable["ingestion"]["docs_loaded"] == 3
     assert {suite["suite"] for suite in portable["suites"]} == {
         "retrieval",
         "faithfulness",

@@ -21,6 +21,7 @@ from typing import Annotated, Literal
 from pydantic import Field
 
 from crucible.config import RunSpec
+from crucible.ingest.build import IngestReport
 from crucible.obs.aggregate import StageStats
 from crucible.types import StrictModel
 
@@ -29,7 +30,8 @@ from crucible.types import StrictModel
 #   1 — everything written before versioning existed (no schema_version key)
 #   2 — schema_version + run_id on the result; attack records distinguish
 #       "not recorded" from "recorded empty"
-RESULT_SCHEMA_VERSION = 2
+#   3 — ingestion audit embedded in every newly written result
+RESULT_SCHEMA_VERSION = 3
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -210,6 +212,8 @@ class EvalRunResult(StrictModel):
     finished_at: str
     suites: tuple[SuiteResult, ...]
     stage_stats: tuple[StageStats, ...]
+    # None only when reading an artifact created before schema 3.
+    ingestion: IngestReport | None = None
     spec: RunSpec  # the full spec, so the run is reproducible from this file
 
     def metric(self, suite: str, name: str, variant: str = "") -> float | None:

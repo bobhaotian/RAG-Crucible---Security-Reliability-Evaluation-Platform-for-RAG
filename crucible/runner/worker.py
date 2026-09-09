@@ -17,8 +17,8 @@ import socket
 from crucible.config import RunSpec
 from crucible.eval import run_eval
 from crucible.eval.report import write_report
-from crucible.ingest import load_or_build_index
-from crucible.paths import submitted_run_results_dir
+from crucible.ingest import load_ingest_report, load_or_build_index
+from crucible.paths import index_dir_for, submitted_run_results_dir
 from crucible.runner.models import ClaimedRun, RunRow
 from crucible.runner.store import ResultStore
 
@@ -33,7 +33,10 @@ async def execute_run(store: ResultStore, claimed: ClaimedRun) -> None:
     try:
         spec = RunSpec.model_validate_json(claimed.spec_json)
         index = await load_or_build_index(spec)
-        result = await run_eval(spec, index, fail_fast=False, run_id=claimed.id)
+        ingestion = load_ingest_report(index_dir_for(spec.name))
+        result = await run_eval(
+            spec, index, fail_fast=False, run_id=claimed.id, ingestion=ingestion
+        )
 
         # SQLite is the dashboard/query source of truth. Once it has the full
         # result, render the same portable artifacts as `crucible eval`. A

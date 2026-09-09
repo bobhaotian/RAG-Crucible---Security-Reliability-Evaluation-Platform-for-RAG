@@ -31,6 +31,7 @@ from crucible.eval.retrieval import run_retrieval_suite
 from crucible.eval.security import run_security_suite
 from crucible.eval.types import EvalRunResult, SuiteResult
 from crucible.index import VectorIndex
+from crucible.ingest import IngestReport
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import build_pipeline
 from crucible.qa import QAItem, load_qa
@@ -46,6 +47,7 @@ async def run_eval(
     *,
     fail_fast: bool = True,
     run_id: str | None = None,
+    ingestion: IngestReport | None = None,
 ) -> EvalRunResult:
     if spec.suites is None:
         raise ValueError(f"spec {spec.name!r} configures no evaluation suites")
@@ -135,6 +137,7 @@ async def run_eval(
         finished_at=_now(),
         suites=tuple(suite_results),
         stage_stats=tuple(collector.stats()),
+        ingestion=ingestion,
         spec=spec,
     )
 

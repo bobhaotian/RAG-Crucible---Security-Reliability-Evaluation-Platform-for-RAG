@@ -31,6 +31,7 @@ def test_ingest_then_query(spec_file: Path) -> None:
     assert result.exit_code == 0, result.output
     assert "chunks" in result.output
     assert "filter dedup" in result.output
+    assert (Path("artifacts/indexes/cli-smoke") / "ingest-report.json").is_file()
 
     again = runner.invoke(app, ["ingest", str(spec_file)])
     assert again.exit_code == 0
@@ -43,6 +44,28 @@ def test_ingest_then_query(spec_file: Path) -> None:
     assert "A:" in query.output
     assert "Citations:" in query.output
     assert "Timings (ms):" in query.output
+
+
+def test_ingest_refuses_destructive_filter_share(
+    tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    duplicate = tiny_corpus / "products" / "widget-copy.md"
+    duplicate.write_text(
+        (tiny_corpus / "products" / "widget-spec.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    spec = make_fake_spec(tiny_corpus, name="drop-threshold")
+    raw = spec.model_dump(mode="json")
+    raw["ingest"]["max_filter_drop_rate"] = 0.2
+    path = tmp_path / "threshold.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+
+    result = runner.invoke(app, ["ingest", str(path)])
+
+    assert result.exit_code == 1
+    assert "1/4 documents" in result.output
+    assert "exceeding ingest.max_filter_drop_rate=20.0%" in result.output
 
 
 def test_query_without_index_is_actionable(spec_file: Path) -> None:

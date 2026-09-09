@@ -53,6 +53,7 @@ class CorpusConfig(StrictConfig):
 class IngestConfig(StrictConfig):
     filters: tuple[FilterName, ...] = ("dedup", "language", "boilerplate")
     chunker: ChunkerConfig = ChunkerConfig()
+    max_filter_drop_rate: float | None = Field(default=0.5, gt=0.0, le=1.0)
 
 
 class IndexConfig(StrictConfig):

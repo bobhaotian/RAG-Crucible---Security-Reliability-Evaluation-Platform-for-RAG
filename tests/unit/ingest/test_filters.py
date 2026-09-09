@@ -30,6 +30,8 @@ def test_dedup_keeps_first_occurrence() -> None:
     kept, stats = apply_filters(docs, ["dedup"])
     assert [d.source for d in kept] == ["a/original.txt", "b/other.txt"]
     assert stats[0].dropped == 1
+    assert stats[0].dropped_documents[0].source == "z/copy.txt"
+    assert stats[0].dropped_documents[0].reason == "duplicate_content"
 
 
 def test_language_filter_drops_non_english() -> None:

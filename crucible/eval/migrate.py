@@ -76,10 +76,17 @@ def _migrate_1_to_2(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _migrate_2_to_3(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 2 → 3: old writers did not preserve ingestion evidence."""
+    raw.setdefault("ingestion", None)
+    return raw
+
+
 # version -> migration producing version+1. Every consecutive step from
 # _UNVERSIONED to RESULT_SCHEMA_VERSION must be present.
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
 }
 
 
