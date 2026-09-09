@@ -34,6 +34,15 @@ async def run_retrieval_suite(
     *,
     concurrency: int = 4,
 ) -> SuiteResult:
+    unlabelled = [item.qid for item in qa_items if not item.scores_retrieval]
+    if unlabelled:
+        return SuiteResult(
+            suite=SUITE,
+            status="skipped",
+            error="unsupported: retrieval labels missing for " + ", ".join(unlabelled),
+            metrics=(),
+            records=(),
+        )
     rerank = config.rerank_lift and pipeline.has_reranker
 
     async def evaluate_item(item: QAItem) -> RetrievalRecord:

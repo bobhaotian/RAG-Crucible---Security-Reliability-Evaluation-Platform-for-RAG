@@ -245,11 +245,10 @@ class RunSpec(StrictConfig):
     def _suites_consistent(self) -> RunSpec:
         if self.suites is None:
             return self
-        # The privacy suite seeds its own canaries and needs no QA labels; the
-        # other suites are scored against the labeled QA set.
-        qa_suite = self.suites.retrieval or self.suites.faithfulness or self.suites.security
-        if qa_suite and self.corpus.qa is None:
-            raise ValueError("the retrieval/faithfulness/security suites require corpus.qa")
+        # Retrieval cannot be scored without relevance labels. The answer-side
+        # suites may operate on questions without retrieval or answer labels.
+        if self.suites.retrieval is not None and self.corpus.qa is None:
+            raise ValueError("the retrieval suite requires corpus.qa")
         if self.suites.retrieval is not None:
             k_max = max(self.suites.retrieval.k_values)
             if k_max > self.pipeline.retriever.k:

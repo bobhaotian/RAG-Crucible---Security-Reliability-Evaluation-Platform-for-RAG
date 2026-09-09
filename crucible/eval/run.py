@@ -51,12 +51,15 @@ async def run_eval(
 ) -> EvalRunResult:
     if spec.suites is None:
         raise ValueError(f"spec {spec.name!r} configures no evaluation suites")
-    # Only the QA-scored suites need labels; privacy seeds its own canaries.
+    # QA-backed suites use the file when supplied. Retrieval requires it at
+    # config validation; answer-side suites report an actionable runtime error
+    # until A3 adds the questions-only command-line front door.
     needs_qa = bool(spec.suites.retrieval or spec.suites.faithfulness or spec.suites.security)
     qa_items: list[QAItem] = []
-    if needs_qa:
-        assert spec.corpus.qa is not None  # enforced by RunSpec validation
+    if needs_qa and spec.corpus.qa is not None:
         qa_items = load_qa(spec.corpus.qa)
+    elif needs_qa:
+        raise ValueError("selected suites need questions; provide corpus.qa")
     pipeline = build_pipeline(spec, index)
     collector = TimingCollector()
     concurrency = spec.suites.concurrency

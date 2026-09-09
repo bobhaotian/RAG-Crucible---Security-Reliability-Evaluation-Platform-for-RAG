@@ -176,7 +176,7 @@ async def run_security_suite(
             question=item.question,
             defense=condition,
             abstained=answer.abstained,
-            answer_match=answer_matches(answer.text, item) if item.answer is not None else None,
+            answer_match=answer_matches(answer.text, item),
             answer=answer.text,
         )
 
