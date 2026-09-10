@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from crucible.cli import app
+from crucible.config import load_spec
 from crucible.runner import ResultStore
 
 from ..conftest import make_fake_spec
@@ -44,6 +45,21 @@ def test_ingest_then_query(spec_file: Path) -> None:
     assert "A:" in query.output
     assert "Citations:" in query.output
     assert "Timings (ms):" in query.output
+
+
+def test_ingest_rebuilds_when_document_content_changes(spec_file: Path) -> None:
+    first = runner.invoke(app, ["ingest", str(spec_file)])
+    assert first.exit_code == 0, first.output
+    spec = load_spec(spec_file)
+    before = spec.ingest_fingerprint()
+    document = spec.corpus.documents / "products" / "widget-spec.md"
+    document.write_text(document.read_text(encoding="utf-8") + "\nUpdated.\n", encoding="utf-8")
+
+    second = runner.invoke(app, ["ingest", str(spec_file)])
+
+    assert second.exit_code == 0, second.output
+    assert "up to date" not in second.output
+    assert load_spec(spec_file).ingest_fingerprint() != before
 
 
 def test_ingest_refuses_destructive_filter_share(

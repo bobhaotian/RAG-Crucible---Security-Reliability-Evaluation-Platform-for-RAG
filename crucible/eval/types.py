@@ -16,9 +16,10 @@ contamination comes to report zero of it.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from crucible.config import RunSpec
 from crucible.ingest.build import IngestReport
@@ -31,7 +32,8 @@ from crucible.types import StrictModel
 #   2 — schema_version + run_id on the result; attack records distinguish
 #       "not recorded" from "recorded empty"
 #   3 — ingestion audit embedded in every newly written result
-RESULT_SCHEMA_VERSION = 3
+#   4 — corpus and QA content digests preserved in the embedded spec
+RESULT_SCHEMA_VERSION = 4
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -207,6 +209,9 @@ class EvalRunResult(StrictModel):
     run_id: str | None = None
     name: str
     spec_hash: str
+    # Exact canonical spec text used to mint spec_hash. Historical RunSpec
+    # models gain defaults over time; this preserves the writer's identity.
+    spec_identity_json: str | None = None
     seed: int
     started_at: str  # ISO-8601 UTC
     finished_at: str
@@ -215,6 +220,14 @@ class EvalRunResult(StrictModel):
     # None only when reading an artifact created before schema 3.
     ingestion: IngestReport | None = None
     spec: RunSpec  # the full spec, so the run is reproducible from this file
+
+    @model_validator(mode="after")
+    def _identity_receipt_matches_hash(self) -> EvalRunResult:
+        if self.spec_identity_json is not None:
+            actual = hashlib.sha256(self.spec_identity_json.encode()).hexdigest()
+            if actual != self.spec_hash:
+                raise ValueError("spec_identity_json does not reproduce spec_hash")
+        return self
 
     def metric(self, suite: str, name: str, variant: str = "") -> float | None:
         for suite_result in self.suites:

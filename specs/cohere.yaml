@@ -6,8 +6,8 @@ name: cohere-baseline
 seed: 42
 
 corpus:
-  documents: datasets/seeded/corpus
-  qa: datasets/seeded/qa.jsonl
+  documents: ../datasets/seeded/corpus
+  qa: ../datasets/seeded/qa.jsonl
 
 ingest:
   filters: [dedup, language, boilerplate]
@@ -47,7 +47,7 @@ suites:
       provider: cohere
       model: command-r-08-2024
       mode: auto
-      cache: datasets/seeded/judgments-cohere.jsonl
+      cache: ../datasets/seeded/judgments-cohere.jsonl
   security:
     poisoning: {targets: 10}
     injection: {targets: 10}

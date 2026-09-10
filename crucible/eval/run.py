@@ -135,6 +135,7 @@ async def run_eval(
         run_id=run_id,
         name=spec.name,
         spec_hash=spec.spec_hash(),
+        spec_identity_json=spec.canonical_json(),
         seed=spec.seed,
         started_at=started_at,
         finished_at=_now(),

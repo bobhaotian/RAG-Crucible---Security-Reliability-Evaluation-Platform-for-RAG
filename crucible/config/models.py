@@ -48,6 +48,10 @@ class ChunkerConfig(StrictConfig):
 class CorpusConfig(StrictConfig):
     documents: Path
     qa: Path | None = None
+    # Content receipts are populated when a spec enters through load_spec or
+    # the runner. None on historical embedded specs means "not recorded".
+    documents_digest: str | None = None
+    qa_digest: str | None = None
 
 
 class IngestConfig(StrictConfig):
@@ -266,15 +270,47 @@ class RunSpec(StrictConfig):
     def spec_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
+    def with_content_digests(self) -> RunSpec:
+        """Return a spec pinned to the corpus bytes that exist right now."""
+        corpus = self.corpus.model_copy(
+            update={
+                "documents_digest": _directory_digest(self.corpus.documents),
+                "qa_digest": _file_digest(self.corpus.qa) if self.corpus.qa is not None else None,
+            }
+        )
+        return self.model_copy(update={"corpus": corpus})
+
     def ingest_fingerprint(self) -> str:
         """Hash of everything that shapes the index (corpus, filters, chunker,
         store, embedder). A saved index records this; querying with a spec
         whose fingerprint differs means the index is stale."""
+        corpus_identity = {
+            "documents_digest": self.corpus.documents_digest
+            or _directory_digest(self.corpus.documents),
+            "qa_digest": self.corpus.qa_digest
+            or (_file_digest(self.corpus.qa) if self.corpus.qa is not None else None),
+        }
         parts = {
-            "corpus": self.corpus.model_dump(mode="json"),
+            "corpus": corpus_identity,
             "ingest": self.ingest.model_dump(mode="json"),
             "index": self.index.model_dump(mode="json"),
             "embedder": self.pipeline.embedder.model_dump(mode="json"),
         }
         blob = json.dumps(parts, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _file_digest(path: Path) -> str:
+    if not path.is_file():
+        raise ValueError(f"content file not found: {path}")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _directory_digest(root: Path) -> str:
+    if not root.is_dir():
+        raise ValueError(f"content directory not found: {root}")
+    leaves = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        source = path.relative_to(root).as_posix()
+        leaves.append(f"{source}\0{_file_digest(path)}")
+    return hashlib.sha256("\n".join(leaves).encode()).hexdigest()
