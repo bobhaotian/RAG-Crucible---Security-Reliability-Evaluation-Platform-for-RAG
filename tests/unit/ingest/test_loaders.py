@@ -42,7 +42,14 @@ def test_load_corpus_loads_each_type_and_skips_unknown(mixed_corpus: Path) -> No
     docs, skipped = load_corpus(mixed_corpus)
     by_source = {d.source: d for d in docs}
     assert set(by_source) == {"note.md", "plain.txt", "page.html", "doc.pdf"}
-    assert skipped == ["ignored.xyz"]
+    assert [item.model_dump() for item in skipped] == [
+        {
+            "source": "ignored.xyz",
+            "suffix": ".xyz",
+            "reason": "unsupported_suffix",
+            "detail": None,
+        }
+    ]
 
     assert by_source["note.md"].meta.title == "A Title"
     assert "The fact sentence lives here." in by_source["note.md"].text
@@ -67,3 +74,17 @@ def test_doc_ids_are_stable_across_loads(mixed_corpus: Path) -> None:
 def test_missing_corpus_dir_raises(tmp_path: Path) -> None:
     with pytest.raises(LoaderError, match="not found"):
         load_corpus(tmp_path / "absent")
+
+
+def test_malformed_supported_file_is_recorded_and_other_files_load(tmp_path: Path) -> None:
+    root = tmp_path / "corpus"
+    _write(root, "good.txt", "This valid document still loads.")
+    (root / "broken.pdf").write_bytes(b"not a PDF")
+
+    docs, skipped = load_corpus(root)
+
+    assert [doc.source for doc in docs] == ["good.txt"]
+    assert len(skipped) == 1
+    assert skipped[0].source == "broken.pdf"
+    assert skipped[0].reason == "loader_error"
+    assert skipped[0].detail

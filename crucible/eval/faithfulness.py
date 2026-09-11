@@ -120,7 +120,7 @@ async def _judge_answer(item: QAItem, answer: Answer, judge: EntailmentJudge) ->
         claims=tuple(judgments),
         citations_parsed=bool(parsed_citations),
         citations=tuple(citation_judgments),
-        answer_match=answer_matches(answer.text, item) if item.answer is not None else None,
+        answer_match=answer_matches(answer.text, item),
     )
 
 

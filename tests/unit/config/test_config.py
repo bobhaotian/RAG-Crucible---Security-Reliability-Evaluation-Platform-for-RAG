@@ -99,10 +99,67 @@ def test_ingest_fingerprint_tracks_index_shape_only() -> None:
     assert different_chunker.ingest_fingerprint() != base.ingest_fingerprint()
 
 
+def test_ingest_fingerprint_tracks_document_and_qa_bytes(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    document = corpus / "policy.txt"
+    document.write_text("Returns are allowed for 30 days.", encoding="utf-8")
+    qa = tmp_path / "qa.jsonl"
+    qa.write_text('{"qid":"q1","question":"Return period?"}\n', encoding="utf-8")
+    raw = _minimal_spec_dict()
+    raw["corpus"] = {"documents": corpus, "qa": qa}
+
+    first = RunSpec.model_validate(raw).with_content_digests()
+    document.write_text("Returns are allowed for 45 days.", encoding="utf-8")
+    second = RunSpec.model_validate(raw).with_content_digests()
+    assert second.ingest_fingerprint() != first.ingest_fingerprint()
+
+    document.write_text("Returns are allowed for 30 days.", encoding="utf-8")
+    qa.write_text('{"qid":"q1","question":"How long is the return period?"}\n', encoding="utf-8")
+    third = RunSpec.model_validate(raw).with_content_digests()
+    assert third.ingest_fingerprint() != first.ingest_fingerprint()
+
+
+def test_ingest_fingerprint_tracks_added_and_removed_files(tmp_path: Path) -> None:
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "a.txt").write_text("alpha", encoding="utf-8")
+    raw = _minimal_spec_dict()
+    raw["corpus"] = {"documents": corpus}
+    first = RunSpec.model_validate(raw).with_content_digests()
+
+    added = corpus / "b.txt"
+    added.write_text("beta", encoding="utf-8")
+    second = RunSpec.model_validate(raw).with_content_digests()
+    added.unlink()
+    restored = RunSpec.model_validate(raw).with_content_digests()
+
+    assert second.ingest_fingerprint() != first.ingest_fingerprint()
+    assert restored.ingest_fingerprint() == first.ingest_fingerprint()
+
+
+def test_moving_an_unchanged_corpus_preserves_ingest_identity(tmp_path: Path) -> None:
+    first_dir = tmp_path / "first"
+    second_dir = tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    (first_dir / "doc.txt").write_text("same bytes", encoding="utf-8")
+    (second_dir / "doc.txt").write_text("same bytes", encoding="utf-8")
+    first_raw = _minimal_spec_dict()
+    second_raw = _minimal_spec_dict()
+    first_raw["corpus"] = {"documents": first_dir}
+    second_raw["corpus"] = {"documents": second_dir}
+
+    first = RunSpec.model_validate(first_raw).with_content_digests()
+    second = RunSpec.model_validate(second_raw).with_content_digests()
+
+    assert first.ingest_fingerprint() == second.ingest_fingerprint()
+
+
 def test_committed_specs_are_valid() -> None:
     for name in ("demo.yaml", "smoke-fake.yaml"):
         spec = load_spec(REPO_ROOT / "specs" / name)
-        assert spec.corpus.documents == Path("datasets/seeded/corpus")
+        assert spec.corpus.documents == REPO_ROOT / "datasets/seeded/corpus"
 
 
 def test_load_spec_errors_name_the_file(tmp_path: Path) -> None:

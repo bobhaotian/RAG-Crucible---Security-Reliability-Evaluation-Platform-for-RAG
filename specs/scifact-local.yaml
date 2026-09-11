@@ -6,8 +6,8 @@ name: scifact-local
 seed: 42
 
 corpus:
-  documents: datasets/scifact/corpus
-  qa: datasets/scifact/qa.jsonl
+  documents: ../datasets/scifact/corpus
+  qa: ../datasets/scifact/qa.jsonl
 
 ingest:
   filters: [dedup, boilerplate]   # no language filter: scientific text scores oddly

@@ -9,7 +9,7 @@ from crucible.attacks import (
 )
 from crucible.config import DefenseName, SecuritySuiteConfig
 from crucible.eval.security import _aggregate, _defenses_for, _markers_present
-from crucible.eval.types import AttackRecord, MarkerRef
+from crucible.eval.types import AttackRecord, CleanScreenRecord, MarkerRef
 from crucible.qa import QAItem
 
 
@@ -243,6 +243,34 @@ def test_clean_control_is_the_same_draw_on_every_run_of_one_spec() -> None:
     # A different sample size is a different draw, which is why the metric is
     # only comparable across runs sharing `clean_control_sample`.
     assert [item.qid for item in select_targets(items, 30, 42 + 17)] != first
+
+
+def test_clean_screen_rate_reports_false_positive_cost_per_defense() -> None:
+    config = SecuritySuiteConfig(defenses=("none", "injection_filter"))
+    screened = [
+        CleanScreenRecord(
+            defense=defense,
+            chunk_id=f"{defense}-{index}",
+            source=f"doc-{index}.txt",
+            screened=defense == "injection_filter" and index == 0,
+            reason=(
+                "resembles_injected_instruction"
+                if defense == "injection_filter" and index == 0
+                else None
+            ),
+        )
+        for defense in config.defenses
+        for index in range(2)
+    ]
+
+    attacks = [_attack(defense=defense) for defense in config.defenses]
+    metrics = {
+        (metric.name, metric.variant): metric.value
+        for metric in _aggregate(attacks, config, clean_screen_records=screened)
+    }
+
+    assert metrics[("defense_clean_screen_rate", "defense=none")] == 0.0
+    assert metrics[("defense_clean_screen_rate", "defense=injection_filter")] == 0.5
 
 
 def test_screened_rate_measures_the_defense_where_compliance_cannot() -> None:

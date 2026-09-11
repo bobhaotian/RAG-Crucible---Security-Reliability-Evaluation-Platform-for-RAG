@@ -21,7 +21,7 @@ from crucible.config import RunSpec, SpecError, load_spec
 from crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
 from crucible.eval.report import write_report
 from crucible.index import IndexMeta, VectorIndex, open_saved_index
-from crucible.ingest import build_index
+from crucible.ingest import build_index, load_ingest_report
 from crucible.paths import default_db_path, index_dir_for, submitted_run_results_dir
 from crucible.pipeline import Answer, build_pipeline
 from crucible.providers import ProviderError
@@ -84,7 +84,11 @@ def ingest(
     spec = _load_spec_or_exit(spec_path)
     out_dir = index_dir_for(spec.name)
 
-    if not force and (out_dir / "meta.json").is_file():
+    if (
+        not force
+        and (out_dir / "meta.json").is_file()
+        and (out_dir / "ingest-report.json").is_file()
+    ):
         meta = IndexMeta.model_validate_json((out_dir / "meta.json").read_text(encoding="utf-8"))
         if meta.fingerprint == spec.ingest_fingerprint():
             typer.echo(
@@ -101,8 +105,15 @@ def ingest(
 
     typer.echo(f"ingested corpus {spec.corpus.documents}")
     typer.echo(f"  documents loaded : {report.docs_loaded} ({report.files_skipped} skipped)")
+    for suffix, count in sorted(report.files_skipped_by_suffix.items()):
+        typer.echo(f"  skipped {suffix:<12}: {count}")
+    for skipped in report.skipped_files:
+        detail = f" ({skipped.detail})" if skipped.detail else ""
+        typer.echo(f"    {skipped.source}: {skipped.reason}{detail}")
     for stat in report.filter_stats:
         typer.echo(f"  filter {stat.name:<12}: dropped {stat.dropped}")
+        for dropped in stat.dropped_documents:
+            typer.echo(f"    {dropped.source}: {dropped.reason}")
     typer.echo(f"  documents indexed: {report.docs_indexed}")
     typer.echo(f"  chunks           : {report.chunks} (dim {report.dim})")
     typer.echo(f"  duration         : {report.duration_s}s")
@@ -163,12 +174,17 @@ def eval_command(
         typer.echo(f"error: spec {spec.name!r} configures no `suites:`", err=True)
         raise typer.Exit(code=2)
     index, _ = _load_index_or_exit(spec)
+    try:
+        ingestion = load_ingest_report(index_dir_for(spec.name))
+    except FileNotFoundError as exc:
+        typer.echo(f"error: {exc}; re-run `crucible ingest` for this spec", err=True)
+        raise typer.Exit(code=2) from exc
     out_dir = out if out is not None else Path("results") / spec.name
 
     # Mint an id even outside the queue, so a results.json identifies itself
     # rather than relying on the directory someone happened to write it to.
     try:
-        result = asyncio.run(run_eval(spec, index, run_id=new_run_id()))
+        result = asyncio.run(run_eval(spec, index, run_id=new_run_id(), ingestion=ingestion))
     except (ProviderError, QADatasetError, JudgeCacheMissError, ValueError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=1) from exc

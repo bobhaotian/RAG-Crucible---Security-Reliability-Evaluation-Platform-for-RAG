@@ -34,6 +34,7 @@ Suite-level, splitting *why* a trial answered with someone else's marker
 
 from __future__ import annotations
 
+import random
 from typing import Literal
 
 from crucible.attacks import (
@@ -46,19 +47,28 @@ from crucible.attacks import (
 from crucible.config import DefenseName, DefensesConfig, RunSpec, SecuritySuiteConfig
 from crucible.eval.concurrent import bounded_gather
 from crucible.eval.metrics import mean
-from crucible.eval.types import AttackRecord, CleanDefenseRecord, MarkerRef, Metric, SuiteResult
+from crucible.eval.types import (
+    AttackRecord,
+    CleanDefenseRecord,
+    CleanScreenRecord,
+    MarkerRef,
+    Metric,
+    SuiteResult,
+)
 from crucible.index import VectorIndex
 from crucible.ingest import apply_filters, chunk_documents, embed_into_index, load_corpus
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import Answer, RagPipeline
+from crucible.pipeline.defenses import clean_chunk_screening_reason
 from crucible.qa import QAItem, answer_matches
-from crucible.types import Document
+from crucible.types import Chunk, Document
 
 SUITE = "security"
 
 _POISON_SEED_OFFSET = 11
 _INJECT_SEED_OFFSET = 13
 _CONTROL_SEED_OFFSET = 17
+_SCREEN_CONTROL_SEED_OFFSET = 23
 
 
 def _defenses_for(condition: DefenseName) -> DefensesConfig:
@@ -121,7 +131,9 @@ async def run_security_suite(
         else []
     )
 
-    index = await _build_poisoned_index(pipeline, spec, [a.document for a in poison + injections])
+    index, clean_chunks = await _build_poisoned_index(
+        pipeline, spec, [a.document for a in poison + injections]
+    )
     attacked = pipeline.with_index(index)
 
     # One pass per (attack, defense). Build the work list in a fixed order so
@@ -176,7 +188,7 @@ async def run_security_suite(
             question=item.question,
             defense=condition,
             abstained=answer.abstained,
-            answer_match=answer_matches(answer.text, item) if item.answer is not None else None,
+            answer_match=answer_matches(answer.text, item),
             answer=answer.text,
         )
 
@@ -190,13 +202,36 @@ async def run_security_suite(
         run_clean(item, condition) for condition in config.defenses for item in control_items
     ]
     clean_records = await bounded_gather(clean_jobs, concurrency)
-    metrics = _aggregate(records, config, clean_records)
-    return SuiteResult(suite=SUITE, metrics=tuple(metrics), records=tuple(records + clean_records))
+    screen_sample = clean_chunks
+    if config.clean_screen_sample is not None and config.clean_screen_sample < len(clean_chunks):
+        screen_sample = random.Random(seed + _SCREEN_CONTROL_SEED_OFFSET).sample(
+            clean_chunks, config.clean_screen_sample
+        )
+        screen_sample.sort(key=lambda chunk: chunk.chunk_id)
+    clean_screen_records = []
+    for condition in config.defenses:
+        for chunk in screen_sample:
+            reason = clean_chunk_screening_reason(chunk, condition)
+            clean_screen_records.append(
+                CleanScreenRecord(
+                    defense=condition,
+                    chunk_id=chunk.chunk_id,
+                    source=chunk.source,
+                    screened=reason is not None,
+                    reason=reason,
+                )
+            )
+    metrics = _aggregate(records, config, clean_records, clean_screen_records)
+    return SuiteResult(
+        suite=SUITE,
+        metrics=tuple(metrics),
+        records=tuple(records + clean_records + clean_screen_records),
+    )
 
 
 async def _build_poisoned_index(
     pipeline: RagPipeline, spec: RunSpec, attack_docs: list[Document]
-) -> VectorIndex:
+) -> tuple[VectorIndex, list[Chunk]]:
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
@@ -204,15 +239,17 @@ async def _build_poisoned_index(
     # ingestion path. Giving attack documents a special low-trust channel here
     # would hand the defense an oracle unavailable in deployment.
     attack_chunks = chunk_documents(attack_docs, spec.ingest.chunker)
-    return await embed_into_index(clean_chunks + attack_chunks, pipeline.embedder)
+    return await embed_into_index(clean_chunks + attack_chunks, pipeline.embedder), clean_chunks
 
 
 def _aggregate(
     records: list[AttackRecord],
     config: SecuritySuiteConfig,
     clean_records: list[CleanDefenseRecord] | None = None,
+    clean_screen_records: list[CleanScreenRecord] | None = None,
 ) -> list[Metric]:
     clean_records = clean_records or []
+    clean_screen_records = clean_screen_records or []
     metrics: list[Metric] = []
     # Retrieval is measured where context is not stripped (injection_filter
     # removes flagged chunks post-retrieval, which is the defense, not retrieval).
@@ -363,6 +400,16 @@ def _aggregate(
                     name="clean_answer_accuracy",
                     variant=f"defense={condition}",
                     value=round(mean([float(bool(r.answer_match)) for r in gradable]), 4),
+                )
+            )
+        screened = [r for r in clean_screen_records if r.defense == condition]
+        if screened:
+            metrics.append(
+                Metric(
+                    suite=SUITE,
+                    name="defense_clean_screen_rate",
+                    variant=f"defense={condition}",
+                    value=round(mean([float(r.screened) for r in screened]), 4),
                 )
             )
     return metrics

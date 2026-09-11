@@ -52,7 +52,8 @@ async def test_worker_executes_submitted_run(
         "summary.md",
     }
     portable = json.loads((report_dir / "results.json").read_text(encoding="utf-8"))
-    assert portable["spec_hash"] == spec.spec_hash()
+    assert portable["spec_hash"] == spec.with_content_digests().spec_hash()
+    assert portable["ingestion"]["docs_loaded"] == 3
     assert {suite["suite"] for suite in portable["suites"]} == {
         "retrieval",
         "faithfulness",
@@ -66,15 +67,20 @@ async def test_worker_executes_submitted_run(
 async def test_worker_marks_broken_run_failed_and_survives(
     store: ResultStore, tiny_corpus: Path, tmp_path: Path
 ) -> None:
+    broken_corpus = tmp_path / "broken-corpus"
+    broken_corpus.mkdir()
+    (broken_corpus / "temporary.txt").write_text("present at submission", encoding="utf-8")
     broken = _eval_spec(tiny_corpus, tmp_path, name="worker-broken").model_copy(
         update={
             "corpus": _eval_spec(tiny_corpus, tmp_path).corpus.model_copy(
-                update={"documents": tmp_path / "no-such-dir"}
+                update={"documents": broken_corpus}
             )
         }
     )
     healthy = _eval_spec(tiny_corpus, tmp_path, name="worker-healthy")
     broken_id = store.submit_run(broken)
+    (broken_corpus / "temporary.txt").unlink()
+    broken_corpus.rmdir()
     healthy_id = store.submit_run(healthy)
 
     processed = await worker_loop(store, drain=True)
@@ -82,7 +88,7 @@ async def test_worker_marks_broken_run_failed_and_survives(
 
     failed = store.get_run(broken_id)
     assert failed.status == "failed"
-    assert failed.error is not None and "no-such-dir" in failed.error
+    assert failed.error is not None and "broken-corpus" in failed.error
     assert store.get_run(healthy_id).status == "succeeded"
 
 

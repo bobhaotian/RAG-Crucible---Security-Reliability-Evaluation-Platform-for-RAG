@@ -125,6 +125,7 @@ class ResultStore:
     # -- queue side -------------------------------------------------------
 
     def submit_run(self, spec: RunSpec, *, force: bool = False) -> str:
+        spec = spec.with_content_digests()
         spec_hash = spec.spec_hash()
         with self._connect() as conn:
             if not force:

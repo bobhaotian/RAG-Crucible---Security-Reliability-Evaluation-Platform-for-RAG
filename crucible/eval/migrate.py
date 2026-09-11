@@ -33,6 +33,7 @@ guards the property this relies on.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -76,10 +77,38 @@ def _migrate_1_to_2(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _migrate_2_to_3(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 2 → 3: old writers did not preserve ingestion evidence."""
+    raw.setdefault("ingestion", None)
+    return raw
+
+
+def _migrate_3_to_4(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 3 → 4: older writers did not pin corpus content digests."""
+    spec = raw.get("spec")
+    if isinstance(spec, dict):
+        identity = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+        if hashlib.sha256(identity.encode()).hexdigest() == raw.get("spec_hash"):
+            raw.setdefault("spec_identity_json", identity)
+    corpus = (raw.get("spec") or {}).get("corpus")
+    if isinstance(corpus, dict):
+        corpus.setdefault("documents_digest", None)
+        corpus.setdefault("qa_digest", None)
+    return raw
+
+
+def _migrate_4_to_5(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 4 → 5: old runs contain no clean-chunk screening trials."""
+    return raw
+
+
 # version -> migration producing version+1. Every consecutive step from
 # _UNVERSIONED to RESULT_SCHEMA_VERSION must be present.
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
+    3: _migrate_3_to_4,
+    4: _migrate_4_to_5,
 }
 
 
