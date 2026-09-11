@@ -97,8 +97,8 @@ a within-run property and is the only quantity this ablation was designed to tes
 ## Reproduce
 
 ```sh
-crucible submit specs/demo.yaml           # overlapping targets (default)
-crucible submit specs/demo-disjoint.yaml  # partitioned pool
+rag-crucible submit specs/demo.yaml           # overlapping targets (default)
+rag-crucible submit specs/demo-disjoint.yaml  # partitioned pool
 ```
 
 Both runs are committed, so every number above can be checked rather than taken

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from crucible.pipeline import RankedContext, parse_citations
-from crucible.pipeline.types import Candidate
-from crucible.types import Chunk, chunk_id_for
+from rag_crucible.pipeline import RankedContext, parse_citations
+from rag_crucible.pipeline.types import Candidate
+from rag_crucible.types import Chunk, chunk_id_for
 
 
 def _context(n: int) -> RankedContext:

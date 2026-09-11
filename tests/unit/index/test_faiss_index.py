@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from crucible.config import ChunkerConfig, ProviderRef
-from crucible.index import FaissIndex, IndexItem, IndexMeta
-from crucible.providers import EmbedInputType
-from crucible.providers.fake import FakeEmbedder
-from crucible.types import Chunk, Provenance, chunk_id_for
+from rag_crucible.config import ChunkerConfig, ProviderRef
+from rag_crucible.index import FaissIndex, IndexItem, IndexMeta
+from rag_crucible.providers import EmbedInputType
+from rag_crucible.providers.fake import FakeEmbedder
+from rag_crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _chunk(text: str, i: int) -> Chunk:
@@ -90,7 +90,7 @@ async def test_save_load_roundtrip(tmp_path: Path) -> None:
 
 
 async def test_load_missing_index_is_actionable(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="crucible ingest"):
+    with pytest.raises(FileNotFoundError, match="rag-crucible ingest"):
         FaissIndex.load(tmp_path / "nowhere")
 
 

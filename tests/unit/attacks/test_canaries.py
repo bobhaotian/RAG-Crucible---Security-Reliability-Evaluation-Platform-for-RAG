@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from crucible.attacks import CANARY_SOURCE_PREFIX, generate_canaries
-from crucible.ingest import contains_pii, redact_pii
+from rag_crucible.attacks import CANARY_SOURCE_PREFIX, generate_canaries
+from rag_crucible.ingest import contains_pii, redact_pii
 
 
 def test_generates_requested_count_and_kinds() -> None:

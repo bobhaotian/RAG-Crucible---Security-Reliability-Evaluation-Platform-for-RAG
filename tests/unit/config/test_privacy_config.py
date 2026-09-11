@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from crucible.config import RunSpec
+from rag_crucible.config import RunSpec
 
 
 def _spec(privacy: dict[str, object], *, qa: bool = False) -> dict[str, object]:

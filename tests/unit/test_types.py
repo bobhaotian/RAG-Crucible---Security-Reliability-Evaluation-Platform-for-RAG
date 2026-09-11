@@ -5,7 +5,7 @@ import re
 import pytest
 from pydantic import ValidationError
 
-from crucible.types import Provenance, chunk_id_for, doc_id_for
+from rag_crucible.types import Provenance, chunk_id_for, doc_id_for
 
 
 def test_document_and_chunk_ids_are_stable_and_input_sensitive() -> None:

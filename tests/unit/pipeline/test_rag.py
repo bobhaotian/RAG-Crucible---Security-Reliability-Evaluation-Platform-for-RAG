@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 import pytest
 
-from crucible.config import (
+from rag_crucible.config import (
     DefensesConfig,
     GeneratorConfig,
     PipelineConfig,
@@ -12,9 +12,9 @@ from crucible.config import (
     RerankerConfig,
     RetrieverConfig,
 )
-from crucible.index import SearchHit
-from crucible.pipeline import Candidate, RagPipeline
-from crucible.providers import (
+from rag_crucible.index import SearchHit
+from rag_crucible.pipeline import Candidate, RagPipeline
+from rag_crucible.providers import (
     EmbedInputType,
     EmbedResult,
     GenerateResult,
@@ -24,7 +24,7 @@ from crucible.providers import (
     RerankResult,
     Usage,
 )
-from crucible.types import Chunk, Provenance, chunk_id_for
+from rag_crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _config(*, rerank_enabled: bool = True, injection_filter: bool = False) -> PipelineConfig:

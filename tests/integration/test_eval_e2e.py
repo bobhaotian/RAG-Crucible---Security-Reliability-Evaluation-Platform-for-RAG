@@ -10,18 +10,18 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from crucible.cli import app
-from crucible.config import (
+from rag_crucible.cli import app
+from rag_crucible.config import (
     FaithfulnessSuiteConfig,
     JudgeConfig,
     RetrievalSuiteConfig,
     RunSpec,
     SuitesConfig,
 )
-from crucible.eval import EvalRunResult, run_eval
-from crucible.eval.report import write_report
-from crucible.index import FaissIndex
-from crucible.ingest import build_index
+from rag_crucible.eval import EvalRunResult, run_eval
+from rag_crucible.eval.report import write_report
+from rag_crucible.index import FaissIndex
+from rag_crucible.ingest import build_index
 
 from ..conftest import make_fake_spec
 

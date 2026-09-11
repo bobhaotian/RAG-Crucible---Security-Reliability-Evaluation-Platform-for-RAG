@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.config import ProviderRef
-from crucible.providers import (
+from rag_crucible.config import ProviderRef
+from rag_crucible.providers import (
     CapabilityNotSupportedError,
     ProviderDependencyError,
     build_embedder,
     build_generator,
     build_reranker,
 )
-from crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
+from rag_crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
 
 
 def test_fake_provider_builds_all_stages() -> None:
@@ -29,7 +29,7 @@ def test_openai_rerank_is_a_capability_error_with_a_fix() -> None:
 def test_openai_provider_builds_with_httpx_present() -> None:
     # httpx is a dev dependency, so the openai stage builds without keys (auth
     # only happens on first call, not at build time).
-    from crucible.providers.openai_provider import OpenAIEmbedder, OpenAIGenerator
+    from rag_crucible.providers.openai_provider import OpenAIEmbedder, OpenAIGenerator
 
     assert isinstance(
         build_embedder(ProviderRef(provider="openai", model="text-embedding-3-small")),
@@ -48,6 +48,6 @@ def test_cohere_build_depends_on_the_extra() -> None:
         with pytest.raises(ProviderDependencyError, match="cohere extra"):
             build_embedder(ref)
     else:
-        from crucible.providers.cohere_provider import CohereEmbedder
+        from rag_crucible.providers.cohere_provider import CohereEmbedder
 
         assert isinstance(build_embedder(ref), CohereEmbedder)

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import re
 
-from crucible.attacks import (
+from rag_crucible.attacks import (
     INJECT_SOURCE_PREFIX,
     POISON_SOURCE_PREFIX,
     generate_injection_attacks,
     generate_poison_attacks,
     select_targets,
 )
-from crucible.qa import QAItem
+from rag_crucible.qa import QAItem
 
 ITEMS = [
     QAItem(
@@ -79,8 +79,8 @@ def test_no_defense_pattern_reproduces_a_phrase_from_the_attack_set() -> None:
     answers. Reproducing a *phrase* is not: it means the pattern was authored by
     reading the payload rather than the threat model.
     """
-    from crucible.attacks.injection import _PAYLOADS
-    from crucible.pipeline.defenses import _INJECTION_PATTERNS
+    from rag_crucible.attacks.injection import _PAYLOADS
+    from rag_crucible.pipeline.defenses import _INJECTION_PATTERNS
 
     payload_trigrams = set()
     for text in _PAYLOADS.values():
@@ -111,7 +111,7 @@ def test_the_filter_generalises_worse_than_it_scores_on_its_own_family() -> None
     genuinely generalised or been tuned against the held-out set — either way
     the response is a new held-out phrasing, not deleting this assertion.
     """
-    from crucible.pipeline import looks_like_injection
+    from rag_crucible.pipeline import looks_like_injection
 
     attacks = generate_injection_attacks(ITEMS, n=8, seed=3)
     seen = [a for a in attacks if a.family == "seen"]
@@ -127,8 +127,8 @@ def test_the_filter_generalises_worse_than_it_scores_on_its_own_family() -> None
 
 def test_the_isolation_prompt_does_not_enumerate_payload_behaviours() -> None:
     """A prompt that recites the test set measures recall of that list."""
-    from crucible.attacks.injection import _PAYLOADS
-    from crucible.pipeline.prompts import ISOLATION_SYSTEM_PROMPT
+    from rag_crucible.attacks.injection import _PAYLOADS
+    from rag_crucible.pipeline.prompts import ISOLATION_SYSTEM_PROMPT
 
     prompt_trigrams = {
         tuple(_words(ISOLATION_SYSTEM_PROMPT)[i : i + 3])

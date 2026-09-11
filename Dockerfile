@@ -1,5 +1,5 @@
-# rag-crucible service image: runs the API (`crucible serve`) or the worker
-# (`crucible worker`) — docker-compose picks the command per service.
+# rag-crucible service image: runs the API (`rag-crucible serve`) or the worker
+# (`rag-crucible worker`) — docker-compose picks the command per service.
 #
 # Default build ships the base deps only (fake provider works out of the box,
 # image stays small). Build with the local models baked in:
@@ -11,9 +11,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /usr/local/bin/uv
 
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_PREFERENCE=only-system \
-    CRUCIBLE_ARTIFACTS_DIR=/data/artifacts \
-    CRUCIBLE_DB=/data/artifacts/crucible.db \
-    CRUCIBLE_RESULTS_DIR=/data/artifacts/results
+    RAG_CRUCIBLE_ARTIFACTS_DIR=/data/artifacts \
+    RAG_CRUCIBLE_DB=/data/artifacts/rag-crucible.db \
+    RAG_CRUCIBLE_RESULTS_DIR=/data/artifacts/results
 
 WORKDIR /app
 ARG WITH_LOCAL=0
@@ -27,8 +27,8 @@ RUN if [ "$WITH_LOCAL" = "1" ]; then \
     fi
 
 # project layer
-COPY crucible/ crucible/
-COPY api/ api/
+COPY rag_crucible/ rag_crucible/
+COPY rag_crucible_api/ rag_crucible_api/
 COPY specs/ specs/
 COPY datasets/ datasets/
 COPY README.md ./
@@ -42,4 +42,4 @@ RUN mkdir -p /data/artifacts
 VOLUME /data/artifacts
 
 EXPOSE 8000
-CMD ["uv", "run", "--no-sync", "crucible", "serve", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--no-sync", "rag-crucible", "serve", "--host", "0.0.0.0", "--port", "8000"]

@@ -5,18 +5,18 @@ from types import SimpleNamespace
 
 import pytest
 
-import crucible.index.factory as index_factory
-import crucible.ingest.build as build_module
-from crucible.config import ChunkerConfig
-from crucible.ingest.build import (
+import rag_crucible.index.factory as index_factory
+import rag_crucible.ingest.build as build_module
+from rag_crucible.config import ChunkerConfig
+from rag_crucible.ingest.build import (
     _collection_name,
     chunk_documents,
     embed_chunks,
     embed_into_index,
     load_or_build_index,
 )
-from crucible.providers import EmbedInputType, EmbedResult, Usage
-from crucible.types import Chunk, DocMeta, Document, Provenance, chunk_id_for, doc_id_for
+from rag_crucible.providers import EmbedInputType, EmbedResult, Usage
+from rag_crucible.types import Chunk, DocMeta, Document, Provenance, chunk_id_for, doc_id_for
 
 from ...conftest import make_fake_spec
 
@@ -121,7 +121,7 @@ async def test_embed_into_index_returns_searchable_faiss_index() -> None:
 def test_collection_name_is_stable_and_namespaced(tmp_path) -> None:
     spec = make_fake_spec(tmp_path, name="example")
 
-    assert _collection_name(spec) == f"crucible_example_{spec.ingest_fingerprint()[:8]}"
+    assert _collection_name(spec) == f"rag_crucible_example_{spec.ingest_fingerprint()[:8]}"
 
 
 async def test_load_or_build_index_reuses_matching_saved_index(

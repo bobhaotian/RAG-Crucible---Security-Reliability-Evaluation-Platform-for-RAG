@@ -8,22 +8,22 @@ from pathlib import Path
 
 import pytest
 
-from crucible.config import RunSpec
-from crucible.eval.types import RESULT_SCHEMA_VERSION
-from crucible.runner import ResultStore, worker_loop
+from rag_crucible.config import RunSpec
+from rag_crucible.eval.types import RESULT_SCHEMA_VERSION
+from rag_crucible.runner import ResultStore, worker_loop
 
 from .test_eval_e2e import TINY_QA, _eval_spec
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> ResultStore:
-    return ResultStore(tmp_path / "crucible.db")
+    return ResultStore(tmp_path / "rag_crucible.db")
 
 
 @pytest.fixture(autouse=True)
 def _isolated_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setenv("RAG_CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("RAG_CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
 
 
 async def test_worker_executes_submitted_run(

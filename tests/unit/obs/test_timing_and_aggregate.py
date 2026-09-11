@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-import crucible.obs.timing as timing_module
-from crucible.obs.aggregate import TimingCollector, _percentile
-from crucible.obs.timing import StageTimer
+import rag_crucible.obs.timing as timing_module
+from rag_crucible.obs.aggregate import TimingCollector, _percentile
+from rag_crucible.obs.timing import StageTimer
 
 
 def test_percentile_uses_nearest_rank() -> None:

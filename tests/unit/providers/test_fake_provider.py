@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from crucible.providers import EmbedInputType, GenParams, Message
-from crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
+from rag_crucible.providers import EmbedInputType, GenParams, Message
+from rag_crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
 
 
 def _dot(a: list[float], b: list[float]) -> float:

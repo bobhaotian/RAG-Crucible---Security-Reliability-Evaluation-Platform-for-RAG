@@ -32,25 +32,25 @@ corpus: ## regenerate the seeded corpus + QA labels (deterministic)
 	$(UV) run python scripts/generate_seeded_corpus.py --out datasets/seeded --seed 13
 
 ingest: ## build the demo index (local provider; downloads MiniLM on first run)
-	$(UV) run crucible ingest $(DEMO_SPEC)
+	$(UV) run rag-crucible ingest $(DEMO_SPEC)
 
 demo: ## end-to-end: ingest + sample query + full evaluation with plots (local models)
-	$(UV) run crucible ingest $(DEMO_SPEC)
-	$(UV) run crucible query $(DEMO_SPEC) "What is the battery life of the AT-300 inspection drone?"
-	$(UV) run crucible eval $(DEMO_SPEC) --out results/demo
+	$(UV) run rag-crucible ingest $(DEMO_SPEC)
+	$(UV) run rag-crucible query $(DEMO_SPEC) "What is the battery life of the AT-300 inspection drone?"
+	$(UV) run rag-crucible eval $(DEMO_SPEC) --out results/demo
 	@echo "" && cat results/demo/summary.md
 
 demo-fake: ## same flow on the deterministic fake provider (instant, no downloads)
-	$(UV) run crucible ingest $(FAKE_SPEC)
-	$(UV) run crucible query $(FAKE_SPEC) "What is the battery life of the AT-300 inspection drone?"
-	$(UV) run crucible eval $(FAKE_SPEC) --out results/smoke-fake
+	$(UV) run rag-crucible ingest $(FAKE_SPEC)
+	$(UV) run rag-crucible query $(FAKE_SPEC) "What is the battery life of the AT-300 inspection drone?"
+	$(UV) run rag-crucible eval $(FAKE_SPEC) --out results/smoke-fake
 	@echo "" && cat results/smoke-fake/summary.md
 
 serve: ## start the API (live /query on the demo spec + run submission)
-	$(UV) run crucible serve --spec $(DEMO_SPEC)
+	$(UV) run rag-crucible serve --spec $(DEMO_SPEC)
 
 worker: ## start the evaluation worker (claims submitted runs)
-	$(UV) run crucible worker
+	$(UV) run rag-crucible worker
 
 compose-up: ## API + worker + dashboard in containers (fake provider, zero downloads)
 	docker compose up --build

@@ -8,11 +8,11 @@ downloads in seconds and is never committed.
 Conversion:
 - each abstract becomes ``corpus/<doc_id>.txt`` (title + abstract);
 - each test query becomes a qa.jsonl row with ``gold_docs`` (document-id gold
-  kind — see crucible.eval.qa); SciFact has no short answer strings, so
+  kind — see rag_crucible.eval.qa); SciFact has no short answer strings, so
   answer-accuracy metrics don't apply.
 
 Usage: python scripts/fetch_scifact.py --out datasets/scifact
-Then:  crucible ingest specs/scifact-local.yaml && crucible eval specs/scifact-local.yaml
+Then:  rag-crucible ingest specs/scifact-local.yaml && rag-crucible eval specs/scifact-local.yaml
 """
 
 from __future__ import annotations

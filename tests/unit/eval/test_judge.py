@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from crucible.eval.judge import (
+from rag_crucible.eval.judge import (
     HeuristicJudge,
     JudgeCache,
     JudgeCacheMissError,
     LlmJudge,
 )
-from crucible.providers import GenerateResult, GenParams, Message, Usage
+from rag_crucible.providers import GenerateResult, GenParams, Message, Usage
 
 CONTEXT = "The AT-300 has a battery life of 14 hours. It weighs 30 kg."
 

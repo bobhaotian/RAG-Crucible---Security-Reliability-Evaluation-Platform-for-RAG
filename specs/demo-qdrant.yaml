@@ -1,8 +1,8 @@
 # Same evaluation as demo.yaml but against a server-backed Qdrant store,
 # proving the VectorIndex abstraction. Start Qdrant first:
 #   docker compose --profile qdrant up -d qdrant
-#   crucible ingest specs/demo-qdrant.yaml   # vectors land in Qdrant
-#   crucible eval   specs/demo-qdrant.yaml
+#   rag-crucible ingest specs/demo-qdrant.yaml   # vectors land in Qdrant
+#   rag-crucible eval   specs/demo-qdrant.yaml
 # QDRANT_URL overrides the server location (default http://localhost:6333).
 name: demo-qdrant
 seed: 42

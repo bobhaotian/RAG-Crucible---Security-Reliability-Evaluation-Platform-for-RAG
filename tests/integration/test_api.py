@@ -10,16 +10,16 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from api.main import create_app
-from crucible.runner import ResultStore, worker_loop
+from rag_crucible.runner import ResultStore, worker_loop
+from rag_crucible_api.main import create_app
 
 from .test_eval_e2e import _eval_spec
 
 
 @pytest.fixture(autouse=True)
 def _isolated_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setenv("RAG_CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("RAG_CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def client(tiny_corpus: Path, tmp_path: Path) -> TestClient:
     spec = _eval_spec(tiny_corpus, tmp_path, name="api-serve")
     serve_spec = tmp_path / "serve-spec.yaml"
     serve_spec.write_text(yaml.safe_dump(spec.model_dump(mode="json")), encoding="utf-8")
-    app = create_app(db_path=tmp_path / "crucible.db", serve_spec_path=serve_spec)
+    app = create_app(db_path=tmp_path / "rag_crucible.db", serve_spec_path=serve_spec)
     return TestClient(app)
 
 
@@ -64,7 +64,7 @@ def test_submit_poll_results_roundtrip(
     # the worker (separate process in production) drains the queue
     import asyncio
 
-    store = ResultStore(tmp_path / "crucible.db")
+    store = ResultStore(tmp_path / "rag_crucible.db")
     asyncio.run(worker_loop(store, drain=True))
 
     assert client.get(f"/runs/{run_id}").json()["status"] == "succeeded"

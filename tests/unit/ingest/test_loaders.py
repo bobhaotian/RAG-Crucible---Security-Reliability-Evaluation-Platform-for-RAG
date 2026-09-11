@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fpdf import FPDF
 
-from crucible.ingest import LoaderError, load_corpus
+from rag_crucible.ingest import LoaderError, load_corpus
 
 
 def _write(root: Path, relpath: str, text: str) -> None:
