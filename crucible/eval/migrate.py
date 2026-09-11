@@ -97,12 +97,18 @@ def _migrate_3_to_4(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _migrate_4_to_5(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 4 → 5: old runs contain no clean-chunk screening trials."""
+    return raw
+
+
 # version -> migration producing version+1. Every consecutive step from
 # _UNVERSIONED to RESULT_SCHEMA_VERSION must be present.
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     1: _migrate_1_to_2,
     2: _migrate_2_to_3,
     3: _migrate_3_to_4,
+    4: _migrate_4_to_5,
 }
 
 

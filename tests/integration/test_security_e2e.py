@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from crucible.config import AttackKindConfig, RunSpec, SecuritySuiteConfig, SuitesConfig
-from crucible.eval import AttackRecord, EvalRunResult, run_eval
+from crucible.eval import AttackRecord, CleanScreenRecord, EvalRunResult, run_eval
 from crucible.eval.report import write_report
 from crucible.index import FaissIndex
 from crucible.ingest import build_index
@@ -70,6 +70,13 @@ async def test_security_suite_runs_all_conditions(tiny_corpus: Path, tmp_path: P
         assert ("attack_abstention_rate", f"defense={d}") in metric_names
         assert ("clean_abstention_rate", f"defense={d}") in metric_names
         assert ("clean_answer_accuracy", f"defense={d}") in metric_names
+        assert ("defense_clean_screen_rate", f"defense={d}") in metric_names
+
+    suite = next(s for s in result.suites if s.suite == "security")
+    screened = [record for record in suite.records if isinstance(record, CleanScreenRecord)]
+    assert screened
+    assert {record.defense for record in screened} == set(defenses)
+    assert all(record.source for record in screened)
 
 
 async def test_compromise_rate_is_never_below_the_attack_it_generalises(

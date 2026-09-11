@@ -193,6 +193,9 @@ class SecuritySuiteConfig(StrictConfig):
     # sampled by default — the full pool triples a CPU run's wall clock. None =
     # every labeled question.
     clean_control_sample: int | None = Field(default=20, ge=1)
+    # Cheap chunk-level control: how much legitimate retrieved content each
+    # defense's screener would delete. None = every clean chunk.
+    clean_screen_sample: int | None = Field(default=100, ge=1)
 
     @model_validator(mode="after")
     def _has_an_attack_and_defenses(self) -> SecuritySuiteConfig:

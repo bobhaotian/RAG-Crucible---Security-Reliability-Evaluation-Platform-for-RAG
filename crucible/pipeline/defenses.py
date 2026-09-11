@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from crucible.pipeline.types import RankedContext
+from crucible.types import Chunk
 
 # Categories of retrieved-content instruction, written from the threat model in
 # docs/threat-model.md — deliberately NOT from the payloads in crucible/attacks.
@@ -67,6 +68,17 @@ _INJECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 def looks_like_injection(text: str) -> bool:
     return any(pattern.search(text) for pattern in _INJECTION_PATTERNS)
+
+
+def clean_chunk_screening_reason(chunk: Chunk, defense: str) -> str | None:
+    """Return why a defense would delete a clean chunk, or None if kept."""
+    if defense == "injection_filter" and looks_like_injection(chunk.text):
+        return "resembles_injected_instruction"
+    if defense == "answer_integrity" and (
+        not chunk.provenance.verified or chunk.provenance.trust_score < 0.5
+    ):
+        return "untrusted_provenance"
+    return None
 
 
 def filter_injected_chunks(context: RankedContext) -> tuple[RankedContext, int]:

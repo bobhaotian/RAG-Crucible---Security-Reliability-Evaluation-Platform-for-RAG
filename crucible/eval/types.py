@@ -33,7 +33,8 @@ from crucible.types import StrictModel
 #       "not recorded" from "recorded empty"
 #   3 — ingestion audit embedded in every newly written result
 #   4 — corpus and QA content digests preserved in the embedded spec
-RESULT_SCHEMA_VERSION = 4
+#   5 — per-chunk clean-defense screening evidence
+RESULT_SCHEMA_VERSION = 5
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -178,8 +179,24 @@ class CleanDefenseRecord(StrictModel):
     answer: str
 
 
+class CleanScreenRecord(StrictModel):
+    """Whether a defense would delete one legitimate corpus chunk."""
+
+    kind: Literal["clean_screen"] = "clean_screen"
+    defense: str
+    chunk_id: str
+    source: str
+    screened: bool
+    reason: str | None = None
+
+
 EvalRecord = Annotated[
-    RetrievalRecord | FaithfulnessRecord | AttackRecord | PrivacyRecord | CleanDefenseRecord,
+    RetrievalRecord
+    | FaithfulnessRecord
+    | AttackRecord
+    | PrivacyRecord
+    | CleanDefenseRecord
+    | CleanScreenRecord,
     Field(discriminator="kind"),
 ]
 
