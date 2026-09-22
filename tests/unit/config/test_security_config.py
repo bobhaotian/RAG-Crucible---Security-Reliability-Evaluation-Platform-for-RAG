@@ -39,11 +39,11 @@ def test_security_requires_a_defense_condition() -> None:
         RunSpec.model_validate(_spec({"defenses": []}))
 
 
-def test_security_suite_requires_qa() -> None:
+def test_security_suite_is_not_config_blocked_by_missing_labels() -> None:
     raw = _spec({})
     raw["corpus"] = {"documents": "datasets/seeded/corpus"}  # no qa
-    with pytest.raises(ValidationError, match=r"corpus\.qa"):
-        RunSpec.model_validate(raw)
+    spec = RunSpec.model_validate(raw)
+    assert spec.suites is not None and spec.suites.security is not None
 
 
 def test_unknown_defense_name_rejected() -> None:

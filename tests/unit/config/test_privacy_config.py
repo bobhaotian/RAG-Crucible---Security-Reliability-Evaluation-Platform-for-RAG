@@ -30,11 +30,11 @@ def test_privacy_only_run_does_not_require_qa() -> None:
     assert spec.suites.privacy.defenses == ("none", "pii_filter")
 
 
-def test_security_still_requires_qa_even_alongside_privacy() -> None:
+def test_security_config_is_not_blocked_by_missing_retrieval_labels() -> None:
     raw = _spec({})
-    raw["suites"] = {"privacy": {}, "security": {}}  # security needs qa
-    with pytest.raises(ValidationError, match=r"require corpus\.qa"):
-        RunSpec.model_validate(raw)
+    raw["suites"] = {"privacy": {}, "security": {}}
+    spec = RunSpec.model_validate(raw)
+    assert spec.suites is not None and spec.suites.security is not None
 
 
 def test_empty_probe_or_kind_lists_rejected() -> None:

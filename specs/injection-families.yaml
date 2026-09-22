@@ -9,8 +9,8 @@ name: injection-families
 seed: 42
 
 corpus:
-  documents: datasets/seeded/corpus
-  qa: datasets/seeded/qa.jsonl
+  documents: ../datasets/seeded/corpus
+  qa: ../datasets/seeded/qa.jsonl
 
 ingest:
   filters: [dedup, language, boilerplate]

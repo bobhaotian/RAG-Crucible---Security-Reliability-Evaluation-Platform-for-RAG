@@ -43,9 +43,22 @@ def test_doc_ids_relevance_matches_source() -> None:
     assert not is_relevant(_chunk("anything", source="789.txt"), item)
 
 
-def test_gold_label_required() -> None:
-    with pytest.raises(ValueError, match="gold_fact or gold_docs"):
-        QAItem(qid="q3", question="?")
+def test_questions_only_item_declares_unsupported_capabilities() -> None:
+    item = QAItem(qid="q3", question="?")
+    assert item.scores_retrieval is False
+    assert item.scores_answers is False
+    assert item.label_source == "none"
+
+
+def test_label_capabilities_and_source_are_per_item() -> None:
+    retrieval = QAItem(qid="qr", question="?", gold_docs=("doc.md",))
+    answer = QAItem(qid="qa", question="?", answer="42", label_source="confirmed")
+    assert retrieval.scores_retrieval is True
+    assert retrieval.scores_answers is False
+    assert retrieval.label_source == "legacy"
+    assert answer.scores_retrieval is False
+    assert answer.scores_answers is True
+    assert answer.label_source == "confirmed"
 
 
 def test_answer_matches_ignores_case_whitespace_and_digit_grouping() -> None:
@@ -53,7 +66,12 @@ def test_answer_matches_ignores_case_whitespace_and_digit_grouping() -> None:
     assert answer_matches("It is priced at 41,000  usd.", item)
     assert answer_matches("The price is 41000 USD today.", item)
     assert not answer_matches("It costs 42,000 USD.", item)
-    assert not answer_matches("anything", QAItem(qid="q5", question="?", gold_fact="x"))
+    assert answer_matches("anything", QAItem(qid="q5", question="?", gold_fact="x")) is None
+
+
+def test_relevance_refuses_to_invent_a_zero_without_labels() -> None:
+    with pytest.raises(ValueError, match="no retrieval label"):
+        is_relevant(_chunk("anything"), QAItem(qid="q6", question="?"))
 
 
 def test_load_qa_errors_are_actionable(tmp_path: Path) -> None:

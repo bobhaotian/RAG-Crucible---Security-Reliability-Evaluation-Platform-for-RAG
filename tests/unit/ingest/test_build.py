@@ -131,6 +131,7 @@ async def test_load_or_build_index_reuses_matching_saved_index(
     directory = tmp_path / "indexes" / "reuse"
     directory.mkdir(parents=True)
     (directory / "meta.json").write_text("{}", encoding="utf-8")
+    (directory / "ingest-report.json").write_text("{}", encoding="utf-8")
     saved_index = object()
     builds: list[object] = []
     monkeypatch.setattr(build_module, "index_dir_for", lambda name: directory)
@@ -156,6 +157,7 @@ async def test_load_or_build_index_rebuilds_stale_index(
     directory = tmp_path / "indexes" / "stale"
     directory.mkdir(parents=True)
     (directory / "meta.json").write_text("{}", encoding="utf-8")
+    (directory / "ingest-report.json").write_text("{}", encoding="utf-8")
     rebuilt_index = object()
     opens = iter(
         [

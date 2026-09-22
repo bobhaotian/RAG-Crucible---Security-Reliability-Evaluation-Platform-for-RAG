@@ -48,11 +48,16 @@ class ChunkerConfig(StrictConfig):
 class CorpusConfig(StrictConfig):
     documents: Path
     qa: Path | None = None
+    # Content receipts are populated when a spec enters through load_spec or
+    # the runner. None on historical embedded specs means "not recorded".
+    documents_digest: str | None = None
+    qa_digest: str | None = None
 
 
 class IngestConfig(StrictConfig):
     filters: tuple[FilterName, ...] = ("dedup", "language", "boilerplate")
     chunker: ChunkerConfig = ChunkerConfig()
+    max_filter_drop_rate: float | None = Field(default=0.5, gt=0.0, le=1.0)
 
 
 class IndexConfig(StrictConfig):
@@ -188,6 +193,9 @@ class SecuritySuiteConfig(StrictConfig):
     # sampled by default — the full pool triples a CPU run's wall clock. None =
     # every labeled question.
     clean_control_sample: int | None = Field(default=20, ge=1)
+    # Cheap chunk-level control: how much legitimate retrieved content each
+    # defense's screener would delete. None = every clean chunk.
+    clean_screen_sample: int | None = Field(default=100, ge=1)
 
     @model_validator(mode="after")
     def _has_an_attack_and_defenses(self) -> SecuritySuiteConfig:
@@ -244,11 +252,10 @@ class RunSpec(StrictConfig):
     def _suites_consistent(self) -> RunSpec:
         if self.suites is None:
             return self
-        # The privacy suite seeds its own canaries and needs no QA labels; the
-        # other suites are scored against the labeled QA set.
-        qa_suite = self.suites.retrieval or self.suites.faithfulness or self.suites.security
-        if qa_suite and self.corpus.qa is None:
-            raise ValueError("the retrieval/faithfulness/security suites require corpus.qa")
+        # Retrieval cannot be scored without relevance labels. The answer-side
+        # suites may operate on questions without retrieval or answer labels.
+        if self.suites.retrieval is not None and self.corpus.qa is None:
+            raise ValueError("the retrieval suite requires corpus.qa")
         if self.suites.retrieval is not None:
             k_max = max(self.suites.retrieval.k_values)
             if k_max > self.pipeline.retriever.k:
@@ -266,15 +273,47 @@ class RunSpec(StrictConfig):
     def spec_hash(self) -> str:
         return hashlib.sha256(self.canonical_json().encode()).hexdigest()
 
+    def with_content_digests(self) -> RunSpec:
+        """Return a spec pinned to the corpus bytes that exist right now."""
+        corpus = self.corpus.model_copy(
+            update={
+                "documents_digest": _directory_digest(self.corpus.documents),
+                "qa_digest": _file_digest(self.corpus.qa) if self.corpus.qa is not None else None,
+            }
+        )
+        return self.model_copy(update={"corpus": corpus})
+
     def ingest_fingerprint(self) -> str:
         """Hash of everything that shapes the index (corpus, filters, chunker,
         store, embedder). A saved index records this; querying with a spec
         whose fingerprint differs means the index is stale."""
+        corpus_identity = {
+            "documents_digest": self.corpus.documents_digest
+            or _directory_digest(self.corpus.documents),
+            "qa_digest": self.corpus.qa_digest
+            or (_file_digest(self.corpus.qa) if self.corpus.qa is not None else None),
+        }
         parts = {
-            "corpus": self.corpus.model_dump(mode="json"),
+            "corpus": corpus_identity,
             "ingest": self.ingest.model_dump(mode="json"),
             "index": self.index.model_dump(mode="json"),
             "embedder": self.pipeline.embedder.model_dump(mode="json"),
         }
         blob = json.dumps(parts, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _file_digest(path: Path) -> str:
+    if not path.is_file():
+        raise ValueError(f"content file not found: {path}")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _directory_digest(root: Path) -> str:
+    if not root.is_dir():
+        raise ValueError(f"content directory not found: {root}")
+    leaves = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+        source = path.relative_to(root).as_posix()
+        leaves.append(f"{source}\0{_file_digest(path)}")
+    return hashlib.sha256("\n".join(leaves).encode()).hexdigest()

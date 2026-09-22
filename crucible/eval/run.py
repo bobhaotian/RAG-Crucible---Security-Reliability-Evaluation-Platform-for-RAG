@@ -31,6 +31,7 @@ from crucible.eval.retrieval import run_retrieval_suite
 from crucible.eval.security import run_security_suite
 from crucible.eval.types import EvalRunResult, SuiteResult
 from crucible.index import VectorIndex
+from crucible.ingest import IngestReport
 from crucible.obs.aggregate import TimingCollector
 from crucible.pipeline import build_pipeline
 from crucible.qa import QAItem, load_qa
@@ -46,15 +47,19 @@ async def run_eval(
     *,
     fail_fast: bool = True,
     run_id: str | None = None,
+    ingestion: IngestReport | None = None,
 ) -> EvalRunResult:
     if spec.suites is None:
         raise ValueError(f"spec {spec.name!r} configures no evaluation suites")
-    # Only the QA-scored suites need labels; privacy seeds its own canaries.
+    # QA-backed suites use the file when supplied. Retrieval requires it at
+    # config validation; answer-side suites report an actionable runtime error
+    # until A3 adds the questions-only command-line front door.
     needs_qa = bool(spec.suites.retrieval or spec.suites.faithfulness or spec.suites.security)
     qa_items: list[QAItem] = []
-    if needs_qa:
-        assert spec.corpus.qa is not None  # enforced by RunSpec validation
+    if needs_qa and spec.corpus.qa is not None:
         qa_items = load_qa(spec.corpus.qa)
+    elif needs_qa:
+        raise ValueError("selected suites need questions; provide corpus.qa")
     pipeline = build_pipeline(spec, index)
     collector = TimingCollector()
     concurrency = spec.suites.concurrency
@@ -130,11 +135,13 @@ async def run_eval(
         run_id=run_id,
         name=spec.name,
         spec_hash=spec.spec_hash(),
+        spec_identity_json=spec.canonical_json(),
         seed=spec.seed,
         started_at=started_at,
         finished_at=_now(),
         suites=tuple(suite_results),
         stage_stats=tuple(collector.stats()),
+        ingestion=ingestion,
         spec=spec,
     )
 

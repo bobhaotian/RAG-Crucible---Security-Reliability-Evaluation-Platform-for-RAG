@@ -11,11 +11,13 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import Field
+
 from crucible.config import ChunkerConfig, RunSpec
 from crucible.index import FaissIndex, IndexItem, IndexMeta, VectorIndex
 from crucible.ingest.chunkers import chunk_document
 from crucible.ingest.filters import FilterStats, apply_filters
-from crucible.ingest.loaders import load_corpus
+from crucible.ingest.loaders import SkippedFile, load_corpus
 from crucible.ingest.provenance import SourceChannel, assign_document_provenance
 from crucible.paths import index_dir_for
 from crucible.providers import Embedder, EmbedInputType, build_embedder
@@ -27,6 +29,8 @@ _EMBED_BATCH_SIZE = 32
 class IngestReport(StrictModel):
     docs_loaded: int
     files_skipped: int
+    skipped_files: tuple[SkippedFile, ...] = ()
+    files_skipped_by_suffix: dict[str, int] = Field(default_factory=dict)
     filter_stats: list[FilterStats]
     docs_indexed: int
     chunks: int
@@ -82,6 +86,16 @@ async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
     docs, skipped = load_corpus(spec.corpus.documents)
     kept, filter_stats = apply_filters(docs, spec.ingest.filters)
 
+    threshold = spec.ingest.max_filter_drop_rate
+    if threshold is not None and docs:
+        for stat in filter_stats:
+            rate = stat.dropped / len(docs)
+            if rate > threshold:
+                raise ValueError(
+                    f"filter {stat.name!r} dropped {stat.dropped}/{len(docs)} documents "
+                    f"({rate:.1%}), exceeding ingest.max_filter_drop_rate={threshold:.1%}"
+                )
+
     chunks = chunk_documents(kept, spec.ingest.chunker)
     if not chunks:
         raise ValueError(f"corpus at {spec.corpus.documents} produced no chunks")
@@ -116,15 +130,31 @@ async def build_index(spec: RunSpec, out_dir: Path) -> IngestReport:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "meta.json").write_text(meta.model_dump_json(indent=2), encoding="utf-8")
 
-    return IngestReport(
+    skipped_by_suffix: dict[str, int] = {}
+    for item in skipped:
+        skipped_by_suffix[item.suffix] = skipped_by_suffix.get(item.suffix, 0) + 1
+    report = IngestReport(
         docs_loaded=len(docs),
         files_skipped=len(skipped),
+        skipped_files=tuple(skipped),
+        files_skipped_by_suffix=skipped_by_suffix,
         filter_stats=filter_stats,
         docs_indexed=len(kept),
         chunks=len(chunks),
         dim=dim,
         duration_s=round(time.perf_counter() - started, 3),
     )
+    (out_dir / "ingest-report.json").write_text(
+        report.model_dump_json(indent=2) + "\n", encoding="utf-8"
+    )
+    return report
+
+
+def load_ingest_report(directory: Path) -> IngestReport:
+    path = directory / "ingest-report.json"
+    if not path.is_file():
+        raise FileNotFoundError(f"index at {directory} has no ingestion audit; rebuild it")
+    return IngestReport.model_validate_json(path.read_text(encoding="utf-8"))
 
 
 def _collection_name(spec: RunSpec) -> str:
@@ -138,7 +168,7 @@ async def load_or_build_index(spec: RunSpec) -> VectorIndex:
     from crucible.index.factory import open_saved_index
 
     directory = index_dir_for(spec.name)
-    if (directory / "meta.json").is_file():
+    if (directory / "meta.json").is_file() and (directory / "ingest-report.json").is_file():
         index, meta = open_saved_index(directory)
         if meta.fingerprint == spec.ingest_fingerprint():
             return index

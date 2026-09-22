@@ -24,6 +24,30 @@ def load_spec(path: Path) -> RunSpec:
     if not isinstance(raw, dict):
         raise SpecError(f"{path} must contain a YAML mapping at the top level")
     try:
-        return RunSpec.model_validate(raw)
-    except ValidationError as exc:
+        corpus = raw.get("corpus")
+        if isinstance(corpus, dict):
+            corpus = dict(corpus)
+            for key in ("documents", "qa"):
+                value = corpus.get(key)
+                if value is not None and not Path(value).is_absolute():
+                    corpus[key] = (path.parent / value).resolve()
+            raw = dict(raw)
+            raw["corpus"] = corpus
+        suites = raw.get("suites")
+        if isinstance(suites, dict):
+            faithfulness = suites.get("faithfulness")
+            if isinstance(faithfulness, dict):
+                judge = faithfulness.get("judge")
+                if isinstance(judge, dict) and judge.get("cache") is not None:
+                    judge = dict(judge)
+                    cache = Path(judge["cache"])
+                    if not cache.is_absolute():
+                        judge["cache"] = (path.parent / cache).resolve()
+                    faithfulness = dict(faithfulness)
+                    faithfulness["judge"] = judge
+                    suites = dict(suites)
+                    suites["faithfulness"] = faithfulness
+                    raw["suites"] = suites
+        return RunSpec.model_validate(raw).with_content_digests()
+    except (ValidationError, ValueError) as exc:
         raise SpecError(f"invalid spec {path}:\n{exc}") from exc

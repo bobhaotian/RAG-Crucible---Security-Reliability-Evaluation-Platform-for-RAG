@@ -5,8 +5,8 @@ name: demo-local-baseline
 seed: 42
 
 corpus:
-  documents: datasets/seeded/corpus
-  qa: datasets/seeded/qa.jsonl
+  documents: ../datasets/seeded/corpus
+  qa: ../datasets/seeded/qa.jsonl
 
 ingest:
   filters: [dedup, language, boilerplate]
@@ -47,7 +47,7 @@ suites:
       provider: local
       model: Qwen/Qwen2.5-0.5B-Instruct
       mode: auto               # committed cache hit = free + reproducible;
-      cache: datasets/seeded/judgments.jsonl   # misses are judged + persisted
+      cache: ../datasets/seeded/judgments.jsonl   # misses are judged + persisted
   security:
     poisoning: {targets: 10}   # 10 poison + 10 injection × 3 defenses on CPU
     injection: {targets: 10}

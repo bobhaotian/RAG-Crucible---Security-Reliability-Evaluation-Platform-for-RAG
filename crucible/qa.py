@@ -27,12 +27,24 @@ class QAItem(StrictModel):
     gold_doc: str | None = None  # informational; relevance uses gold_fact
     gold_fact: str | None = None
     gold_docs: tuple[str, ...] = ()
+    label_source: str
 
-    @model_validator(mode="after")
-    def _has_gold(self) -> QAItem:
-        if self.gold_fact is None and not self.gold_docs:
-            raise ValueError(f"QA item {self.qid} needs gold_fact or gold_docs")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _default_label_source(cls, value: object) -> object:
+        if isinstance(value, dict) and "label_source" not in value:
+            value = dict(value)
+            has_label = value.get("gold_fact") is not None or bool(value.get("gold_docs"))
+            value["label_source"] = "legacy" if has_label or value.get("answer") else "none"
+        return value
+
+    @property
+    def scores_retrieval(self) -> bool:
+        return self.gold_fact is not None or bool(self.gold_docs)
+
+    @property
+    def scores_answers(self) -> bool:
+        return self.answer is not None
 
 
 class QADatasetError(Exception):
@@ -63,14 +75,16 @@ def _normalize(text: str) -> str:
 
 
 def is_relevant(chunk: Chunk, item: QAItem) -> bool:
+    if not item.scores_retrieval:
+        raise ValueError(f"QA item {item.qid} has no retrieval label")
     if item.gold_fact is not None:
         return _normalize(item.gold_fact) in _normalize(chunk.text)
     return chunk.source in item.gold_docs
 
 
-def answer_matches(answer_text: str, item: QAItem) -> bool:
+def answer_matches(answer_text: str, item: QAItem) -> bool | None:
     """Cheap deterministic answer check: the gold answer string appears in the
     generated answer (whitespace/case-insensitive, digit grouping ignored)."""
     if item.answer is None:
-        return False
+        return None
     return _normalize(item.answer).replace(",", "") in _normalize(answer_text).replace(",", "")

@@ -22,9 +22,16 @@ from crucible.ingest.pii import redact_pii
 from crucible.types import Document, StrictModel
 
 
+class DroppedDocument(StrictModel):
+    doc_id: str
+    source: str
+    reason: str
+
+
 class FilterStats(StrictModel):
     name: str
     dropped: int
+    dropped_documents: tuple[DroppedDocument, ...] = ()
 
 
 _WORD_RE = re.compile(r"[a-zA-Z']+")
@@ -192,6 +199,13 @@ _FILTERS: dict[str, Callable[[list[Document]], list[Document]]] = {
     "pii": _filter_pii,
 }
 
+_DROP_REASONS = {
+    "dedup": "duplicate_content",
+    "language": "language_not_supported",
+    "boilerplate": "insufficient_content_after_cleanup",
+    "pii": "pii_filter_does_not_drop_documents",
+}
+
 
 def apply_filters(
     docs: list[Document], names: Sequence[FilterName]
@@ -200,6 +214,12 @@ def apply_filters(
     current = docs
     for name in names:
         result = _FILTERS[name](current)
-        stats.append(FilterStats(name=name, dropped=len(current) - len(result)))
+        kept_ids = {doc.doc_id for doc in result}
+        removed = tuple(
+            DroppedDocument(doc_id=doc.doc_id, source=doc.source, reason=_DROP_REASONS[name])
+            for doc in current
+            if doc.doc_id not in kept_ids
+        )
+        stats.append(FilterStats(name=name, dropped=len(removed), dropped_documents=removed))
         current = result
     return current, stats

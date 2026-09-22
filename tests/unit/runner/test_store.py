@@ -21,7 +21,10 @@ def store(tmp_path: Path) -> ResultStore:
 
 
 def _spec(tmp_path: Path, name: str = "store-test") -> RunSpec:
-    return make_fake_spec(tmp_path / "corpus", name=name)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir(exist_ok=True)
+    (corpus / "document.txt").write_text("queue identity fixture", encoding="utf-8")
+    return make_fake_spec(corpus, name=name)
 
 
 def _result(spec: RunSpec) -> EvalRunResult:
@@ -72,6 +75,19 @@ def test_duplicate_spec_requires_force(store: ResultStore, tmp_path: Path) -> No
         store.submit_run(spec)
     assert excinfo.value.existing_run_id == first
     second = store.submit_run(spec, force=True)
+    assert second != first
+
+
+def test_content_change_is_not_deduplicated_as_the_same_run(
+    store: ResultStore, tmp_path: Path
+) -> None:
+    spec = _spec(tmp_path)
+    first = store.submit_run(spec)
+    document = spec.corpus.documents / "document.txt"
+    document.write_text("changed queue identity fixture", encoding="utf-8")
+
+    second = store.submit_run(spec)
+
     assert second != first
     # a failed run does not block resubmission
     store.claim_next("w")

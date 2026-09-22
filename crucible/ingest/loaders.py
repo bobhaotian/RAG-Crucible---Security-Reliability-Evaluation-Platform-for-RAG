@@ -14,7 +14,7 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
-from crucible.types import DocMeta, Document, doc_id_for
+from crucible.types import DocMeta, Document, StrictModel, doc_id_for
 
 
 class LoaderError(Exception):
@@ -22,6 +22,14 @@ class LoaderError(Exception):
 
 
 LoaderFn = Callable[[Path, str], Document]
+
+
+class SkippedFile(StrictModel):
+    source: str
+    suffix: str
+    reason: str
+    detail: str | None = None
+
 
 _LOADERS: dict[str, LoaderFn] = {}
 
@@ -34,26 +42,38 @@ def supported_suffixes() -> tuple[str, ...]:
     return tuple(sorted(_LOADERS))
 
 
-def load_corpus(root: Path) -> tuple[list[Document], list[str]]:
+def load_corpus(root: Path) -> tuple[list[Document], list[SkippedFile]]:
     """Load every supported file under ``root`` (sorted for determinism).
 
-    Returns (documents, skipped) where skipped lists relative paths whose
-    suffix has no registered loader.
+    Unsupported and malformed files are returned as auditable skip records.
     """
     if not root.is_dir():
         raise LoaderError(f"corpus directory not found: {root}")
     documents: list[Document] = []
-    skipped: list[str] = []
+    skipped: list[SkippedFile] = []
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         source = path.relative_to(root).as_posix()
         loader = _LOADERS.get(path.suffix.lower())
         if loader is None:
-            skipped.append(source)
+            skipped.append(
+                SkippedFile(
+                    source=source,
+                    suffix=path.suffix.lower() or "<none>",
+                    reason="unsupported_suffix",
+                )
+            )
             continue
         try:
             documents.append(loader(path, source))
         except Exception as exc:
-            raise LoaderError(f"failed to load {source}: {exc}") from exc
+            skipped.append(
+                SkippedFile(
+                    source=source,
+                    suffix=path.suffix.lower(),
+                    reason="loader_error",
+                    detail=f"{type(exc).__name__}: {exc}",
+                )
+            )
     return documents, skipped
 
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 
 from crucible.pipeline.types import RankedContext
+from crucible.types import Chunk
 
 # Categories of retrieved-content instruction, written from the threat model in
 # docs/threat-model.md — deliberately NOT from the payloads in crucible/attacks.
@@ -69,6 +70,23 @@ def looks_like_injection(text: str) -> bool:
     return any(pattern.search(text) for pattern in _INJECTION_PATTERNS)
 
 
+# One spelling of the trust bar. `clean_chunk_screening_reason` predicts what
+# `filter_untrusted_chunks` will do, so a second literal here would let the
+# predicted cost and the real behaviour drift apart silently.
+MINIMUM_TRUST = 0.5
+
+
+def clean_chunk_screening_reason(chunk: Chunk, defense: str) -> str | None:
+    """Return why a defense would delete a clean chunk, or None if kept."""
+    if defense == "injection_filter" and looks_like_injection(chunk.text):
+        return "resembles_injected_instruction"
+    if defense == "answer_integrity" and (
+        not chunk.provenance.verified or chunk.provenance.trust_score < MINIMUM_TRUST
+    ):
+        return "untrusted_provenance"
+    return None
+
+
 def filter_injected_chunks(context: RankedContext) -> tuple[RankedContext, int]:
     """Drop candidate chunks that look like injection payloads. Returns the
     screened context and the number of chunks removed."""
@@ -80,7 +98,7 @@ def filter_injected_chunks(context: RankedContext) -> tuple[RankedContext, int]:
 
 
 def filter_untrusted_chunks(
-    context: RankedContext, *, minimum_trust: float = 0.5
+    context: RankedContext, *, minimum_trust: float = MINIMUM_TRUST
 ) -> tuple[RankedContext, int]:
     """Drop chunks whose server-assigned provenance is not trustworthy."""
     kept = [
