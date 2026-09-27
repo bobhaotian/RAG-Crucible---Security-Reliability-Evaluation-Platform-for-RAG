@@ -441,8 +441,8 @@ Inside the worker:
 - Worker persistence is dual-purpose: normalized metrics/records go to SQLite for the
   API and dashboard, and the same `EvalRunResult` is rendered through the CLI's report
   writer to `results/<spec-name>/<run-id>/` for GitHub or sharing. The run id makes
-  forced reruns collision-free; `CRUCIBLE_RESULTS_DIR` overrides the report root.
-- `crucible submit` is synchronous by default: it atomically claims the run it just
+  forced reruns collision-free; `RAG_CRUCIBLE_RESULTS_DIR` overrides the report root.
+- `rag-crucible submit` is synchronous by default: it atomically claims the run it just
   submitted, acts as an inline worker, and waits for the terminal status. It never
   drains unrelated queued jobs. `--queue-only` retains enqueue-and-return behavior for
   deployments with a background worker; HTTP `POST /runs` remains asynchronous.
@@ -466,7 +466,7 @@ FastAPI, thin layer over the runner and store:
 | `GET /health` | liveness + store/index connectivity |
 
 The CLI (`crucible` via Typer) fronts the same core library directly — `crucible
-ingest`, `crucible query`, `crucible eval run specs/demo.yaml`, `crucible demo` — so
+ingest`, `rag-crucible query`, `rag-crucible eval run specs/demo.yaml`, `rag-crucible demo` — so
 the spine works end-to-end in Phase 1 before the API exists.
 
 ---
@@ -664,7 +664,7 @@ Still deferred:
 | Phase | Deliverable | Done means |
 |---|---|---|
 | **0** | This document + architecture.md | reviewed and confirmed |
-| **1 — Core spine** | provider interface + `local`/`fake` providers → ingestion (loaders, filters, both chunkers) → FAISS index → RAG pipeline with citations → `crucible query` answers end-to-end on the seeded corpus | tests green, CI running |
+| **1 — Core spine** | provider interface + `local`/`fake` providers → ingestion (loaders, filters, both chunkers) → FAISS index → RAG pipeline with citations → `rag-crucible query` answers end-to-end on the seeded corpus | tests green, CI running |
 | **2 — Measurement** | retrieval suite + rerank lift; faithfulness suite with cached judge; `make demo` → results JSON + plots with real numbers | demo reproducible, numbers in README |
 | **3 — Service** | result store, runner/queue, worker; FastAPI submit/poll/fetch + live `/query`; docker-compose | run submitted via API completes and persists |
 | — | **MVP CUT LINE — Phases 0–3 are the shippable MVP** | — |

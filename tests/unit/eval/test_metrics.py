@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from crucible.eval.metrics import (
+from rag_crucible.eval.metrics import (
     first_relevant_rank,
     mean,
     ndcg_at_k,

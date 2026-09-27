@@ -103,7 +103,7 @@ flowchart LR
     P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy]
     K[attacks<br/>poison · injection · canaries] -.->|seeded index| E
     E -->|CLI + worker| F[results.json · summary.md · plots]
-    A3[crucible submit<br/>inline worker] --> E
+    A3[rag-crucible submit<br/>inline worker] --> E
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
     E -->|worker only| S[(SQLite<br/>result store)] --> D[dashboard]
 ```
@@ -290,7 +290,7 @@ SQLite run, executes it through an inline worker, waits for completion, and writ
 the database records and portable report bundle:
 
 ```sh
-crucible submit specs/demo.yaml
+rag-crucible submit specs/demo.yaml
 ```
 
 For asynchronous service use, keep a worker running and opt into queue-only submission.
@@ -301,7 +301,7 @@ The HTTP API is always asynchronous and therefore also requires the worker servi
 make worker
 
 # terminal 2: CLI queue submission returns immediately
-crucible submit specs/demo.yaml --queue-only
+rag-crucible submit specs/demo.yaml --queue-only
 
 # or serve the API on :8000 and submit through HTTP
 make serve
@@ -331,8 +331,8 @@ results/demo-local-baseline/<run_id>/
 └── latency.png
 ```
 
-Each run gets its own directory, so `crucible submit --force` never overwrites an
-earlier report. Set `CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
+Each run gets its own directory, so `rag-crucible submit --force` never overwrites an
+earlier report. Set `RAG_CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
 it under the persistent `/data/artifacts` volume. A suite-level failure still exports
 the partial evidence produced by the other suites, matching what is retained in
 SQLite. `--queue-only` is the explicit escape hatch for users who want the previous
@@ -399,7 +399,7 @@ suites:
 ```sh
 uv sync --extra cohere
 export COHERE_API_KEY=...        # the only required change
-crucible eval specs/your-spec.yaml
+rag-crucible eval specs/your-spec.yaml
 ```
 
 **Adding a new provider** is three small classes — `Embedder` / `Reranker` /

@@ -8,13 +8,13 @@ from typing import Any
 
 import pytest
 
-from crucible.providers import EmbedInputType, GenParams, Message
-from crucible.providers.cohere_provider import (
+from rag_crucible.providers import EmbedInputType, GenParams, Message
+from rag_crucible.providers.cohere_provider import (
     CohereEmbedder,
     CohereGenerator,
     CohereReranker,
 )
-from crucible.providers.errors import ProviderAuthError, ProviderRateLimitError
+from rag_crucible.providers.errors import ProviderAuthError, ProviderRateLimitError
 
 
 class FakeCohereClient:
@@ -101,7 +101,7 @@ def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(_: float) -> None:
         return None
 
-    monkeypatch.setattr("crucible.providers.retry.asyncio.sleep", _noop)
+    monkeypatch.setattr("rag_crucible.providers.retry.asyncio.sleep", _noop)
 
 
 class _StatusError(Exception):

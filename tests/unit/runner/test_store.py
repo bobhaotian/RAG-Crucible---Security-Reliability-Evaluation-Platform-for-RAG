@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-import crucible.runner.store as store_module
-from crucible.config import RunSpec
-from crucible.eval.types import EvalRunResult, Metric, RetrievalRecord, SuiteResult
-from crucible.runner import DuplicateRunError, ResultStore, RunNotFoundError
-from crucible.runner.ids import new_run_id
+import rag_crucible.runner.store as store_module
+from rag_crucible.config import RunSpec
+from rag_crucible.eval.types import EvalRunResult, Metric, RetrievalRecord, SuiteResult
+from rag_crucible.runner import DuplicateRunError, ResultStore, RunNotFoundError
+from rag_crucible.runner.ids import new_run_id
 
 from ...conftest import make_fake_spec
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> ResultStore:
-    return ResultStore(tmp_path / "crucible.db")
+    return ResultStore(tmp_path / "rag_crucible.db")
 
 
 def _spec(tmp_path: Path, name: str = "store-test") -> RunSpec:

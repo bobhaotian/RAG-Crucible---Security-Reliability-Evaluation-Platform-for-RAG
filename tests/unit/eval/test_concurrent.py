@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from crucible.eval.concurrent import bounded_gather
+from rag_crucible.eval.concurrent import bounded_gather
 
 
 async def test_bounded_gather_preserves_input_order() -> None:

@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from crucible.config import load_spec
-from crucible.ingest import apply_filters, chunk_document, load_corpus
-from crucible.types import Document
+from rag_crucible.config import load_spec
+from rag_crucible.ingest import apply_filters, chunk_document, load_corpus
+from rag_crucible.types import Document
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SEEDED = REPO_ROOT / "datasets" / "seeded"

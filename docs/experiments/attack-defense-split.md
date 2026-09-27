@@ -143,8 +143,8 @@ not establish it.
 ## Reproduce
 
 ```sh
-crucible ingest specs/injection-families.yaml
-crucible submit specs/injection-families.yaml --force
+rag-crucible ingest specs/injection-families.yaml
+rag-crucible submit specs/injection-families.yaml --force
 ```
 
 Every rate and test above is recomputed from the per-item `attack` records in

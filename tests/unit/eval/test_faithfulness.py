@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from crucible.eval.faithfulness import _aggregate, extract_claims
-from crucible.eval.types import CitationJudgment, ClaimJudgment, FaithfulnessRecord
+from rag_crucible.eval.faithfulness import _aggregate, extract_claims
+from rag_crucible.eval.types import CitationJudgment, ClaimJudgment, FaithfulnessRecord
 
 
 def test_extract_claims_strips_markers_drops_fragments_and_caps_results() -> None:

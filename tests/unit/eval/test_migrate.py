@@ -15,15 +15,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from crucible.eval.migrate import (
+from rag_crucible.eval.migrate import (
     ResultSchemaError,
     load_result_file,
     load_result_json,
     migrate_raw,
     supported_versions,
 )
-from crucible.eval.types import RESULT_SCHEMA_VERSION, AttackRecord, EvalRunResult, SuiteResult
-from crucible.runner.models import SuiteSummary
+from rag_crucible.eval.types import RESULT_SCHEMA_VERSION, AttackRecord, EvalRunResult, SuiteResult
+from rag_crucible.runner.models import SuiteSummary
 
 # Anchored to the file, not the working directory: a CWD-relative glob that
 # finds nothing turns the artifact test below into a vacuous pass.
@@ -167,8 +167,8 @@ def test_compromise_rate_is_omitted_not_zeroed_for_unrecorded_trials() -> None:
     its documented meaning is `compromise - success` on a shared denominator,
     which a subset silently breaks.
     """
-    from crucible.config import SecuritySuiteConfig
-    from crucible.eval.security import _aggregate
+    from rag_crucible.config import SecuritySuiteConfig
+    from rag_crucible.eval.security import _aggregate
 
     def rec(**kw: Any) -> AttackRecord:
         base = {
@@ -287,7 +287,7 @@ def test_migration_chain_is_complete() -> None:
     """Every consecutive step from the oldest supported version to the current
     one must exist, so bumping the version without writing a migration fails
     here rather than on a user's artifact."""
-    from crucible.eval.migrate import _MIGRATIONS, _UNVERSIONED
+    from rag_crucible.eval.migrate import _MIGRATIONS, _UNVERSIONED
 
     for version in range(_UNVERSIONED, RESULT_SCHEMA_VERSION):
         assert version in _MIGRATIONS, f"no migration registered from schema {version}"
@@ -350,6 +350,16 @@ def test_stored_spec_hash_matches_the_stored_spec(path: Path) -> None:
     assert hashlib.sha256(blob.encode()).hexdigest() == raw["spec_hash"], (
         f"{path} claims a spec_hash its own embedded spec does not produce"
     )
+
+
+@pytest.mark.parametrize("path", RESULT_ARTIFACTS, ids=lambda p: p.parent.name)
+def test_loaded_artifact_preserves_spec_identity_when_reserialised(path: Path) -> None:
+    """Today's RunSpec defaults must not change a historical run's identity."""
+    loaded = load_result_file(path)
+    round_tripped = json.loads(loaded.model_dump_json())
+    blob = json.dumps(round_tripped["spec"], sort_keys=True, separators=(",", ":"))
+
+    assert hashlib.sha256(blob.encode()).hexdigest() == loaded.spec_hash
 
 
 def test_there_are_result_artifacts_to_check() -> None:

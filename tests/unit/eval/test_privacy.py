@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from crucible.config import PrivacySuiteConfig
-from crucible.eval.privacy import _aggregate
-from crucible.eval.types import PrivacyRecord
+from rag_crucible.config import PrivacySuiteConfig
+from rag_crucible.eval.privacy import _aggregate
+from rag_crucible.eval.types import PrivacyRecord
 
 
 def test_aggregate_reports_each_defense_and_baseline_probe_style() -> None:

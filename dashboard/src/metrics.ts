@@ -223,6 +223,7 @@ const BASELINE = "none";
  *  they get their own panel — and `clean_answer_accuracy` is the one metric in
  *  this family where a *rise* is the good direction. */
 export const COST_METRICS = [
+  "defense_clean_screen_rate",
   "attack_abstention_rate",
   "clean_abstention_rate",
   "clean_answer_accuracy",
@@ -254,6 +255,8 @@ export const METRIC_GLOSS: Record<string, string> = {
     "Trials answered with a marker from the other attack targeting the same question. Expected where the poison and injection target lists overlap.",
   cross_question_contamination_rate:
     "Trials answered with a marker from an attack planted on a different question — an attack document escaping its target.",
+  defense_clean_screen_rate:
+    "Clean corpus chunks the defense would remove even though no attack was present. This is the retrieval-side false-positive cost.",
   attack_abstention_rate:
     "Attack trials where the defense refused to answer rather than risk the planted content.",
   clean_abstention_rate:

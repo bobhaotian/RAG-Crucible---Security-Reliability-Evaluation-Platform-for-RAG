@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from itertools import pairwise
 
-from crucible.config import ChunkerConfig
-from crucible.ingest import chunk_document
-from crucible.types import DocMeta, Document, Provenance, doc_id_for
+from rag_crucible.config import ChunkerConfig
+from rag_crucible.ingest import chunk_document
+from rag_crucible.types import DocMeta, Document, Provenance, doc_id_for
 
 
 def _doc(text: str, source: str = "doc.md") -> Document:

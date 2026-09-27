@@ -6,11 +6,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from crucible.config import AttackKindConfig, RunSpec, SecuritySuiteConfig, SuitesConfig
-from crucible.eval import AttackRecord, CleanScreenRecord, EvalRunResult, run_eval
-from crucible.eval.report import write_report
-from crucible.index import FaissIndex
-from crucible.ingest import build_index
+from rag_crucible.config import AttackKindConfig, RunSpec, SecuritySuiteConfig, SuitesConfig
+from rag_crucible.eval import AttackRecord, CleanScreenRecord, EvalRunResult, run_eval
+from rag_crucible.eval.report import write_report
+from rag_crucible.index import FaissIndex
+from rag_crucible.ingest import build_index
 
 from ..conftest import make_fake_spec
 from .test_eval_e2e import TINY_QA

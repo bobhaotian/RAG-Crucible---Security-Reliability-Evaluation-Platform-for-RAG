@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from crucible.pipeline import (
+from rag_crucible.pipeline import (
     Candidate,
     RankedContext,
     find_numeric_conflicts,
     resolve_numeric_conflicts,
 )
-from crucible.types import Chunk, Provenance, chunk_id_for
+from rag_crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _candidate(text: str, doc_id: str, source: str, provenance: Provenance) -> Candidate:

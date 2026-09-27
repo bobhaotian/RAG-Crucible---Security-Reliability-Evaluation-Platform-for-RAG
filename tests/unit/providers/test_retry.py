@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.providers.errors import (
+from rag_crucible.providers.errors import (
     ProviderAuthError,
     ProviderRateLimitError,
     ProviderTransientError,
 )
-from crucible.providers.retry import with_retries
+from rag_crucible.providers.retry import with_retries
 
 
 async def _noop_sleep(_: float) -> None:

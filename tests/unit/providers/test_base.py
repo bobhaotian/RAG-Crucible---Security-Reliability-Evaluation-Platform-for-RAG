@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from crucible.providers import Usage, estimate_tokens
+from rag_crucible.providers import Usage, estimate_tokens
 
 
 def test_usage_adds_input_and_output_tokens() -> None:

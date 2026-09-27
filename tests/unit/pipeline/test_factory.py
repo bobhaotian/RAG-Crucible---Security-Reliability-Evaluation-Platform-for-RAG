@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from crucible.index import FaissIndex
-from crucible.pipeline import RagPipeline, build_pipeline
-from crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
+from rag_crucible.index import FaissIndex
+from rag_crucible.pipeline import RagPipeline, build_pipeline
+from rag_crucible.providers.fake import FakeEmbedder, FakeGenerator, FakeReranker
 
 from ...conftest import make_fake_spec
 

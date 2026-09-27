@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-import crucible.eval.run as run_module
-from crucible.config import PrivacySuiteConfig, SuitesConfig
-from crucible.eval.run import _guard, run_eval
-from crucible.eval.types import SuiteResult
+import rag_crucible.eval.run as run_module
+from rag_crucible.config import PrivacySuiteConfig, SuitesConfig
+from rag_crucible.eval.run import _guard, run_eval
+from rag_crucible.eval.types import SuiteResult
 
 from ...conftest import make_fake_spec
 

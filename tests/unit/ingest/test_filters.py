@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from crucible.ingest import apply_filters
-from crucible.types import DocMeta, Document, doc_id_for
+from rag_crucible.ingest import apply_filters
+from rag_crucible.types import DocMeta, Document, doc_id_for
 
 ENGLISH = (
     "The quarterly report shows that the team shipped all of the planned features "

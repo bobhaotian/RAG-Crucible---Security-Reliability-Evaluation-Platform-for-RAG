@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from crucible.index import FaissIndex
-from crucible.ingest import build_index
-from crucible.pipeline import build_pipeline
+from rag_crucible.index import FaissIndex
+from rag_crucible.ingest import build_index
+from rag_crucible.pipeline import build_pipeline
 
 from ..conftest import make_fake_spec
 
