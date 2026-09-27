@@ -284,7 +284,7 @@ def serve(
     """Start the API server (submit/poll/fetch runs + live /query)."""
     import uvicorn
 
-    from rag_crucible_api.main import create_app
+    from rag_crucible.api.main import create_app
 
     uvicorn.run(create_app(db_path=db, serve_spec_path=spec_path), host=host, port=port)
 

@@ -10,8 +10,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
+from rag_crucible.api.main import create_app
 from rag_crucible.runner import ResultStore, worker_loop
-from rag_crucible_api.main import create_app
 
 from .test_eval_e2e import _eval_spec
 

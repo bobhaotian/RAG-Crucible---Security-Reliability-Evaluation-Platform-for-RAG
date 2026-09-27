@@ -28,7 +28,6 @@ RUN if [ "$WITH_LOCAL" = "1" ]; then \
 
 # project layer
 COPY rag_crucible/ rag_crucible/
-COPY rag_crucible_api/ rag_crucible_api/
 COPY specs/ specs/
 COPY datasets/ datasets/
 COPY README.md ./

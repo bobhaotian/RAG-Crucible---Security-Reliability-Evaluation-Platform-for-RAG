@@ -29,6 +29,14 @@ from typing import Annotated, Any
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 from pydantic import ValidationError
 
+from rag_crucible.api.schemas import (
+    CitationOut,
+    HealthResponse,
+    QueryRequest,
+    QueryResponse,
+    RecordsPage,
+    SubmitRunResponse,
+)
 from rag_crucible.config import RunSpec, load_spec
 from rag_crucible.ingest import load_or_build_index
 from rag_crucible.paths import default_db_path
@@ -40,14 +48,6 @@ from rag_crucible.runner import (
     RunNotFoundError,
     RunResults,
     RunRow,
-)
-from rag_crucible_api.schemas import (
-    CitationOut,
-    HealthResponse,
-    QueryRequest,
-    QueryResponse,
-    RecordsPage,
-    SubmitRunResponse,
 )
 
 DEFAULT_SERVE_SPEC = "specs/smoke-fake.yaml"
