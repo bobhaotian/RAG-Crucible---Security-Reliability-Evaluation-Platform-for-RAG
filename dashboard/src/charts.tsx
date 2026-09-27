@@ -497,9 +497,10 @@ export function DefenseCost({ results, onDrill }: PanelProps) {
       title="What the defenses cost"
       lead={
         <>
-          Every defense is also run on <b>unattacked</b> questions. A defense that refuses
-          enough traffic will drive attack success to zero without defending anything, so
-          these are the numbers that decide whether an attack reduction is real.
+          Every defense is also checked against <b>clean corpus chunks</b> and
+          <b> unattacked questions</b>. A defense that deletes or refuses enough normal
+          traffic will drive attack success to zero without defending anything, so these
+          are the numbers that decide whether an attack reduction is real.
         </>
       }
       drill={{ suite: "security", label: "clean-traffic control" }}
