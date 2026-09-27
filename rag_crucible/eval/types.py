@@ -17,9 +17,10 @@ contamination comes to report zero of it.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_serializer, model_validator
 
 from rag_crucible.config import RunSpec
 from rag_crucible.ingest.build import IngestReport
@@ -245,6 +246,22 @@ class EvalRunResult(StrictModel):
             if actual != self.spec_hash:
                 raise ValueError("spec_identity_json does not reproduce spec_hash")
         return self
+
+    @field_serializer("spec")
+    def _serialize_spec_with_original_identity(self, spec: RunSpec) -> dict[str, object]:
+        """Keep historical specs byte-for-byte canonical when re-serialised.
+
+        Parsing an old spec through today's ``RunSpec`` adds defaults that did
+        not exist when the run was created. The identity receipt records the
+        exact canonical object that minted ``spec_hash``; using it here keeps
+        a read/write round trip from silently backdating those options.
+        """
+        if self.spec_identity_json is not None:
+            identity = json.loads(self.spec_identity_json)
+            if not isinstance(identity, dict):  # guarded by the hash validator
+                raise ValueError("spec_identity_json must encode an object")
+            return identity
+        return spec.model_dump(mode="json")
 
     def metric(self, suite: str, name: str, variant: str = "") -> float | None:
         for suite_result in self.suites:

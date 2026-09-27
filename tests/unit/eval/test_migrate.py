@@ -352,6 +352,16 @@ def test_stored_spec_hash_matches_the_stored_spec(path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("path", RESULT_ARTIFACTS, ids=lambda p: p.parent.name)
+def test_loaded_artifact_preserves_spec_identity_when_reserialised(path: Path) -> None:
+    """Today's RunSpec defaults must not change a historical run's identity."""
+    loaded = load_result_file(path)
+    round_tripped = json.loads(loaded.model_dump_json())
+    blob = json.dumps(round_tripped["spec"], sort_keys=True, separators=(",", ":"))
+
+    assert hashlib.sha256(blob.encode()).hexdigest() == loaded.spec_hash
+
+
 def test_there_are_result_artifacts_to_check() -> None:
     """Keeps the parametrized test below from passing on an empty list."""
     assert RESULT_ARTIFACTS, f"no results.json found under {REPO_ROOT / 'results'}"
