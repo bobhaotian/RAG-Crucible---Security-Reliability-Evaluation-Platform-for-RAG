@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from crucible.config import (
+from rag_crucible.config import (
     ChunkerConfig,
     CorpusConfig,
     DefensesConfig,

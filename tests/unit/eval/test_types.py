@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from crucible.eval.types import EvalRunResult, Metric, SuiteResult
+from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
 
 from ...conftest import make_fake_spec
 

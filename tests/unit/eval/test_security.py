@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.attacks import (
+from rag_crucible.attacks import (
     generate_injection_attacks,
     generate_poison_attacks,
     select_targets,
 )
-from crucible.config import DefenseName, SecuritySuiteConfig
-from crucible.eval.security import _aggregate, _defenses_for, _markers_present
-from crucible.eval.types import AttackRecord, CleanScreenRecord, MarkerRef
-from crucible.qa import QAItem
+from rag_crucible.config import DefenseName, SecuritySuiteConfig
+from rag_crucible.eval.security import _aggregate, _defenses_for, _markers_present
+from rag_crucible.eval.types import AttackRecord, CleanScreenRecord, MarkerRef
+from rag_crucible.qa import QAItem
 
 
 def test_aggregate_separates_retrieval_from_defense_success() -> None:

@@ -38,6 +38,6 @@ The full generated JSON remains a local run artifact rather than another
 committed canonical result. Reproduce with:
 
 ```console
-uv run crucible ingest specs/integrity-local.yaml
-uv run crucible eval specs/integrity-local.yaml --out results/integrity-local
+uv run rag-crucible ingest specs/integrity-local.yaml
+uv run rag-crucible eval specs/integrity-local.yaml --out results/integrity-local
 ```

@@ -59,4 +59,4 @@ jobs:
       - name: Build image
         run: docker build -t rag-crucible:ci .
       - name: Smoke-test image
-        run: docker run --rm rag-crucible:ci uv run --no-sync crucible version
+        run: docker run --rm rag-crucible:ci uv run --no-sync rag-crucible version

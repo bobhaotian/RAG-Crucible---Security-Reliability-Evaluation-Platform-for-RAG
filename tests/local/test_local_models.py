@@ -13,8 +13,8 @@ pytestmark = pytest.mark.local_models
 
 pytest.importorskip("sentence_transformers")
 
-from crucible.providers import EmbedInputType  # noqa: E402
-from crucible.providers.local import LocalEmbedder, LocalReranker  # noqa: E402
+from rag_crucible.providers import EmbedInputType  # noqa: E402
+from rag_crucible.providers.local import LocalEmbedder, LocalReranker  # noqa: E402
 
 
 async def test_minilm_embeds_with_expected_dim() -> None:

@@ -2,7 +2,7 @@
 # portable reports via a volume.
 # Defaults to the fake-provider spec so `docker compose up` answers /query and
 # completes submitted runs with zero downloads. To serve the local-model
-# pipeline instead, build with WITH_LOCAL=1 and set CRUCIBLE_SERVE_SPEC.
+# pipeline instead, build with WITH_LOCAL=1 and set RAG_CRUCIBLE_SERVE_SPEC.
 #
 # Qdrant (the server-backed vector store) is opt-in via a compose profile so the
 # default stack stays single-container:
@@ -14,25 +14,25 @@ services:
       args:
         WITH_LOCAL: "${WITH_LOCAL:-0}"
     command:
-      ["uv", "run", "--no-sync", "crucible", "serve", "--host", "0.0.0.0", "--port", "8000"]
+      ["uv", "run", "--no-sync", "rag-crucible", "serve", "--host", "0.0.0.0", "--port", "8000"]
     environment:
-      CRUCIBLE_SERVE_SPEC: ${CRUCIBLE_SERVE_SPEC:-specs/smoke-fake.yaml}
+      RAG_CRUCIBLE_SERVE_SPEC: ${RAG_CRUCIBLE_SERVE_SPEC:-specs/smoke-fake.yaml}
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     ports:
       - "8000:8000"
     volumes:
-      - crucible-data:/data/artifacts
+      - rag-crucible-data:/data/artifacts
 
   worker:
     build:
       context: .
       args:
         WITH_LOCAL: "${WITH_LOCAL:-0}"
-    command: ["uv", "run", "--no-sync", "crucible", "worker"]
+    command: ["uv", "run", "--no-sync", "rag-crucible", "worker"]
     environment:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     volumes:
-      - crucible-data:/data/artifacts
+      - rag-crucible-data:/data/artifacts
 
   dashboard:
     build:
@@ -51,5 +51,5 @@ services:
       - qdrant-data:/qdrant/storage
 
 volumes:
-  crucible-data:
+  rag-crucible-data:
   qdrant-data:
