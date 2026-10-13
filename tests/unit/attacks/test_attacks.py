@@ -33,6 +33,23 @@ def test_select_targets_is_deterministic_and_sorted() -> None:
     assert len(select_targets(ITEMS, 100, seed=1)) == len(ITEMS)
 
 
+def test_select_targets_is_independent_of_input_order() -> None:
+    expected = select_targets(ITEMS, 4, seed=42)
+    assert select_targets(list(reversed(ITEMS)), 4, seed=42) == expected
+
+
+def test_appending_a_lower_ranked_item_keeps_existing_targets() -> None:
+    selected = select_targets(ITEMS, 4, seed=42)
+    appended = QAItem(
+        qid="q999",
+        question="What is the newly appended specification?",
+        answer="999 units",
+        gold_fact="The newly appended specification is 999 units.",
+    )
+
+    assert select_targets([*ITEMS, appended], 4, seed=42) == selected
+
+
 def test_poison_doc_is_false_retrievable_and_detectable() -> None:
     attacks = generate_poison_attacks(ITEMS, n=3, seed=7)
     assert len(attacks) == 3
