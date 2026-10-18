@@ -139,7 +139,9 @@ Citations:
 All numbers below are from real runs of the committed specs on a MacBook (CPU only,
 local providers: MiniLM embedder, ms-marco cross-encoder reranker, Qwen2.5-0.5B
 generator/judge). Reproduce with `make demo` and the [SciFact](datasets/README.md)
-steps; every metric is backed by per-item records in `results/*/results.json`.
+steps; every metric is backed by per-item records in `results/*/results.json`. The security
+numbers were measured before attack-target sampling changed (see [CHANGELOG](CHANGELOG.md), A7):
+they reproduce on code at or before commit `477ef0c`, and newer code attacks different targets.
 
 ### Rerank lift — BEIR SciFact (5.2k docs, 300 queries, public benchmark)
 
@@ -376,7 +378,8 @@ pipeline:
 | `fake` | hashed bag-of-words | token overlap | extractive | nothing, deterministic — used by CI |
 
 An evaluation run is fully described by one YAML spec (see [specs/](specs/)) —
-reproducible from the spec alone, fixed seeds throughout. Details, contracts, and
+reproducible from the spec and the code version together, with fixed seeds throughout (a
+code change can alter what a spec does; the [CHANGELOG](CHANGELOG.md) says when). Details, contracts, and
 trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Plugging in Cohere (and any new provider)

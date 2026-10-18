@@ -35,7 +35,9 @@ Once those labels are removed, the narrow numeric extractor frequently fails
 to resolve the poisoned claim and refuses too much legitimate traffic.
 
 The full generated JSON remains a local run artifact rather than another
-committed canonical result. Reproduce with:
+committed canonical result. Reproduce with the commands below, on code at or before commit
+`477ef0c`: attack-target sampling changed after it (see `CHANGELOG.md`, A7), so newer code
+attacks different targets.
 
 ```console
 uv run rag-crucible ingest specs/integrity-local.yaml

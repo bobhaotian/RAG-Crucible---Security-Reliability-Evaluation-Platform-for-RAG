@@ -23,7 +23,7 @@ different seed offsets, so the poison and injection target sets overlap by chanc
 an overlapping question both attack documents echo that question and compete for the
 same retrieval slots, and the two trials become the same query scored against
 different markers. With 10 + 10 targets drawn from 56 questions the expected overlap
-is ~1.8; the observed overlap was 2 (q042, q055).
+is ~1.8; the observed overlap was 2 (q042, q055), with the sampler of the time (see Reproduce).
 
 ## The rule, committed before the run
 
@@ -100,6 +100,11 @@ a within-run property and is the only quantity this ablation was designed to tes
 rag-crucible submit specs/demo.yaml           # overlapping targets (default)
 rag-crucible submit specs/demo-disjoint.yaml  # partitioned pool
 ```
+
+**These runs reproduce on code at or before commit `477ef0c`.** Attack-target sampling
+changed after it (see `CHANGELOG.md`, A7). On newer code the overlapping arm shares 4
+targets (q001, q021, q031, q053) instead of 2, so its numbers move. The committed
+artifacts below remain the evidence.
 
 Both runs are committed, so every number above can be checked rather than taken
 on trust:

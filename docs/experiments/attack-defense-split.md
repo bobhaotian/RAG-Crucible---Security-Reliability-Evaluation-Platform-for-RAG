@@ -147,6 +147,12 @@ rag-crucible ingest specs/injection-families.yaml
 rag-crucible submit specs/injection-families.yaml --force
 ```
 
+**These numbers reproduce on code at or before commit `477ef0c`.** Attack-target
+sampling changed after it (see `CHANGELOG.md`, A7): on newer code the same spec attacks a
+different 7 of the 10 poison targets and 13 of the 20 injection targets, so the tables
+above will not come back. Check out that commit to reproduce them. The committed runs
+remain the evidence.
+
 Every rate and test above is recomputed from the per-item `attack` records in
 the two committed runs under `results/injection-families/`, not read off a
 metrics block. Both runs produce identical outcomes (`spec_hash d4a8107f`,
