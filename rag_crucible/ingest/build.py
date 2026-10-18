@@ -158,7 +158,9 @@ def load_ingest_report(directory: Path) -> IngestReport:
 
 
 def _collection_name(spec: RunSpec) -> str:
-    return f"rag_crucible_{spec.name}_{spec.ingest_fingerprint()[:8]}"
+    # Server-side data identity, not packaging: the prefix predates the rename and is
+    # kept so a rebuild still finds and replaces collections created before it.
+    return f"crucible_{spec.name}_{spec.ingest_fingerprint()[:8]}"
 
 
 async def load_or_build_index(spec: RunSpec) -> VectorIndex:

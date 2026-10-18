@@ -17,7 +17,7 @@ from .test_eval_e2e import TINY_QA, _eval_spec
 
 @pytest.fixture
 def store(tmp_path: Path) -> ResultStore:
-    return ResultStore(tmp_path / "rag_crucible.db")
+    return ResultStore(tmp_path / "crucible.db")
 
 
 @pytest.fixture(autouse=True)

@@ -17,7 +17,7 @@ from ...conftest import make_fake_spec
 
 @pytest.fixture
 def store(tmp_path: Path) -> ResultStore:
-    return ResultStore(tmp_path / "rag_crucible.db")
+    return ResultStore(tmp_path / "crucible.db")
 
 
 def _spec(tmp_path: Path, name: str = "store-test") -> RunSpec:

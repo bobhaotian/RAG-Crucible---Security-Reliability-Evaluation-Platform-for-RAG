@@ -12,7 +12,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.15 /uv /usr/local/bin/uv
 ENV UV_LINK_MODE=copy \
     UV_PYTHON_PREFERENCE=only-system \
     RAG_CRUCIBLE_ARTIFACTS_DIR=/data/artifacts \
-    RAG_CRUCIBLE_DB=/data/artifacts/rag-crucible.db \
+    RAG_CRUCIBLE_DB=/data/artifacts/crucible.db \
     RAG_CRUCIBLE_RESULTS_DIR=/data/artifacts/results
 
 WORKDIR /app

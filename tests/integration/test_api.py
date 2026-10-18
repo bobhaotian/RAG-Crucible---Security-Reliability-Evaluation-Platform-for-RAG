@@ -27,7 +27,7 @@ def client(tiny_corpus: Path, tmp_path: Path) -> TestClient:
     spec = _eval_spec(tiny_corpus, tmp_path, name="api-serve")
     serve_spec = tmp_path / "serve-spec.yaml"
     serve_spec.write_text(yaml.safe_dump(spec.model_dump(mode="json")), encoding="utf-8")
-    app = create_app(db_path=tmp_path / "rag_crucible.db", serve_spec_path=serve_spec)
+    app = create_app(db_path=tmp_path / "crucible.db", serve_spec_path=serve_spec)
     return TestClient(app)
 
 
@@ -64,7 +64,7 @@ def test_submit_poll_results_roundtrip(
     # the worker (separate process in production) drains the queue
     import asyncio
 
-    store = ResultStore(tmp_path / "rag_crucible.db")
+    store = ResultStore(tmp_path / "crucible.db")
     asyncio.run(worker_loop(store, drain=True))
 
     assert client.get(f"/runs/{run_id}").json()["status"] == "succeeded"

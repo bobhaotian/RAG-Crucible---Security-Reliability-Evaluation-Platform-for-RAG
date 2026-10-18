@@ -1,7 +1,7 @@
 """SQLite result store — and the job queue (DESIGN.md §6-7).
 
 Stdlib ``sqlite3`` behind a typed repository; no ORM by decision (single
-writer, few tables, graders can ``sqlite3 rag-crucible.db`` and look around).
+writer, few tables, graders can ``sqlite3 crucible.db`` and look around).
 The ``runs`` table doubles as the queue: workers claim the oldest pending row
 with one atomic ``UPDATE … RETURNING``. WAL mode + busy timeout cover the
 API-reads-while-worker-writes case. Connections are opened per operation —

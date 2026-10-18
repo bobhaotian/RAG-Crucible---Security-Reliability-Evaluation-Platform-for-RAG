@@ -28,7 +28,7 @@ def test_paths_respect_environment_overrides(tmp_path, monkeypatch: pytest.Monke
     assert submitted_run_results_dir("demo", "01RUN") == reports / "demo" / "01RUN"
 
     monkeypatch.delenv("RAG_CRUCIBLE_DB")
-    assert default_db_path() == root / "rag-crucible.db"
+    assert default_db_path() == root / "crucible.db"
 
     monkeypatch.delenv("RAG_CRUCIBLE_RESULTS_DIR")
     assert results_dir() == Path("results")

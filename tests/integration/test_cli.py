@@ -105,7 +105,7 @@ def test_submit_completes_run_and_writes_db_and_report(
     spec = _eval_spec(tiny_corpus, tmp_path, name="cli-submit")
     spec_path = tmp_path / "submit.yaml"
     spec_path.write_text(yaml.safe_dump(spec.model_dump(mode="json")), encoding="utf-8")
-    db_path = tmp_path / "rag_crucible.db"
+    db_path = tmp_path / "crucible.db"
 
     submitted = runner.invoke(app, ["submit", str(spec_path), "--db", str(db_path)])
     assert submitted.exit_code == 0, submitted.output

@@ -1,7 +1,7 @@
 """Filesystem conventions for run artifacts, env-overridable for containers.
 
 RAG_CRUCIBLE_ARTIFACTS_DIR — root for indexes and the default DB (default: ./artifacts)
-RAG_CRUCIBLE_DB            — result-store path (default: <artifacts>/rag-crucible.db)
+RAG_CRUCIBLE_DB            — result-store path (default: <artifacts>/crucible.db)
 RAG_CRUCIBLE_RESULTS_DIR   — root for shareable reports (default: ./results)
 """
 
@@ -21,7 +21,9 @@ def index_dir_for(spec_name: str) -> Path:
 
 def default_db_path() -> Path:
     env = os.environ.get("RAG_CRUCIBLE_DB")
-    return Path(env) if env else artifacts_dir() / "rag-crucible.db"
+    # The file keeps its pre-rename name: it lives inside artifacts/, collides with
+    # nothing, and renaming it would hide every run in an existing local store.
+    return Path(env) if env else artifacts_dir() / "crucible.db"
 
 
 def results_dir() -> Path:

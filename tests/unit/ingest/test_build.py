@@ -121,7 +121,7 @@ async def test_embed_into_index_returns_searchable_faiss_index() -> None:
 def test_collection_name_is_stable_and_namespaced(tmp_path) -> None:
     spec = make_fake_spec(tmp_path, name="example")
 
-    assert _collection_name(spec) == f"rag_crucible_example_{spec.ingest_fingerprint()[:8]}"
+    assert _collection_name(spec) == f"crucible_example_{spec.ingest_fingerprint()[:8]}"
 
 
 async def test_load_or_build_index_reuses_matching_saved_index(
