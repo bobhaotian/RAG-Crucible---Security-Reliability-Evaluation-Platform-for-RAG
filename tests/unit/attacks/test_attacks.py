@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from rag_crucible.attacks import (
     INJECT_SOURCE_PREFIX,
     POISON_SOURCE_PREFIX,
@@ -63,34 +65,45 @@ def _qids(items: list[QAItem]) -> set[str]:
     return {item.qid for item in items}
 
 
-def test_an_append_displaces_at_most_one_target_and_only_the_cutoff() -> None:
+# Several seeds, so a sampler that is stable only by luck at one seed cannot pass.
+SEEDS = range(10)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_an_append_displaces_at_most_one_target_and_only_the_cutoff(seed: int) -> None:
     """With a fixed target count an append that ranks in must displace one target.
     It must displace exactly one, and only the previous cutoff, never an arbitrary one."""
     n = 4
-    before = _qids(select_targets(ITEMS, n, seed=42))
+    before = _qids(select_targets(ITEMS, n, seed=seed))
     # The ranking is subset-stable, so the cutoff is the target n admits and n-1 does not.
-    (cutoff,) = before - _qids(select_targets(ITEMS, n - 1, seed=42))
+    (cutoff,) = before - _qids(select_targets(ITEMS, n - 1, seed=seed))
     displacing = 0
     for k in range(200):
         new = _item(f"q{1000 + k}")
-        after = _qids(select_targets([*ITEMS, new], n, seed=42))
+        after = _qids(select_targets([*ITEMS, new], n, seed=seed))
         if after == before:
             continue
         displacing += 1
         assert after == (before - {cutoff}) | {new.qid}
-    assert displacing > 0, "no appended item ranked into the selection; widen the search"
+    assert displacing > 0, "no append entered the selection; the sampler may not rank by qid"
 
 
-def test_removing_an_item_replaces_only_that_item() -> None:
+@pytest.mark.parametrize("seed", SEEDS)
+def test_removing_an_item_replaces_only_that_item(seed: int) -> None:
     n = 4
-    before = _qids(select_targets(ITEMS, n, seed=42))
+    before = _qids(select_targets(ITEMS, n, seed=seed))
     for gone in ITEMS:
-        after = _qids(select_targets([i for i in ITEMS if i.qid != gone.qid], n, seed=42))
+        after = _qids(select_targets([i for i in ITEMS if i.qid != gone.qid], n, seed=seed))
         if gone.qid in before:
             assert before - after == {gone.qid}
             assert len(after) == n
         else:
             assert after == before
+
+
+def test_the_seed_changes_which_targets_are_selected() -> None:
+    chosen = {frozenset(_qids(select_targets(ITEMS, 4, seed=seed))) for seed in SEEDS}
+    assert len(chosen) > 1
 
 
 def test_poison_doc_is_false_retrievable_and_detectable() -> None:

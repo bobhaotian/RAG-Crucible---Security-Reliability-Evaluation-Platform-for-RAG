@@ -19,7 +19,8 @@ EXPECTED_PACKAGE = "rag_crucible"
 EXPECTED_SCRIPTS = {"rag-crucible": "rag_crucible.cli:app"}
 
 
-def _console_scripts(entry_points: str) -> dict[str, str]:
+def _executables(entry_points: str) -> dict[str, str]:
+    """Every installed executable: console and GUI scripts both land in bin/."""
     scripts: dict[str, str] = {}
     section = ""
     for raw in entry_points.splitlines():
@@ -28,7 +29,7 @@ def _console_scripts(entry_points: str) -> dict[str, str]:
             continue
         if line.startswith("[") and line.endswith("]"):
             section = line[1:-1].strip()
-        elif section == "console_scripts" and "=" in line:
+        elif section in {"console_scripts", "gui_scripts"} and "=" in line:
             name, target = line.split("=", 1)
             scripts[name.strip()] = target.strip()
     return scripts
@@ -50,9 +51,9 @@ def check(wheel: Path) -> list[str]:
         except KeyError:
             errors.append("wheel has no entry_points.txt")
             return errors
-    scripts = _console_scripts(entry_points)
+    scripts = _executables(entry_points)
     if scripts != EXPECTED_SCRIPTS:
-        errors.append(f"console scripts are {scripts}, expected {EXPECTED_SCRIPTS}")
+        errors.append(f"executables are {scripts}, expected {EXPECTED_SCRIPTS}")
     return errors
 
 
@@ -62,7 +63,10 @@ def main(argv: list[str]) -> int:
         return 2
     failed = False
     for arg in argv:
-        errors = check(Path(arg))
+        try:
+            errors = check(Path(arg))
+        except (OSError, zipfile.BadZipFile) as exc:
+            errors = [f"not a readable wheel ({exc.__class__.__name__})"]
         for error in errors:
             print(f"{arg}: {error}", file=sys.stderr)
         if errors:

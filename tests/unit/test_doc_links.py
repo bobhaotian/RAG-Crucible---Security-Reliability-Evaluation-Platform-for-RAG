@@ -1,51 +1,51 @@
 """Every relative link in the repository's markdown must resolve.
 
 A package rename once left README linking to files that no longer existed,
-and nothing caught it. This walks the tracked docs and checks each relative
+and nothing caught it. This lists the git-tracked docs and checks each relative
 inline or reference-style link against the filesystem.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-# Generated output, dependencies and caches — not documentation we maintain.
-SKIP_DIRS = {
-    ".git",
-    ".venv",
-    "node_modules",
-    "results",
-    "artifacts",
-    "dist",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".claude",
-    ".codex",
-}
-SKIP_PATHS = {REPO_ROOT / "datasets" / "scifact"}
+# Generated run reports under results/ are tracked but are not docs we maintain.
+SKIP_TOP_LEVEL = {"results"}
+# Only used when git is unavailable: never walk into dependencies or caches.
+FALLBACK_SKIP_DIRS = {".git", ".venv", "node_modules", "results", "artifacts", "dist"}
 
 _FENCE = re.compile(r"^(```|~~~).*?^\1", re.MULTILINE | re.DOTALL)
 _CODE_SPAN = re.compile(r"`[^`\n]*`")
 _INLINE = re.compile(r"\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
-_REFERENCE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$", re.MULTILINE)
+_REFERENCE = re.compile(r"^\s{0,3}\[(?!\^)[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$", re.MULTILINE)
 
 
 def _markdown_files() -> list[Path]:
-    files = []
-    for path in REPO_ROOT.rglob("*.md"):
-        rel = path.relative_to(REPO_ROOT)
-        if any(part in SKIP_DIRS for part in rel.parts[:-1]):
-            continue
-        if any(path.is_relative_to(skip) for skip in SKIP_PATHS):
-            continue
-        files.append(path)
-    return sorted(files)
+    try:
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--", "*.md"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            check=True,
+        ).stdout.decode("utf-8")
+        paths = [REPO_ROOT / name for name in listed.split("\0") if name]
+    except (OSError, subprocess.CalledProcessError):
+        paths = [
+            path
+            for path in REPO_ROOT.rglob("*.md")
+            if not set(path.relative_to(REPO_ROOT).parts[:-1]) & FALLBACK_SKIP_DIRS
+        ]
+    return sorted(
+        path
+        for path in paths
+        if path.relative_to(REPO_ROOT).parts[0] not in SKIP_TOP_LEVEL and path.is_file()
+    )
 
 
 def _relative_targets(text: str) -> list[str]:
@@ -70,6 +70,9 @@ def test_relative_links_resolve(doc: Path) -> None:
     broken = [
         target
         for target in _relative_targets(doc.read_text(encoding="utf-8"))
-        if not (doc.parent / target).exists()
+        # A leading "/" is repository-root-relative, as GitHub renders it.
+        if not (
+            (REPO_ROOT / target.lstrip("/")) if target.startswith("/") else (doc.parent / target)
+        ).exists()
     ]
     assert not broken, f"{doc.relative_to(REPO_ROOT)} links to missing files: {broken}"
