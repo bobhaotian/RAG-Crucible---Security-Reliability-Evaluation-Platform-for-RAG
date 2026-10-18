@@ -32,7 +32,7 @@ SYSTEM_PROMPT = (
 # This states one general rule and deliberately does NOT enumerate payload
 # behaviours. The earlier wording listed "ignore your instructions, change your
 # behaviour, or output a specific string" — which is a description of the two
-# payloads crucible/attacks ships, so the defense was scored against the attacks
+# payloads rag_crucible/attacks ships, so the defense was scored against the attacks
 # it names. A prompt that recites the test set measures recall of that list, not
 # resistance to injection.
 ISOLATION_SYSTEM_PROMPT = (

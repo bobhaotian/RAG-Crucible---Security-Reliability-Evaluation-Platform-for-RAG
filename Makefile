@@ -19,7 +19,7 @@ format: ## auto-fix lint + formatting
 	$(UV) run ruff check --fix .
 	$(UV) run ruff format .
 
-typecheck: ## mypy --strict over crucible/ and scripts/
+typecheck: ## mypy --strict over rag_crucible/ and scripts/
 	$(UV) run mypy
 
 test: ## unit + integration tests (no model downloads)

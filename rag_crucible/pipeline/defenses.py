@@ -27,7 +27,7 @@ from rag_crucible.pipeline.types import RankedContext
 from rag_crucible.types import Chunk
 
 # Categories of retrieved-content instruction, written from the threat model in
-# docs/threat-model.md — deliberately NOT from the payloads in crucible/attacks.
+# docs/threat-model.md — deliberately NOT from the payloads in rag_crucible/attacks.
 #
 # The earlier list transcribed the shipped templates ("reply only with",
 # "ignore all previous"), so `injection_compliance_rate` measured whether the

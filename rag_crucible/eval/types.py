@@ -28,7 +28,7 @@ from rag_crucible.obs.aggregate import StageStats
 from rag_crucible.types import StrictModel
 
 # Bump when a persisted shape changes, and add a migration in
-# crucible/eval/migrate.py in the same commit. History:
+# rag_crucible/eval/migrate.py in the same commit. History:
 #   1 — everything written before versioning existed (no schema_version key)
 #   2 — schema_version + run_id on the result; attack records distinguish
 #       "not recorded" from "recorded empty"

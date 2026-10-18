@@ -23,7 +23,7 @@ from rag_crucible.types import DocMeta, Document, doc_id_for
 
 # Two template families, and the split is the point.
 #
-# SEEN are the payloads `crucible/pipeline/defenses.py` was written against —
+# SEEN are the payloads `rag_crucible/pipeline/defenses.py` was written against —
 # its regexes literally encode their phrasing ("reply only with", "ignore all
 # previous"). A filter scored against these alone is graded on its own homework,
 # which is why `injection_compliance_rate` read a perfect 0.00 for it.

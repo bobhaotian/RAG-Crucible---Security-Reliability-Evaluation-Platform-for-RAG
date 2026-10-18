@@ -1,4 +1,4 @@
-"""Fetch BEIR SciFact and convert it to crucible's corpus + qa.jsonl format.
+"""Fetch BEIR SciFact and convert it to rag-crucible's corpus + qa.jsonl format.
 
 SciFact (Wadden et al., 2020; BEIR packaging by Thakur et al., 2021) is a
 small scientific claim-verification benchmark: ~5.2k abstracts, 300 test
@@ -8,7 +8,7 @@ downloads in seconds and is never committed.
 Conversion:
 - each abstract becomes ``corpus/<doc_id>.txt`` (title + abstract);
 - each test query becomes a qa.jsonl row with ``gold_docs`` (document-id gold
-  kind — see rag_crucible.eval.qa); SciFact has no short answer strings, so
+  kind — see rag_crucible.qa); SciFact has no short answer strings, so
   answer-accuracy metrics don't apply.
 
 Usage: python scripts/fetch_scifact.py --out datasets/scifact

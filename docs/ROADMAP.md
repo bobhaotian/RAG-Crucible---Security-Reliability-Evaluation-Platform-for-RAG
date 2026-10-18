@@ -494,7 +494,7 @@ request without learning Crucible internals.
 
 - provide normal `pip`, `pipx`, and `uv tool` installation alongside the clone-and-`make`
   developer path;
-- add `crucible init`, `crucible validate`, and `crucible doctor` workflows plus a packaged
+- add `rag-crucible init`, `rag-crucible validate`, and `rag-crucible doctor` workflows plus a packaged
   sub-minute fake-provider demo;
 - split the heavy default dependency set into a small core/CLI and explicit FAISS, local
   model, report, server/dashboard, Qdrant, and `all` extras;

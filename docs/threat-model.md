@@ -2,7 +2,7 @@
 
 Scope for the security and privacy suites (DESIGN.md §10). The framing
 throughout is **defensive evaluation and red-teaming of one's own RAG
-pipeline** — every payload in `crucible/attacks/` is generic and educational,
+pipeline** — every payload in `rag_crucible/attacks/` is generic and educational,
 and exists only to measure and harden this project's own system.
 
 This is the RAG-era continuation of the author's prior work on the

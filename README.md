@@ -153,7 +153,7 @@ steps; every metric is backed by per-item records in `results/*/results.json`.
 
 The cross-encoder reranking stage buys **+8.3 points of recall@1** over vector
 search alone — the measurable argument for reranking as a first-class pipeline stage.
-(Single-gold metric formulation; see `crucible/eval/metrics.py` for exact definitions.)
+(Single-gold metric formulation; see `rag_crucible/eval/metrics.py` for exact definitions.)
 
 ### Seeded corpus (35 docs, 56 labeled questions)
 
@@ -356,7 +356,7 @@ metric list. `docker compose up` brings it up on `:8080` alongside the API and w
 
 ## Architecture in one minute
 
-One core library (`crucible/`) with thin shells around it: the CLI, the FastAPI
+One core library (`rag_crucible/`) with thin shells around it: the CLI, the FastAPI
 service, and the dashboard. The load-bearing abstraction is the **provider
 interface**: `embed` / `rerank` / `generate` behind one async contract, with each
 pipeline stage selecting its provider independently in config — never in code:
@@ -404,8 +404,8 @@ rag-crucible eval specs/your-spec.yaml
 
 **Adding a new provider** is three small classes — `Embedder` / `Reranker` /
 `Generator` (any subset) implementing the protocols in
-[crucible/providers/base.py](crucible/providers/base.py) — plus a branch in the
-[registry](crucible/providers/registry.py). Vendor exceptions translate to the shared
+[rag_crucible/providers/base.py](rag_crucible/providers/base.py) — plus a branch in the
+[registry](rag_crucible/providers/registry.py). Vendor exceptions translate to the shared
 error taxonomy at that boundary, and `with_retries` handles rate-limit/transient
 failures. The `cohere`, `openai`, and `fake` providers are each ~120 lines and make
 good templates; the `fake` one is the minimal reference.
@@ -413,9 +413,9 @@ good templates; the `fake` one is the minimal reference.
 ## Repo layout
 
 ```
-crucible/      core library: config, types, qa, providers (local·cohere·openai·fake),
-               ingest (+ pii), index (faiss·qdrant), pipeline, attacks, eval, runner, obs
-api/           FastAPI shell over the runner — no evaluation logic lives here
+rag_crucible/  core library: config, types, qa, providers (local·cohere·openai·fake),
+               ingest (+ pii), index (faiss·qdrant), pipeline, attacks, eval, runner, obs,
+               and api/ — the FastAPI shell over the runner (no evaluation logic lives there)
 dashboard/     read-only Vite + React + TS SPA over the API
 specs/         RunSpec YAMLs (demo, fake smoke, scifact, qdrant)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)

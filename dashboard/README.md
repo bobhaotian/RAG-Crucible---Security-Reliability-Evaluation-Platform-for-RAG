@@ -1,6 +1,6 @@
 # dashboard
 
-A read-only Vite + React + TypeScript SPA over the crucible API. It renders a
+A read-only Vite + React + TypeScript SPA over the rag-crucible API. It renders a
 run's quality–robustness–privacy trade-off, rerank lift, attack success
 with/without defenses, canary-leakage decomposition, and per-stage latency, and
 diffs any two runs (e.g. Cohere vs local provider, rerank on vs off).
@@ -26,4 +26,4 @@ docker compose up dashboard   # nginx serving the build, proxying to the api ser
 
 Charts use Recharts; every chart returns null when its suite is absent, so
 partial runs still render. The dashboard holds no evaluation logic — it only
-reads the API's flat metric list (`crucible/eval/types.py` → `metrics` table).
+reads the API's flat metric list (`rag_crucible/eval/types.py` → `metrics` table).

@@ -6,7 +6,7 @@ injected at all.**
 
 ## The problem
 
-`crucible/pipeline/defenses.py` used to carry a comment saying its regexes were
+`rag_crucible/pipeline/defenses.py` (then `crucible/pipeline/defenses.py`) used to carry a comment saying its regexes were
 *"tuned to catch the attack templates in `crucible/attacks`"*, and they were:
 `reply\s+only\s+with` exists because the shipped payload says "Reply only with
 OWNED-…". `ISOLATION_SYSTEM_PROMPT` had the same defect, instructing the model

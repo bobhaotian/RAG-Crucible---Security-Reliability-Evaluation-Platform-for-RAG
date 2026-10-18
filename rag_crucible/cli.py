@@ -1,4 +1,4 @@
-"""crucible CLI: run the core spine end-to-end from a spec file.
+"""rag-crucible CLI: run the core spine end-to-end from a spec file.
 
     rag-crucible ingest specs/demo.yaml          # corpus → filters → chunks → index
     rag-crucible query  specs/demo.yaml "..."    # retrieve → rerank → generate

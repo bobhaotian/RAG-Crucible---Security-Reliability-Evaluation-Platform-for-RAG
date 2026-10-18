@@ -1,4 +1,4 @@
-"""The crucible API (DESIGN.md §8): a thin shell over the runner and store.
+"""The rag-crucible API (DESIGN.md §8): a thin shell over the runner and store.
 
 No evaluation logic lives here. Endpoints:
 
