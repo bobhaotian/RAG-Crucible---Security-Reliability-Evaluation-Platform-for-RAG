@@ -94,6 +94,15 @@ injection target set, so absolute levels move for unrelated reasons — for exam
 That is a different sample of questions, not a change in defense efficacy. The gap is
 a within-run property and is the only quantity this ablation was designed to test.
 
+Both runs were also measured with each attack document's source path visible to the
+generator. The path named the attack and its target (`__poison__/q042.md`,
+`__inject__/q042.md`), and the prompt prints it beside every chunk. Hiding only the
+canary path moved privacy leakage under no defense from 5/27 to 10/27 in one run on
+Qwen2.5-0.5B (all five changed probes went one way; exact McNemar *p* = 0.0625, not
+significant), so the model does read the path. Its effect on the gaps above is not
+established. Planted documents now get corpus-shaped paths (see `CHANGELOG.md`). The
+committed numbers are left as recorded.
+
 ## Reproduce
 
 ```sh

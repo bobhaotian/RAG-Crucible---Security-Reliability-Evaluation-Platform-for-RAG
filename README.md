@@ -195,6 +195,18 @@ the filter was written from, 10 held out), local Qwen2.5-0.5B generator.
 | ↳ on *held-out* phrasings (n=10) | 0.10 | 0.20 | 0.00 |
 | attack chunk screened out of the prompt @seen / @held-out | 0.00 / 0.00 | 0.00 / 0.00 | **1.00** / **0.20** |
 
+> **Measured with the attack path visible.** These runs gave each attack document a
+> source path that named it (`__poison__/q001.md`, `__inject__/q005.md`), and the
+> prompt prints that path beside every chunk, so the generator could see which passage
+> was the attack. In each committed run, 12 of the 90 answers repeat one. Hiding only
+> the canary path moved privacy leakage under no defense from 5/27 to 10/27 in one run
+> on Qwen2.5-0.5B (all five changed probes went one way; exact McNemar *p* = 0.0625,
+> not significant), so the model does read the path. Its effect on the rates above is
+> not established. The screening row does not depend on it, because retrieval,
+> reranking and the filter read only chunk text. Planted documents now get
+> corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)). The numbers above are left as
+> recorded.
+
 **Honest reading** — this is what the platform is *for*: defenses that work and
 defenses that don't, measured rather than assumed. Every rate here is a count over a
 stated denominator, and none of them is powered to rank one defense against another.
@@ -239,6 +251,16 @@ local Qwen2.5-0.5B:
 | `pii_filter` (ingestion redaction) | 1.00 | **0.00** |
 
 Leakage by probe style (no defense): paraphrase 0.33 · direct 0.22 · indirect 0.00.
+
+> **Measured with the canary path visible.** Each host document had a source path that
+> named it (`__canary__/api_key-01.md`), and the prompt prints that path beside the
+> chunk. The model often answered with the path itself: 30 of the 54 committed answers
+> repeat it. Hiding only that path moved leakage under no defense from 5/27 (the 0.185
+> above) to 10/27 in one run on Qwen2.5-0.5B. All five changed probes went one way
+> (exact McNemar *p* = 0.0625, not significant), retrieval exposure stayed at 27/27,
+> and `pii_filter` stayed at 0/27. So 0.185 may under-count leakage, by an amount not
+> yet measured. Canaries now get corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)).
+> The numbers here are left as recorded.
 
 The decomposition is the point. **Retrieval exposure stays at 1.00 under redaction** —
 the host documents are still topically retrieved — while **generation leakage drops to

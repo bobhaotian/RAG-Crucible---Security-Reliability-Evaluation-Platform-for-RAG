@@ -88,6 +88,35 @@ Leakage is decomposed across the kill chain:
 A canary can be *exposed* without *leaking* — surfaced in context but not echoed
 by the model — which is exactly why the two are measured separately.
 
+### Where planted documents live
+
+Every planted document (poison, injection, canary) needs a source path, and the
+path is not private to the evaluator. The prompt prints it beside each retrieved
+chunk, and every defense receives it on the chunk. A path that names the test is
+an answer key a deployed system is never given. The suites used to write
+`__poison__/q001.md`, which told the generator which passage was the attack and
+would have let a defense screen by reading one string. Hiding only the canary path
+moved privacy leakage under no defense from 5/27 to 10/27 in one run on
+Qwen2.5-0.5B (exact McNemar *p* = 0.0625, not significant), so the model does read
+it.
+
+So a planted document is placed the way a contributed one would be. It goes in one
+of the corpus's own top-level directories, chosen by a seeded hash (the root, if
+the corpus is flat), and is named by a slug of its own topic. In the smoke-fake
+run, the poison for "What is the battery life of the AT-300 autonomous inspection
+drone?" becomes `products/battery-life-at-300-autonomous.md`, beside the real
+`products/at-300-spec.md`. Only directories that still hold documents after the
+ingest filters are used, so a planted document never sits alone in a directory the
+filters emptied. A path never matches an indexed document or another planted one,
+and is never built from the target's id or the harness's own marker words. The
+evaluator tracks planted documents by `doc_id`. One test fails if any prompt or
+defense input carries an evaluator label, and another fails if any defense decides
+differently once every source is rewritten.
+
+Limits: the prompt still shows each chunk's path; an opaque per-chunk label is a
+later change. Every planted document is Markdown, even in a corpus of PDFs, and a
+name collision is resolved with a numeric suffix (`-2`).
+
 ---
 
 ## Defenses evaluated
