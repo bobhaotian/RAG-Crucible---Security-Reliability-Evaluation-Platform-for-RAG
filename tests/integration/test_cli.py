@@ -8,9 +8,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from crucible.cli import app
-from crucible.config import load_spec
-from crucible.runner import ResultStore
+from rag_crucible.cli import app
+from rag_crucible.config import load_spec
+from rag_crucible.runner import ResultStore
 
 from ..conftest import make_fake_spec
 from .test_eval_e2e import _eval_spec
@@ -87,7 +87,7 @@ def test_ingest_refuses_destructive_filter_share(
 def test_query_without_index_is_actionable(spec_file: Path) -> None:
     result = runner.invoke(app, ["query", str(spec_file), "anything"])
     assert result.exit_code == 2
-    assert "crucible ingest" in result.output
+    assert "rag-crucible ingest" in result.output
 
 
 def test_invalid_spec_fails_with_field_name(tmp_path: Path) -> None:
@@ -133,7 +133,7 @@ def test_submit_queue_only_returns_with_pending_run(
         ["submit", str(spec_path), "--queue-only", "--db", str(db_path)],
     )
     assert submitted.exit_code == 0, submitted.output
-    assert "a `crucible worker` must process this run" in submitted.output
+    assert "a `rag-crucible worker` must process this run" in submitted.output
     rows = ResultStore(db_path).list_runs()
     assert len(rows) == 1 and rows[0].status == "pending"
     assert not (tmp_path / "results" / spec.name / rows[0].id).exists()

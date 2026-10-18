@@ -103,7 +103,7 @@ flowchart LR
     P --> E[eval suites<br/>retrieval · faithfulness<br/>security · privacy]
     K[attacks<br/>poison · injection · canaries] -.->|seeded index| E
     E -->|CLI + worker| F[results.json · summary.md · plots]
-    A3[crucible submit<br/>inline worker] --> E
+    A3[rag-crucible submit<br/>inline worker] --> E
     A2[FastAPI<br/>submit · poll · /query] --> W[worker<br/>SQLite queue] --> E
     E -->|worker only| S[(SQLite<br/>result store)] --> D[dashboard]
 ```
@@ -139,7 +139,10 @@ Citations:
 All numbers below are from real runs of the committed specs on a MacBook (CPU only,
 local providers: MiniLM embedder, ms-marco cross-encoder reranker, Qwen2.5-0.5B
 generator/judge). Reproduce with `make demo` and the [SciFact](datasets/README.md)
-steps; every metric is backed by per-item records in `results/*/results.json`.
+steps; every metric is backed by per-item records in `results/*/results.json`. The security
+numbers were measured before attack-target sampling changed (see [CHANGELOG](CHANGELOG.md), A7):
+they reproduce on code at or before commit `477ef0c` (where the CLI is still called `crucible`),
+and newer code attacks different targets.
 
 ### Rerank lift — BEIR SciFact (5.2k docs, 300 queries, public benchmark)
 
@@ -153,7 +156,7 @@ steps; every metric is backed by per-item records in `results/*/results.json`.
 
 The cross-encoder reranking stage buys **+8.3 points of recall@1** over vector
 search alone — the measurable argument for reranking as a first-class pipeline stage.
-(Single-gold metric formulation; see `crucible/eval/metrics.py` for exact definitions.)
+(Single-gold metric formulation; see `rag_crucible/eval/metrics.py` for exact definitions.)
 
 ### Seeded corpus (35 docs, 56 labeled questions)
 
@@ -290,7 +293,7 @@ SQLite run, executes it through an inline worker, waits for completion, and writ
 the database records and portable report bundle:
 
 ```sh
-crucible submit specs/demo.yaml
+rag-crucible submit specs/demo.yaml
 ```
 
 For asynchronous service use, keep a worker running and opt into queue-only submission.
@@ -301,7 +304,7 @@ The HTTP API is always asynchronous and therefore also requires the worker servi
 make worker
 
 # terminal 2: CLI queue submission returns immediately
-crucible submit specs/demo.yaml --queue-only
+rag-crucible submit specs/demo.yaml --queue-only
 
 # or serve the API on :8000 and submit through HTTP
 make serve
@@ -331,8 +334,8 @@ results/demo-local-baseline/<run_id>/
 └── latency.png
 ```
 
-Each run gets its own directory, so `crucible submit --force` never overwrites an
-earlier report. Set `CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
+Each run gets its own directory, so `rag-crucible submit --force` never overwrites an
+earlier report. Set `RAG_CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
 it under the persistent `/data/artifacts` volume. A suite-level failure still exports
 the partial evidence produced by the other suites, matching what is retained in
 SQLite. `--queue-only` is the explicit escape hatch for users who want the previous
@@ -356,7 +359,7 @@ metric list. `docker compose up` brings it up on `:8080` alongside the API and w
 
 ## Architecture in one minute
 
-One core library (`crucible/`) with thin shells around it: the CLI, the FastAPI
+One core library (`rag_crucible/`) with thin shells around it: the CLI, the FastAPI
 service, and the dashboard. The load-bearing abstraction is the **provider
 interface**: `embed` / `rerank` / `generate` behind one async contract, with each
 pipeline stage selecting its provider independently in config — never in code:
@@ -376,7 +379,8 @@ pipeline:
 | `fake` | hashed bag-of-words | token overlap | extractive | nothing, deterministic — used by CI |
 
 An evaluation run is fully described by one YAML spec (see [specs/](specs/)) —
-reproducible from the spec alone, fixed seeds throughout. Details, contracts, and
+reproducible from the spec and the code version together, with fixed seeds throughout (a
+code change can alter what a spec does; the [CHANGELOG](CHANGELOG.md) says when). Details, contracts, and
 trade-off rationale: [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Plugging in Cohere (and any new provider)
@@ -399,13 +403,13 @@ suites:
 ```sh
 uv sync --extra cohere
 export COHERE_API_KEY=...        # the only required change
-crucible eval specs/your-spec.yaml
+rag-crucible eval specs/your-spec.yaml
 ```
 
 **Adding a new provider** is three small classes — `Embedder` / `Reranker` /
 `Generator` (any subset) implementing the protocols in
-[crucible/providers/base.py](crucible/providers/base.py) — plus a branch in the
-[registry](crucible/providers/registry.py). Vendor exceptions translate to the shared
+[rag_crucible/providers/base.py](rag_crucible/providers/base.py) — plus a branch in the
+[registry](rag_crucible/providers/registry.py). Vendor exceptions translate to the shared
 error taxonomy at that boundary, and `with_retries` handles rate-limit/transient
 failures. The `cohere`, `openai`, and `fake` providers are each ~120 lines and make
 good templates; the `fake` one is the minimal reference.
@@ -413,9 +417,9 @@ good templates; the `fake` one is the minimal reference.
 ## Repo layout
 
 ```
-crucible/      core library: config, types, qa, providers (local·cohere·openai·fake),
-               ingest (+ pii), index (faiss·qdrant), pipeline, attacks, eval, runner, obs
-api/           FastAPI shell over the runner — no evaluation logic lives here
+rag_crucible/  core library: config, types, qa, providers (local·cohere·openai·fake),
+               ingest (+ pii), index (faiss·qdrant), pipeline, attacks, eval, runner, obs,
+               and api/ — the FastAPI shell over the runner (no evaluation logic lives there)
 dashboard/     read-only Vite + React + TS SPA over the API
 specs/         RunSpec YAMLs (demo, fake smoke, scifact, qdrant)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)

@@ -12,10 +12,10 @@ pytest.importorskip("qdrant_client")
 
 from qdrant_client import QdrantClient
 
-import crucible.index.factory as factory
-from crucible.index import open_saved_index
-from crucible.ingest import build_index, load_or_build_index
-from crucible.pipeline import build_pipeline
+import rag_crucible.index.factory as factory
+from rag_crucible.index import open_saved_index
+from rag_crucible.ingest import build_index, load_or_build_index
+from rag_crucible.pipeline import build_pipeline
 
 from ..conftest import make_fake_spec
 
@@ -38,7 +38,7 @@ def _qdrant_spec(tiny_corpus: Path):  # type: ignore[no-untyped-def]
 async def test_build_persists_pointer_and_reopens(
     shared_qdrant: QdrantClient, tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("RAG_CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     spec = _qdrant_spec(tiny_corpus)
 
     report = await build_index(spec, tmp_path / "idx")
@@ -56,7 +56,7 @@ async def test_build_persists_pointer_and_reopens(
 async def test_pipeline_and_eval_run_on_qdrant(
     shared_qdrant: QdrantClient, tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("RAG_CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
     spec = _qdrant_spec(tiny_corpus)
 
     index = await load_or_build_index(spec)  # builds, then the pipeline queries it

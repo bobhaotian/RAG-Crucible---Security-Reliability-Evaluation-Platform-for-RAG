@@ -10,16 +10,16 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from api.main import create_app
-from crucible.runner import ResultStore, worker_loop
+from rag_crucible.api.main import create_app
+from rag_crucible.runner import ResultStore, worker_loop
 
 from .test_eval_e2e import _eval_spec
 
 
 @pytest.fixture(autouse=True)
 def _isolated_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
-    monkeypatch.setenv("CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
+    monkeypatch.setenv("RAG_CRUCIBLE_ARTIFACTS_DIR", str(tmp_path / "artifacts"))
+    monkeypatch.setenv("RAG_CRUCIBLE_RESULTS_DIR", str(tmp_path / "results"))
 
 
 @pytest.fixture

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.runner import ids as ids_module
-from crucible.runner.ids import new_run_id
+from rag_crucible.runner import ids as ids_module
+from rag_crucible.runner.ids import new_run_id
 
 
 def test_new_run_id_encodes_time_and_randomness_deterministically(

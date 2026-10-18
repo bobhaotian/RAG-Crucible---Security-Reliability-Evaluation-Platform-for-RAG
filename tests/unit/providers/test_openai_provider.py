@@ -8,9 +8,9 @@ import json
 import httpx
 import pytest
 
-from crucible.providers import EmbedInputType, GenParams, Message
-from crucible.providers.errors import ProviderAuthError, ProviderInvalidRequestError
-from crucible.providers.openai_provider import OpenAIEmbedder, OpenAIGenerator
+from rag_crucible.providers import EmbedInputType, GenParams, Message
+from rag_crucible.providers.errors import ProviderAuthError, ProviderInvalidRequestError
+from rag_crucible.providers.openai_provider import OpenAIEmbedder, OpenAIGenerator
 
 
 def _client(handler: httpx.MockTransport) -> httpx.AsyncClient:
@@ -72,7 +72,7 @@ async def test_http_errors_translate(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _noop(_: float) -> None:
         return None
 
-    monkeypatch.setattr("crucible.providers.retry.asyncio.sleep", _noop)
+    monkeypatch.setattr("rag_crucible.providers.retry.asyncio.sleep", _noop)
 
     def unauthorized(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": "bad key"})

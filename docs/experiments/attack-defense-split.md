@@ -6,7 +6,7 @@ injected at all.**
 
 ## The problem
 
-`crucible/pipeline/defenses.py` used to carry a comment saying its regexes were
+`rag_crucible/pipeline/defenses.py` (then `crucible/pipeline/defenses.py`) used to carry a comment saying its regexes were
 *"tuned to catch the attack templates in `crucible/attacks`"*, and they were:
 `reply\s+only\s+with` exists because the shipped payload says "Reply only with
 OWNED-…". `ISOLATION_SYSTEM_PROMPT` had the same defect, instructing the model
@@ -143,9 +143,24 @@ not establish it.
 ## Reproduce
 
 ```sh
-crucible ingest specs/injection-families.yaml
-crucible submit specs/injection-families.yaml --force
+rag-crucible ingest specs/injection-families.yaml
+rag-crucible submit specs/injection-families.yaml --force
 ```
+
+**These numbers reproduce on code at or before commit `477ef0c`.** Attack-target
+sampling changed after it (see `CHANGELOG.md`, A7): on newer code the same spec attacks a
+different 7 of the 10 poison targets and 13 of the 20 injection targets, and samples a
+different 11 of the 20 clean-control questions, so the tables above will not come back.
+To reproduce them, check out that commit and run the same commands with the old
+executable name:
+
+```sh
+git checkout 477ef0c
+uv run crucible ingest specs/injection-families.yaml
+uv run crucible submit specs/injection-families.yaml --force
+```
+
+The committed runs remain the evidence.
 
 Every rate and test above is recomputed from the per-item `attack` records in
 the two committed runs under `results/injection-families/`, not read off a

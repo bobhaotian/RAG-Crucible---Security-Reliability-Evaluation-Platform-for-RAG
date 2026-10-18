@@ -38,6 +38,11 @@ jobs:
       - name: Test
         run: uv run pytest -q
 
+      - name: Wheel ships only rag_crucible
+        run: |
+          uv build --wheel --out-dir dist/ci
+          uv run python scripts/check_wheel.py dist/ci/*.whl
+
   dashboard:
     runs-on: ubuntu-latest
     steps:
@@ -59,4 +64,4 @@ jobs:
       - name: Build image
         run: docker build -t rag-crucible:ci .
       - name: Smoke-test image
-        run: docker run --rm rag-crucible:ci uv run --no-sync crucible version
+        run: docker run --rm rag-crucible:ci uv run --no-sync rag-crucible version

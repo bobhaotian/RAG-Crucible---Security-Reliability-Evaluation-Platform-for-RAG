@@ -9,11 +9,11 @@ pytest.importorskip("qdrant_client")
 
 from qdrant_client import QdrantClient
 
-from crucible.index import IndexItem
-from crucible.index.qdrant_index import QdrantIndex
-from crucible.providers import EmbedInputType
-from crucible.providers.fake import FakeEmbedder
-from crucible.types import Chunk, Provenance, chunk_id_for
+from rag_crucible.index import IndexItem
+from rag_crucible.index.qdrant_index import QdrantIndex
+from rag_crucible.providers import EmbedInputType
+from rag_crucible.providers.fake import FakeEmbedder
+from rag_crucible.types import Chunk, Provenance, chunk_id_for
 
 TEXTS = [
     "the drone battery lasts eighteen hours in flight",

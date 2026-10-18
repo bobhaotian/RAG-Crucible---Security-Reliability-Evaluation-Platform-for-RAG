@@ -50,9 +50,9 @@ everything else.
 
 ```
                                 ┌────────────────────────────┐
-   crucible CLI ──────────────► │        crucible/           │
+   rag-crucible CLI ──────────► │       rag_crucible/        │
                                 │  (core library, importable)│
-   FastAPI  api/ ─────────────► │  ingest → index → pipeline │ ──► providers (cohere |
+   FastAPI  rag_crucible.api ─► │  ingest → index → pipeline │ ──► providers (cohere |
                                 │  eval suites + attacks     │      local | openai | fake)
    worker (runner) ───────────► │  runner + result store     │
                                 └────────────┬───────────────┘
@@ -62,7 +62,7 @@ everything else.
 ```
 
 Three execution surfaces — CLI, API, worker — all call into **one core library**
-(`crucible/`). Nothing in `api/` or `dashboard/` contains evaluation logic; they are
+(`rag_crucible/`). Nothing in `rag_crucible/api/` or `dashboard/` contains evaluation logic; they are
 thin shells. The dashboard is a read-only client of the API.
 
 Full diagrams (system context, ingestion flow, query path, run lifecycle, module
@@ -77,7 +77,7 @@ rag-crucible/
 │   ├── DESIGN.md              # this file
 │   ├── architecture.md        # mermaid diagrams + data contracts
 │   └── threat-model.md        # ships with Phase 4
-├── crucible/                  # core library — fully typed, no I/O surprises
+├── rag_crucible/              # core library — fully typed, no I/O surprises
 │   ├── config/                # pydantic RunSpec + all config models (§5)
 │   ├── ingest/                # loaders, filters, chunkers
 │   ├── providers/             # embed / rerank / generate behind one interface (§4)
@@ -86,8 +86,8 @@ rag-crucible/
 │   ├── eval/                  # retrieval.py, faithfulness.py, security.py, privacy.py
 │   ├── attacks/               # poisoning doc generators, injection templates, canaries
 │   ├── runner/                # job queue, async workers, result store (§6–7)
-│   └── obs/                   # stage timing, token accounting (§11)
-├── api/                       # FastAPI app: submit runs, poll, fetch results, /query
+│   ├── obs/                   # stage timing, token accounting (§11)
+│   └── api/                   # FastAPI app: submit runs, poll, fetch results, /query
 ├── dashboard/                 # Vite + React + TS SPA (§12)
 ├── datasets/                  # seeded synthetic corpus + QA labels; fetch scripts
 ├── specs/                     # example RunSpec YAMLs incl. the demo spec
@@ -101,7 +101,10 @@ rag-crucible/
 └── .env.example
 ```
 
-Import name is `crucible`; distribution name is `rag-crucible`.
+Import name is `rag_crucible`; the distribution and the executable are both `rag-crucible`.
+(Renamed from `crucible` before the first release. A published package, `crucible-security`,
+ships the same top-level `crucible/` and the same `crucible` entry point, and installing both
+overwrote this project's files.)
 
 ### Module dependency rules
 
@@ -117,7 +120,7 @@ Strictly acyclic, enforced by review (and import-linter if it earns its keep):
   through its public interface only — eval code never reaches into provider
   internals).
 - `runner` depends on `eval` + `pipeline` and owns persistence.
-- `api/` and the CLI depend on `runner`; `dashboard/` depends on `api/` over HTTP.
+- `rag_crucible.api` and the CLI depend on `runner`; `dashboard/` depends on the API over HTTP.
 
 ---
 
@@ -170,7 +173,7 @@ Async-first, because the runner is async and the hosted providers are I/O-bound.
 Local implementations wrap compute in `asyncio.to_thread`.
 
 ```python
-# crucible/providers/base.py  (signatures — final names binding)
+# rag_crucible/providers/base.py  (signatures — final names binding)
 
 class EmbedInputType(StrEnum):
     DOCUMENT = "document"   # maps to Cohere input_type="search_document"
@@ -239,7 +242,7 @@ Design notes:
   **config-validation time** (not mid-run). The fix is one YAML line — point the
   reranker stage at `local` or `cohere`.
 - `fake` exists so unit/integration tests and CI are fully deterministic with zero
-  model downloads. It is a real registered provider living in `crucible/providers/`,
+  model downloads. It is a real registered provider living in `rag_crucible/providers/`,
   not test-folder monkey-patching — keeping it honest forces the interface to stay
   clean.
 
@@ -347,10 +350,10 @@ Schema rules:
 ## 6. Result store
 
 **Decision: SQLite, accessed through a small typed repository class
-(`crucible/runner/store.py`) using the stdlib `sqlite3` module — no ORM.**
+(`rag_crucible/runner/store.py`) using the stdlib `sqlite3` module — no ORM.**
 
 Why: single-node scope, one writer (the worker), a handful of tables, and graders
-should be able to `sqlite3 results.db` and look around. An ORM plus migrations is
+should be able to `sqlite3 artifacts/crucible.db` and look around. An ORM plus migrations is
 ceremony at this scale; the repository class keeps SQL in one file and pydantic models
 at the boundary. WAL mode + `busy_timeout` for API-reads-while-worker-writes. The swap
 path to Postgres (change the repository, keep the interface) is documented, not built.
@@ -441,8 +444,8 @@ Inside the worker:
 - Worker persistence is dual-purpose: normalized metrics/records go to SQLite for the
   API and dashboard, and the same `EvalRunResult` is rendered through the CLI's report
   writer to `results/<spec-name>/<run-id>/` for GitHub or sharing. The run id makes
-  forced reruns collision-free; `CRUCIBLE_RESULTS_DIR` overrides the report root.
-- `crucible submit` is synchronous by default: it atomically claims the run it just
+  forced reruns collision-free; `RAG_CRUCIBLE_RESULTS_DIR` overrides the report root.
+- `rag-crucible submit` is synchronous by default: it atomically claims the run it just
   submitted, acts as an inline worker, and waits for the terminal status. It never
   drains unrelated queued jobs. `--queue-only` retains enqueue-and-return behavior for
   deployments with a background worker; HTTP `POST /runs` remains asynchronous.
@@ -465,8 +468,8 @@ FastAPI, thin layer over the runner and store:
 | `POST /query` | live RAG query through a configured pipeline → `Answer` with citations and stage timings |
 | `GET /health` | liveness + store/index connectivity |
 
-The CLI (`crucible` via Typer) fronts the same core library directly — `crucible
-ingest`, `crucible query`, `crucible eval run specs/demo.yaml`, `crucible demo` — so
+The CLI (`rag-crucible` via Typer) fronts the same core library directly — `rag-crucible
+ingest`, `rag-crucible query`, `rag-crucible eval specs/demo.yaml`, and `make demo` for all three — so
 the spine works end-to-end in Phase 1 before the API exists.
 
 ---
@@ -611,7 +614,7 @@ diff view (e.g. Cohere vs local provider) driven entirely by the `metrics` table
 ## 14. Tooling and engineering conventions
 
 - Python **3.11+**, `uv` for environment + lockfile (`uv.lock` committed).
-- `ruff` (lint + format), `mypy --strict` on `crucible/` and `api/`, `pytest` with
+- `ruff` (lint + format), `mypy --strict` on `rag_crucible/` (its `api` subpackage included) and `scripts/`, `pytest` with
   unit + integration tiers (integration uses `fake` provider + FAISS; no network, no
   model downloads in CI).
 - CI (GitHub Actions): lint → type-check → test → docker build, on every push. Target
@@ -664,7 +667,7 @@ Still deferred:
 | Phase | Deliverable | Done means |
 |---|---|---|
 | **0** | This document + architecture.md | reviewed and confirmed |
-| **1 — Core spine** | provider interface + `local`/`fake` providers → ingestion (loaders, filters, both chunkers) → FAISS index → RAG pipeline with citations → `crucible query` answers end-to-end on the seeded corpus | tests green, CI running |
+| **1 — Core spine** | provider interface + `local`/`fake` providers → ingestion (loaders, filters, both chunkers) → FAISS index → RAG pipeline with citations → `rag-crucible query` answers end-to-end on the seeded corpus | tests green, CI running |
 | **2 — Measurement** | retrieval suite + rerank lift; faithfulness suite with cached judge; `make demo` → results JSON + plots with real numbers | demo reproducible, numbers in README |
 | **3 — Service** | result store, runner/queue, worker; FastAPI submit/poll/fetch + live `/query`; docker-compose | run submitted via API completes and persists |
 | — | **MVP CUT LINE — Phases 0–3 are the shippable MVP** | — |

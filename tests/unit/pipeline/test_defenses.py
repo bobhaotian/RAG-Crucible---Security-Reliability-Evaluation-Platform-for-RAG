@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from crucible.pipeline import (
+from rag_crucible.pipeline import (
     build_messages,
     filter_injected_chunks,
     filter_untrusted_chunks,
     looks_like_injection,
 )
-from crucible.pipeline.types import Candidate, RankedContext
-from crucible.types import Chunk, Provenance, chunk_id_for
+from rag_crucible.pipeline.types import Candidate, RankedContext
+from rag_crucible.types import Chunk, Provenance, chunk_id_for
 
 
 def _candidate(text: str, i: int, source: str = "doc.md") -> Candidate:

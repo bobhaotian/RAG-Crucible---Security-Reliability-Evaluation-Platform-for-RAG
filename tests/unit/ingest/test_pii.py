@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from crucible.ingest import apply_filters, contains_pii, redact_pii
-from crucible.types import DocMeta, Document, doc_id_for
+from rag_crucible.ingest import apply_filters, contains_pii, redact_pii
+from rag_crucible.types import DocMeta, Document, doc_id_for
 
 
 def test_redacts_each_pii_shape() -> None:

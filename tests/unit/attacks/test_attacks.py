@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import re
 
-from crucible.attacks import (
+import pytest
+
+from rag_crucible.attacks import (
     INJECT_SOURCE_PREFIX,
     POISON_SOURCE_PREFIX,
     generate_injection_attacks,
     generate_poison_attacks,
     select_targets,
 )
-from crucible.qa import QAItem
+from rag_crucible.qa import QAItem
 
 ITEMS = [
     QAItem(
@@ -31,6 +33,77 @@ def test_select_targets_is_deterministic_and_sorted() -> None:
     assert [i.qid for i in a] == sorted(i.qid for i in a)
     assert select_targets(ITEMS, None, seed=1) == sorted(ITEMS, key=lambda i: i.qid)
     assert len(select_targets(ITEMS, 100, seed=1)) == len(ITEMS)
+
+
+def test_select_targets_is_independent_of_input_order() -> None:
+    expected = select_targets(ITEMS, 4, seed=42)
+    assert select_targets(list(reversed(ITEMS)), 4, seed=42) == expected
+
+
+def test_appending_a_lower_ranked_item_keeps_existing_targets() -> None:
+    selected = select_targets(ITEMS, 4, seed=42)
+    appended = QAItem(
+        qid="q999",
+        question="What is the newly appended specification?",
+        answer="999 units",
+        gold_fact="The newly appended specification is 999 units.",
+    )
+
+    assert select_targets([*ITEMS, appended], 4, seed=42) == selected
+
+
+def _item(qid: str) -> QAItem:
+    return QAItem(
+        qid=qid,
+        question=f"What is the value recorded for {qid}?",
+        answer="7 units",
+        gold_fact=f"The value recorded for {qid} is 7 units.",
+    )
+
+
+def _qids(items: list[QAItem]) -> set[str]:
+    return {item.qid for item in items}
+
+
+# Several seeds, so a sampler that is stable only by luck at one seed cannot pass.
+SEEDS = range(10)
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_an_append_displaces_at_most_one_target_and_only_the_cutoff(seed: int) -> None:
+    """With a fixed target count an append that ranks in must displace one target.
+    It must displace exactly one, and only the previous cutoff, never an arbitrary one."""
+    n = 4
+    before = _qids(select_targets(ITEMS, n, seed=seed))
+    # The ranking is subset-stable, so the cutoff is the target n admits and n-1 does not.
+    (cutoff,) = before - _qids(select_targets(ITEMS, n - 1, seed=seed))
+    displacing = 0
+    for k in range(200):
+        new = _item(f"q{1000 + k}")
+        after = _qids(select_targets([*ITEMS, new], n, seed=seed))
+        if after == before:
+            continue
+        displacing += 1
+        assert after == (before - {cutoff}) | {new.qid}
+    assert displacing > 0, "no append entered the selection; the sampler may not rank by qid"
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+def test_removing_an_item_replaces_only_that_item(seed: int) -> None:
+    n = 4
+    before = _qids(select_targets(ITEMS, n, seed=seed))
+    for gone in ITEMS:
+        after = _qids(select_targets([i for i in ITEMS if i.qid != gone.qid], n, seed=seed))
+        if gone.qid in before:
+            assert before - after == {gone.qid}
+            assert len(after) == n
+        else:
+            assert after == before
+
+
+def test_the_seed_changes_which_targets_are_selected() -> None:
+    chosen = {frozenset(_qids(select_targets(ITEMS, 4, seed=seed))) for seed in SEEDS}
+    assert len(chosen) > 1
 
 
 def test_poison_doc_is_false_retrievable_and_detectable() -> None:
@@ -79,8 +152,8 @@ def test_no_defense_pattern_reproduces_a_phrase_from_the_attack_set() -> None:
     answers. Reproducing a *phrase* is not: it means the pattern was authored by
     reading the payload rather than the threat model.
     """
-    from crucible.attacks.injection import _PAYLOADS
-    from crucible.pipeline.defenses import _INJECTION_PATTERNS
+    from rag_crucible.attacks.injection import _PAYLOADS
+    from rag_crucible.pipeline.defenses import _INJECTION_PATTERNS
 
     payload_trigrams = set()
     for text in _PAYLOADS.values():
@@ -111,7 +184,7 @@ def test_the_filter_generalises_worse_than_it_scores_on_its_own_family() -> None
     genuinely generalised or been tuned against the held-out set — either way
     the response is a new held-out phrasing, not deleting this assertion.
     """
-    from crucible.pipeline import looks_like_injection
+    from rag_crucible.pipeline import looks_like_injection
 
     attacks = generate_injection_attacks(ITEMS, n=8, seed=3)
     seen = [a for a in attacks if a.family == "seen"]
@@ -127,8 +200,8 @@ def test_the_filter_generalises_worse_than_it_scores_on_its_own_family() -> None
 
 def test_the_isolation_prompt_does_not_enumerate_payload_behaviours() -> None:
     """A prompt that recites the test set measures recall of that list."""
-    from crucible.attacks.injection import _PAYLOADS
-    from crucible.pipeline.prompts import ISOLATION_SYSTEM_PROMPT
+    from rag_crucible.attacks.injection import _PAYLOADS
+    from rag_crucible.pipeline.prompts import ISOLATION_SYSTEM_PROMPT
 
     prompt_trigrams = {
         tuple(_words(ISOLATION_SYSTEM_PROMPT)[i : i + 3])

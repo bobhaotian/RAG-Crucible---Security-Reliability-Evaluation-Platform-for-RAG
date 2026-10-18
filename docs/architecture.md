@@ -10,16 +10,16 @@ stage-by-stage data contracts; the rationale behind every decision lives in DESI
 ```mermaid
 flowchart LR
     subgraph clients [Clients]
-        CLI[crucible CLI]
+        CLI[rag-crucible CLI]
         DASH[Dashboard<br/>Vite + React SPA]
     end
 
     subgraph services [Services]
-        API[FastAPI<br/>api/]
-        WORKER[Eval Worker<br/>crucible.runner]
+        API[FastAPI<br/>rag_crucible.api]
+        WORKER[Eval Worker<br/>rag_crucible.runner]
     end
 
-    subgraph core [Core library: crucible/]
+    subgraph core [Core library: rag_crucible/]
         INGEST[ingest<br/>loaders · filters · chunkers]
         PIPE[pipeline<br/>retrieve → rerank → generate]
         EVAL[eval suites<br/>retrieval · faithfulness · security · privacy]
@@ -53,7 +53,7 @@ flowchart LR
 
 The CLI, API, and worker are thin shells over one core library. The dashboard is a
 read-only HTTP client of the API. Evaluation logic exists in exactly one place:
-`crucible/eval/`.
+`rag_crucible/eval/`.
 
 ---
 
@@ -153,27 +153,27 @@ run through a bounded asyncio pool sized to provider rate limits.
 
 ```mermaid
 flowchart BT
-    types[crucible.types + crucible.config + crucible.qa]
-    providers[crucible.providers] --> types
-    index[crucible.index] --> types
-    ingest[crucible.ingest] --> types & providers & index
-    pipeline[crucible.pipeline] --> providers & index & types
-    attacks[crucible.attacks] --> types
-    eval[crucible.eval] --> pipeline & attacks & ingest & types
-    runner[crucible.runner] --> eval & pipeline & ingest & types
-    api[api/] --> runner & pipeline & ingest
-    cli[crucible CLI] --> runner & eval & pipeline & ingest & types
+    types[rag_crucible.types + rag_crucible.config + rag_crucible.qa]
+    providers[rag_crucible.providers] --> types
+    index[rag_crucible.index] --> types
+    ingest[rag_crucible.ingest] --> types & providers & index
+    pipeline[rag_crucible.pipeline] --> providers & index & types
+    attacks[rag_crucible.attacks] --> types
+    eval[rag_crucible.eval] --> pipeline & attacks & ingest & types
+    runner[rag_crucible.runner] --> eval & pipeline & ingest & types
+    api[rag_crucible.api] --> runner & pipeline & ingest
+    cli[rag-crucible CLI] --> runner & eval & pipeline & ingest & types
 ```
 
 Arrows mean "may import". Anything not drawn is forbidden — in particular, `eval` may
 not import `providers` directly (it consumes the pipeline's public interface only),
-and nothing imports from `api/`. Two edges are worth calling out:
+and nothing imports from `rag_crucible.api` except the CLI's `serve` command, lazily. Two edges are worth calling out:
 
 - `ingest` imports `index` because ingestion *ends* by building the index
   (`ingest/build.py`); there is exactly one index-build path.
 - `eval` imports `ingest` because the security suite re-runs ingestion to build a
   poisoned index (clean corpus + attack documents) through that same single path,
-  then queries it via `RagPipeline.with_index`. `crucible.qa` (labeled-QA data
+  then queries it via `RagPipeline.with_index`. `rag_crucible.qa` (labeled-QA data
   contracts) sits in the dependency root so both `eval` and `attacks` use it without
   a cycle.
 
@@ -203,8 +203,8 @@ SuiteResult     {suite, metrics[], records[]}  → suite_results table
 RunResult       {run_id, spec, suite_results, timings}
 ```
 
-All of these are frozen pydantic models: `Document`/`Chunk` live in `crucible/types.py`
+All of these are frozen pydantic models: `Document`/`Chunk` live in `rag_crucible/types.py`
 (the dependency root, importable by every module), pipeline-owned models in
-`crucible/pipeline/types.py`. Provider-facing results (`EmbedResult`, `RerankResult`,
+`rag_crucible/pipeline/types.py`. Provider-facing results (`EmbedResult`, `RerankResult`,
 `GenerateResult`, `Usage`) are defined with the provider interface in
 [DESIGN.md §4](DESIGN.md#4-the-provider-abstraction-the-most-important-contract).

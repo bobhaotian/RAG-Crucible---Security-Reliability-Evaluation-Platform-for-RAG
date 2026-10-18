@@ -33,8 +33,8 @@ document-level gold labels — the public retrieval benchmark. Fetch + convert
 
 ```sh
 uv run python scripts/fetch_scifact.py
-uv run crucible ingest specs/scifact-local.yaml
-uv run crucible eval specs/scifact-local.yaml
+uv run rag-crucible ingest specs/scifact-local.yaml
+uv run rag-crucible eval specs/scifact-local.yaml
 ```
 
 Gold labels use the `gold_docs` kind (document ids) rather than fact

@@ -1,5 +1,5 @@
-// Typed client for the crucible API (mirrors crucible.runner.models /
-// api.schemas). The dashboard is read-only: it lists runs, reads results, and
+// Typed client for the rag-crucible API (mirrors rag_crucible.runner.models /
+// rag_crucible.api.schemas). The dashboard is read-only: it lists runs, reads results, and
 // pulls the per-item evidence behind any metric.
 
 export type RunStatus =

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from crucible.config import RetrievalSuiteConfig
-from crucible.eval.retrieval import _aggregate, run_retrieval_suite
-from crucible.obs.aggregate import TimingCollector
-from crucible.qa import QAItem
+from rag_crucible.config import RetrievalSuiteConfig
+from rag_crucible.eval.retrieval import _aggregate, run_retrieval_suite
+from rag_crucible.obs.aggregate import TimingCollector
+from rag_crucible.qa import QAItem
 
 
 def test_aggregate_calculates_each_cutoff_and_mrr() -> None:
