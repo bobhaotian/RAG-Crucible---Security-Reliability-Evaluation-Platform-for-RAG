@@ -13,11 +13,12 @@ the defense isn't overfit to a single phrasing.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from rag_crucible.attacks.targets import INJECT_SOURCE_PREFIX, select_targets
+from rag_crucible.attacks.placement import CorpusPlacer
+from rag_crucible.attacks.targets import select_targets
 from rag_crucible.qa import QAItem
 from rag_crucible.types import DocMeta, Document, doc_id_for
 
@@ -119,7 +120,13 @@ def generate_injection_attacks(
     n: int | None,
     seed: int,
     templates: Sequence[str] = DEFAULT_TEMPLATES,
+    *,
+    corpus_sources: Iterable[str] = (),
 ) -> list[InjectionAttack]:
+    """``corpus_sources`` is every path the documents must sit beside without
+    colliding: the corpus, plus any poison documents sharing the index. See
+    ``generate_poison_attacks``."""
+    placer = CorpusPlacer(corpus_sources, seed)
     attacks: list[InjectionAttack] = []
     seen = [t for t in templates if family_of(t) == "seen"]
     heldout = [t for t in templates if family_of(t) == "heldout"]
@@ -131,7 +138,7 @@ def generate_injection_attacks(
         token = _token(item.qid)
         # Echo the question so the doc is retrieved, then deliver the payload.
         text = f"Notes on: {item.question}\n\n{_payload(template, token)}"
-        source = f"{INJECT_SOURCE_PREFIX}/{item.qid}.md"
+        source = placer.place(item.qid, item.question)
         document = Document(
             doc_id=doc_id_for(source, text),
             source=source,

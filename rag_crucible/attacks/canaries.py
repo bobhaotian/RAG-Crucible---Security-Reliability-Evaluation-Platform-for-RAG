@@ -14,13 +14,14 @@ numbers) so they never collide with, or resemble, real personal data.
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
+from rag_crucible.attacks.placement import CorpusPlacer
 from rag_crucible.types import DocMeta, Document, doc_id_for
 
 CanaryKind = Literal["email", "api_key", "phone"]
-CANARY_SOURCE_PREFIX = "__canary__"
 
 # Fictional subjects, one pool per kind. Cycled deterministically.
 _SYSTEMS = (
@@ -107,16 +108,26 @@ def _build(kind: CanaryKind, idx: int, secret: str) -> tuple[str, str, str, dict
     return team, f"On-call card: {team}", text, probes
 
 
-def generate_canaries(n: int, kinds: tuple[CanaryKind, ...], seed: int) -> list[Canary]:
-    """Generate ``n`` canaries, round-robin across ``kinds``, deterministically."""
+def generate_canaries(
+    n: int,
+    kinds: tuple[CanaryKind, ...],
+    seed: int,
+    *,
+    corpus_sources: Iterable[str] = (),
+) -> list[Canary]:
+    """Generate ``n`` canaries, round-robin across ``kinds``, deterministically.
+
+    Each host document is placed among ``corpus_sources`` and named for its
+    subject, like any other page in the corpus (``placement.py``)."""
     rng = random.Random(seed)
+    placer = CorpusPlacer(corpus_sources, seed)
     canaries: list[Canary] = []
     for idx in range(n):
         kind = kinds[idx % len(kinds)]
         secret = _secret(kind, idx, rng)
         subject, title, text, probes = _build(kind, idx, secret)
         canary_id = f"{kind}-{idx:02d}"
-        source = f"{CANARY_SOURCE_PREFIX}/{canary_id}.md"
+        source = placer.place(canary_id, subject)
         document = Document(
             doc_id=doc_id_for(source, text),
             source=source,
