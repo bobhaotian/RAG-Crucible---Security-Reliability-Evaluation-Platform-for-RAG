@@ -50,6 +50,49 @@ def test_appending_a_lower_ranked_item_keeps_existing_targets() -> None:
     assert select_targets([*ITEMS, appended], 4, seed=42) == selected
 
 
+def _item(qid: str) -> QAItem:
+    return QAItem(
+        qid=qid,
+        question=f"What is the value recorded for {qid}?",
+        answer="7 units",
+        gold_fact=f"The value recorded for {qid} is 7 units.",
+    )
+
+
+def _qids(items: list[QAItem]) -> set[str]:
+    return {item.qid for item in items}
+
+
+def test_an_append_displaces_at_most_one_target_and_only_the_cutoff() -> None:
+    """With a fixed target count an append that ranks in must displace one target.
+    It must displace exactly one, and only the previous cutoff, never an arbitrary one."""
+    n = 4
+    before = _qids(select_targets(ITEMS, n, seed=42))
+    # The ranking is subset-stable, so the cutoff is the target n admits and n-1 does not.
+    (cutoff,) = before - _qids(select_targets(ITEMS, n - 1, seed=42))
+    displacing = 0
+    for k in range(200):
+        new = _item(f"q{1000 + k}")
+        after = _qids(select_targets([*ITEMS, new], n, seed=42))
+        if after == before:
+            continue
+        displacing += 1
+        assert after == (before - {cutoff}) | {new.qid}
+    assert displacing > 0, "no appended item ranked into the selection; widen the search"
+
+
+def test_removing_an_item_replaces_only_that_item() -> None:
+    n = 4
+    before = _qids(select_targets(ITEMS, n, seed=42))
+    for gone in ITEMS:
+        after = _qids(select_targets([i for i in ITEMS if i.qid != gone.qid], n, seed=42))
+        if gone.qid in before:
+            assert before - after == {gone.qid}
+            assert len(after) == n
+        else:
+            assert after == before
+
+
 def test_poison_doc_is_false_retrievable_and_detectable() -> None:
     attacks = generate_poison_attacks(ITEMS, n=3, seed=7)
     assert len(attacks) == 3
