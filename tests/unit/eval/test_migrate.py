@@ -374,3 +374,77 @@ def test_committed_result_artifacts_load(path: Path) -> None:
     result = load_result_file(path)
     assert result.schema_version == RESULT_SCHEMA_VERSION
     assert isinstance(result, EvalRunResult)
+
+
+# --- schema 6: every metric says whether it was measured --------------------
+
+
+def _schema_5_artifact(*metrics: dict[str, Any]) -> dict[str, Any]:
+    raw = _schema_1_artifact()
+    raw["schema_version"] = 5
+    raw["run_id"] = "01ABCDEF"
+    raw["suites"][0]["records"][0].pop("foreign_markers")
+    raw["suites"][0]["metrics"] = list(metrics)
+    return raw
+
+
+def test_schema_5_metrics_migrate_as_measured() -> None:
+    """Before schema 6 a metric could only be a measurement: value was a
+    required float, and an uncomputable metric was left out instead."""
+    raw = _schema_5_artifact(
+        {
+            "suite": "security",
+            "name": "injection_compliance_rate",
+            "variant": "defense=injection_filter",
+            "value": 0.0,
+        }
+    )
+    metric = load_result_json(json.dumps(raw)).suites[0].metrics[0]
+    assert metric.state == "measured"
+    assert metric.value == 0.0, "a recorded zero stays a measured zero"
+    assert metric.reason is None
+
+
+def test_a_schema_5_metric_without_a_value_is_refused_not_stamped() -> None:
+    """Stamping "measured" is only safe because the old shape guaranteed a
+    value. An artifact that breaks that guarantee is refused, not read as a
+    measured metric with nothing in it."""
+    raw = _schema_5_artifact({"suite": "security", "name": "x", "variant": "", "value": None})
+    with pytest.raises(ValidationError, match="a measured metric needs a value"):
+        load_result_json(json.dumps(raw))
+
+
+def test_a_not_measured_metric_round_trips_at_schema_6() -> None:
+    raw = _schema_5_artifact()
+    raw["schema_version"] = RESULT_SCHEMA_VERSION
+    raw["suites"][0]["metrics"] = [
+        {
+            "suite": "security",
+            "name": "defense_clean_screen_rate",
+            "variant": "defense=answer_integrity",
+            "value": None,
+            "state": "inapplicable",
+            "reason": "every chunk carries trusted provenance, so the screen cannot fire",
+        }
+    ]
+    first = load_result_json(json.dumps(raw))
+    metric = load_result_json(first.model_dump_json()).suites[0].metrics[0]
+    assert metric.value is None
+    assert metric.state == "inapplicable"
+    assert metric.reason == "every chunk carries trusted provenance, so the screen cannot fire"
+
+
+@pytest.mark.parametrize("path", RESULT_ARTIFACTS, ids=lambda p: p.parent.name)
+def test_committed_metrics_load_as_measured_with_their_values(path: Path) -> None:
+    """Every committed metric survives the 5 → 6 step unchanged, as measured."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    on_disk = [
+        (m["suite"], m["name"], m.get("variant", ""), m["value"])
+        for s in raw["suites"]
+        for m in s["metrics"]
+    ]
+    loaded = [m for s in load_result_file(path).suites for m in s.metrics]
+
+    assert on_disk, f"{path} carries no metrics, so this check proves nothing"
+    assert [(m.suite, m.name, m.variant, m.value) for m in loaded] == on_disk
+    assert all(m.state == "measured" and m.reason is None for m in loaded)

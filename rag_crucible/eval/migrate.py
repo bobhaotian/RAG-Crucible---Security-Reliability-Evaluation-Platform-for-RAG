@@ -9,7 +9,9 @@ version at a time and only then validates it. Two rules govern every step:
    difference matters: an empty marker tuple says the answer was scanned and
    nothing was found; ``None`` says the run never scanned. A migration that
    defaults the second into the first manufactures a measurement, which is the
-   failure this whole module exists to prevent.
+   failure this whole module exists to prevent. A step may fill in a value
+   only when the older shape could not have held any other one
+   (``_migrate_5_to_6``).
 2. **Drop only what is now derived.** A key that became a computed property is
    removed, because the property recomputes it from the fields it derives from.
    A key whose meaning changed is *not* silently reinterpreted — that needs a
@@ -102,6 +104,30 @@ def _migrate_4_to_5(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _migrate_5_to_6(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 5 → 6: every metric gains a ``state``, and older ones were measured.
+
+    This step writes a value the old writer did not, so it has to be the value
+    the old shape already guaranteed, not a guess. Before schema 6,
+    ``Metric.value`` was a required float, and every writer emitted a metric
+    only when it had computed one. A metric it could not compute was left out:
+    an unlabelled retrieval set, for instance, became a skipped suite with no
+    metrics at all. No other state was expressible. One defect could still
+    write a number nobody measured: ``metrics.mean`` returns 0.0 for an empty
+    sample. Every metric in the committed artifacts was checked to average a
+    non-empty sample, so none of them carries that 0.0.
+
+    ``reason`` is left to its ``None`` default, because a measured metric needs
+    no reason and the writer gave none. A ``state`` already present is kept,
+    as every step here keeps what the writer recorded.
+    """
+    for suite in raw.get("suites") or []:
+        for metric in suite.get("metrics") or []:
+            if isinstance(metric, dict):
+                metric.setdefault("state", "measured")
+    return raw
+
+
 # version -> migration producing version+1. Every consecutive step from
 # _UNVERSIONED to RESULT_SCHEMA_VERSION must be present.
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -109,6 +135,7 @@ _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     2: _migrate_2_to_3,
     3: _migrate_3_to_4,
     4: _migrate_4_to_5,
+    5: _migrate_5_to_6,
 }
 
 

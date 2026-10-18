@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,7 @@ from typer.testing import CliRunner
 
 from rag_crucible.cli import app
 from rag_crucible.config import load_spec
-from rag_crucible.runner import ResultStore
+from rag_crucible.runner import STORE_SCHEMA_VERSION, ResultStore
 
 from ..conftest import make_fake_spec
 from .test_eval_e2e import _eval_spec
@@ -161,3 +162,15 @@ def test_submit_completes_matching_run_already_pending(
 def test_version_runs() -> None:
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
+
+
+def test_a_store_from_a_newer_version_is_refused_with_a_message(tmp_path: Path) -> None:
+    db_path = tmp_path / "newer.db"
+    ResultStore(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(f"PRAGMA user_version = {STORE_SCHEMA_VERSION + 1}")
+    conn.close()
+
+    result = runner.invoke(app, ["runs", "--db", str(db_path)])
+    assert result.exit_code == 2
+    assert "written by a newer version" in result.output

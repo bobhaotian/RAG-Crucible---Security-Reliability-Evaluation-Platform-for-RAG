@@ -36,7 +36,7 @@ class SuiteSummary(StrictModel):
     # side can produce becomes one the other rejects, and the API 500s.
     status: SuiteStatus
     error: str | None = None
-    metric_count: int
+    metric_count: int  # every metric emitted, measured or not; their states are in metrics
     record_count: int
 
 
@@ -54,3 +54,7 @@ class RecordRow(StrictModel):
     suite: str
     kind: str
     payload_json: str
+    # The result schema the payload was serialised at. None = stored before
+    # the store recorded it, by a writer at schema 5 or older; which one is
+    # unknown, so it is not guessed.
+    payload_schema: int | None = None

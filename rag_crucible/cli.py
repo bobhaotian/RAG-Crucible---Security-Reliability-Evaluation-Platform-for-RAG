@@ -28,6 +28,7 @@ from rag_crucible.providers import ProviderError
 from rag_crucible.runner import (
     DuplicateRunError,
     ResultStore,
+    StoreSchemaError,
     execute_or_wait_for_run,
     new_run_id,
     worker_loop,
@@ -47,7 +48,11 @@ DbOption = Annotated[
 
 
 def _store(db: Path | None) -> ResultStore:
-    return ResultStore(db if db is not None else default_db_path())
+    try:
+        return ResultStore(db if db is not None else default_db_path())
+    except StoreSchemaError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 def _load_spec_or_exit(spec_path: Path) -> RunSpec:
