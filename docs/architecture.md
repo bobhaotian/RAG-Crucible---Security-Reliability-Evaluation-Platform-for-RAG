@@ -167,7 +167,7 @@ flowchart BT
 
 Arrows mean "may import". Anything not drawn is forbidden — in particular, `eval` may
 not import `providers` directly (it consumes the pipeline's public interface only),
-and nothing imports from `rag_crucible.api`. Two edges are worth calling out:
+and nothing imports from `rag_crucible.api` except the CLI's `serve` command, lazily. Two edges are worth calling out:
 
 - `ingest` imports `index` because ingestion *ends* by building the index
   (`ingest/build.py`); there is exactly one index-build path.

@@ -35,9 +35,11 @@ Once those labels are removed, the narrow numeric extractor frequently fails
 to resolve the poisoned claim and refuses too much legitimate traffic.
 
 The full generated JSON remains a local run artifact rather than another
-committed canonical result. Reproduce with the commands below, on code at or before commit
-`477ef0c`: attack-target sampling changed after it (see `CHANGELOG.md`, A7), so newer code
-attacks different targets.
+committed canonical result. The numbers above were measured on code at or before commit
+`477ef0c`. Attack-target sampling changed after it (see `CHANGELOG.md`, A7), so newer code
+attacks different targets. At that commit the executable is `crucible`, so run the commands
+below with `crucible` in place of `rag-crucible`. On current code they run, but on a
+different sample.
 
 ```console
 uv run rag-crucible ingest specs/integrity-local.yaml

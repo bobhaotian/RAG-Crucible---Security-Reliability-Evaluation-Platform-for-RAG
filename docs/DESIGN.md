@@ -353,7 +353,7 @@ Schema rules:
 (`rag_crucible/runner/store.py`) using the stdlib `sqlite3` module — no ORM.**
 
 Why: single-node scope, one writer (the worker), a handful of tables, and graders
-should be able to `sqlite3 results.db` and look around. An ORM plus migrations is
+should be able to `sqlite3 artifacts/crucible.db` and look around. An ORM plus migrations is
 ceremony at this scale; the repository class keeps SQL in one file and pydantic models
 at the boundary. WAL mode + `busy_timeout` for API-reads-while-worker-writes. The swap
 path to Postgres (change the repository, keep the interface) is documented, not built.
@@ -469,7 +469,7 @@ FastAPI, thin layer over the runner and store:
 | `GET /health` | liveness + store/index connectivity |
 
 The CLI (`rag-crucible` via Typer) fronts the same core library directly — `rag-crucible
-ingest`, `rag-crucible query`, `rag-crucible eval run specs/demo.yaml`, `rag-crucible demo` — so
+ingest`, `rag-crucible query`, `rag-crucible eval specs/demo.yaml`, and `make demo` for all three — so
 the spine works end-to-end in Phase 1 before the API exists.
 
 ---

@@ -102,9 +102,13 @@ rag-crucible submit specs/demo-disjoint.yaml  # partitioned pool
 ```
 
 **These runs reproduce on code at or before commit `477ef0c`.** Attack-target sampling
-changed after it (see `CHANGELOG.md`, A7). On newer code the overlapping arm shares 4
-targets (q001, q021, q031, q053) instead of 2, so its numbers move. The committed
-artifacts below remain the evidence.
+changed after it (see `CHANGELOG.md`, A7), and on newer code both arms draw different
+targets. The partitioned arm changes 7 of its 10 poison and 8 of its 10 injection targets;
+the overlapping arm changes 7 of 10 and 10 of 10, and its overlap rises from 2 questions
+(q042, q055) to 4 (q001, q021, q031, q053). To reproduce the numbers below, check out that
+commit and use the old executable name: `uv run crucible submit specs/demo.yaml` and
+`uv run crucible submit specs/demo-disjoint.yaml`. The committed artifacts below remain
+the evidence.
 
 Both runs are committed, so every number above can be checked rather than taken
 on trust:

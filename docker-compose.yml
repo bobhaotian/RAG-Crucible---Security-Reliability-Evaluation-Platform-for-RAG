@@ -21,7 +21,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - rag-crucible-data:/data/artifacts
+      - crucible-data:/data/artifacts
 
   worker:
     build:
@@ -32,7 +32,7 @@ services:
     environment:
       QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
     volumes:
-      - rag-crucible-data:/data/artifacts
+      - crucible-data:/data/artifacts
 
   dashboard:
     build:
@@ -51,5 +51,5 @@ services:
       - qdrant-data:/qdrant/storage
 
 volumes:
-  rag-crucible-data:
+  crucible-data:
   qdrant-data:

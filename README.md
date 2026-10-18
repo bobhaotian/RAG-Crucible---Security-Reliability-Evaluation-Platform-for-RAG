@@ -141,7 +141,8 @@ local providers: MiniLM embedder, ms-marco cross-encoder reranker, Qwen2.5-0.5B
 generator/judge). Reproduce with `make demo` and the [SciFact](datasets/README.md)
 steps; every metric is backed by per-item records in `results/*/results.json`. The security
 numbers were measured before attack-target sampling changed (see [CHANGELOG](CHANGELOG.md), A7):
-they reproduce on code at or before commit `477ef0c`, and newer code attacks different targets.
+they reproduce on code at or before commit `477ef0c` (where the CLI is still called `crucible`),
+and newer code attacks different targets.
 
 ### Rerank lift — BEIR SciFact (5.2k docs, 300 queries, public benchmark)
 
