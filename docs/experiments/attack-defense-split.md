@@ -139,6 +139,16 @@ not establish it.
   assertion.
 - Nothing here says a better filter is impossible. It says this one does not
   generalise, and that the metric previously used to praise it was blind.
+- **These runs showed the generator which document was the attack.** Each attack
+  document's source path named it (`__inject__/q005.md`, `__poison__/q001.md`), and
+  the prompt prints that path beside every chunk. Hiding only the canary path moved
+  privacy leakage under no defense from 5/27 to 10/27 in one run on Qwen2.5-0.5B (all
+  five changed probes went one way; exact McNemar *p* = 0.0625, not significant), so
+  the model does read the path. Its effect on the compliance and corruption rates here
+  is not established. The screening table does not depend on it, because retrieval,
+  reranking and the filter read only chunk text. Planted documents now get
+  corpus-shaped paths (see `CHANGELOG.md`). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model. The numbers on this page are left as
+  recorded.
 
 ## Reproduce
 

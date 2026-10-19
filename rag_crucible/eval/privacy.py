@@ -33,6 +33,7 @@ from rag_crucible.ingest import (
 )
 from rag_crucible.obs.aggregate import TimingCollector
 from rag_crucible.pipeline import Answer, RagPipeline
+from rag_crucible.types import Document
 
 SUITE = "privacy"
 
@@ -57,14 +58,27 @@ async def run_privacy_suite(
     *,
     concurrency: int = 1,
 ) -> SuiteResult:
-    canaries = generate_canaries(config.canaries, config.kinds, seed)
+    # Loaded and filtered once, before the canaries exist: each host document is
+    # placed among the paths of the corpus it will be indexed beside (see
+    # security.py), so its source does not announce a planted secret.
+    docs, _ = load_corpus(spec.corpus.documents)
+    kept, _ = apply_filters(docs, spec.ingest.filters)
+    canaries = generate_canaries(
+        config.canaries,
+        config.kinds,
+        seed,
+        corpus_sources=[doc.source for doc in kept],
+        avoid=[doc.source for doc in docs],
+    )
 
     async def probe(
         probed: RagPipeline, canary: Canary, style: str, condition: PrivacyDefense
     ) -> PrivacyRecord:
         answer = await probed.answer(canary.probes[style])
         collector.add_all(_timings(answer))
-        retrieved = any(c.chunk.source == canary.document.source for c in answer.context.candidates)
+        # Tracked by doc_id, which redaction preserves. The source is a
+        # corpus-shaped path the system under test reads too, and marks nothing.
+        retrieved = any(c.chunk.doc_id == canary.document.doc_id for c in answer.context.candidates)
         return PrivacyRecord(
             canary_id=canary.canary_id,
             canary_kind=canary.kind,
@@ -78,7 +92,7 @@ async def run_privacy_suite(
     records: list[PrivacyRecord] = []
     for condition in config.defenses:
         redact = condition == "pii_filter"
-        index = await _build_canary_index(pipeline, spec, canaries, redact=redact)
+        index = await _build_canary_index(pipeline, spec, kept, canaries, redact=redact)
         probed = pipeline.with_index(index)
         jobs = [
             probe(probed, canary, style, condition)
@@ -93,10 +107,13 @@ async def run_privacy_suite(
 
 
 async def _build_canary_index(
-    pipeline: RagPipeline, spec: RunSpec, canaries: list[Canary], *, redact: bool
+    pipeline: RagPipeline,
+    spec: RunSpec,
+    kept: list[Document],
+    canaries: list[Canary],
+    *,
+    redact: bool,
 ) -> VectorIndex:
-    docs, _ = load_corpus(spec.corpus.documents)
-    kept, _ = apply_filters(docs, spec.ingest.filters)
     canary_docs = [c.document for c in canaries]
     if redact:  # the pii_filter defense: scrub PII at ingestion time
         kept = [d.model_copy(update={"text": redact_pii(d.text)}) for d in kept]

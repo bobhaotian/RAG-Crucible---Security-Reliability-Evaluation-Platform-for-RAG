@@ -34,6 +34,15 @@ the earlier fake-provider smoke run depended on test-only provenance labels.
 Once those labels are removed, the narrow numeric extractor frequently fails
 to resolve the poisoned claim and refuses too much legitimate traffic.
 
+The run removed the provenance label but not a second one: each attack document's
+source path still named it (`__poison__/q001.md`), and the prompt prints that path
+beside every chunk, so the generator could see which passage was the attack. Hiding
+only the canary path moved privacy leakage under no defense from 5/27 to 10/27 in one
+run on Qwen2.5-0.5B (all five changed probes went one way; exact McNemar *p* = 0.0625,
+not significant), so the model does read the path. Its effect on the table above is
+not established. Planted documents now get corpus-shaped paths (see `CHANGELOG.md`). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model.,
+and the numbers above are left as recorded.
+
 The full generated JSON remains a local run artifact rather than another
 committed canonical result. The numbers above were measured on code at or before commit
 `477ef0c`. Attack-target sampling changed after it (see `CHANGELOG.md`, A7), so newer code
