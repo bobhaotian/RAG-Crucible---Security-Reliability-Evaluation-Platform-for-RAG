@@ -3,6 +3,10 @@
 The summary tables are the same ones the README quotes; the rerank-lift
 column (on - off) is computed here so the headline report is explicit about
 what the reranking stage buys.
+
+Values are read through ``Metric.measured_value``: a metric that was not
+measured raises rather than being printed or plotted as a number. Rendering
+those states is a later change; until it lands no suite emits one.
 """
 
 from __future__ import annotations
@@ -56,8 +60,8 @@ def _retrieval_table(suite: SuiteResult) -> list[str]:
     for metric in suite.metrics:  # preserve emission order, dedupe across variants
         if metric.name not in names:
             names.append(metric.name)
-    off = {m.name: m.value for m in suite.metrics if m.variant == "rerank=off"}
-    on = {m.name: m.value for m in suite.metrics if m.variant == "rerank=on"}
+    off = {m.name: m.measured_value for m in suite.metrics if m.variant == "rerank=off"}
+    on = {m.name: m.measured_value for m in suite.metrics if m.variant == "rerank=on"}
 
     lines = ["## Retrieval", ""]
     if on:
@@ -84,7 +88,7 @@ def _faithfulness_table(suite: SuiteResult) -> list[str]:
         "| metric | value |",
         "|---|---|",
     ]
-    lines += [f"| {m.name} | {m.value:.4f} |" for m in suite.metrics]
+    lines += [f"| {m.name} | {m.measured_value:.4f} |" for m in suite.metrics]
     lines.append("")
     return lines
 
@@ -93,7 +97,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
     """Attack success with vs. without each defense — the headline numbers.
     Rows are attack-success metrics; columns are defense conditions."""
     success = {  # (metric_name, defense) -> value
-        (m.name, m.variant.removeprefix("defense=")): m.value
+        (m.name, m.variant.removeprefix("defense=")): m.measured_value
         for m in suite.metrics
         if m.variant.startswith("defense=")
     }
@@ -105,7 +109,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
     for name, _ in success:
         if name not in success_names:
             success_names.append(name)
-    retrieval = {m.name: m.value for m in suite.metrics if m.variant == ""}
+    retrieval = {m.name: m.measured_value for m in suite.metrics if m.variant == ""}
 
     lines = ["## Security", ""]
     if retrieval:
@@ -127,9 +131,9 @@ def _privacy_table(suite: SuiteResult) -> list[str]:
     by_defense: dict[str, dict[str, float]] = {}
     for m in suite.metrics:
         if m.variant.startswith("defense="):
-            by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = m.value
+            by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = m.measured_value
     by_probe = {
-        m.name.removeprefix("leakage_rate@"): m.value
+        m.name.removeprefix("leakage_rate@"): m.measured_value
         for m in suite.metrics
         if m.name.startswith("leakage_rate@")
     }
@@ -178,8 +182,8 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
     written = []
     retrieval = _suite(result, "retrieval")
     if retrieval is not None:
-        off = {m.name: m.value for m in retrieval.metrics if m.variant == "rerank=off"}
-        on = {m.name: m.value for m in retrieval.metrics if m.variant == "rerank=on"}
+        off = {m.name: m.measured_value for m in retrieval.metrics if m.variant == "rerank=off"}
+        on = {m.name: m.measured_value for m in retrieval.metrics if m.variant == "rerank=on"}
         names = list(off)
         fig, ax = plt.subplots(figsize=(8, 4))
         x = range(len(names))
@@ -201,7 +205,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
     security = _suite(result, "security")
     if security is not None:
         success = {
-            (m.name, m.variant.removeprefix("defense=")): m.value
+            (m.name, m.variant.removeprefix("defense=")): m.measured_value
             for m in security.metrics
             if m.variant.startswith("defense=")
         }
@@ -235,7 +239,9 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         by_defense: dict[str, dict[str, float]] = {}
         for m in privacy.metrics:
             if m.variant.startswith("defense="):
-                by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = m.value
+                by_defense.setdefault(m.variant.removeprefix("defense="), {})[m.name] = (
+                    m.measured_value
+                )
         if by_defense:
             conditions = list(by_defense)
             fig, ax = plt.subplots(figsize=(7, 4))

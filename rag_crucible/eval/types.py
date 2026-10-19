@@ -12,12 +12,19 @@ record reads as ``None`` — *unavailable* — and never as a value. An empty tu
 means "measured, and nothing matched"; ``None`` means "this version did not
 look". Collapsing the two is how a run that never measured cross-attack
 contamination comes to report zero of it.
+
+**A metric says whether it was measured.** ``Metric.state`` is ``"measured"``
+exactly when ``value`` carries a number; every other state carries a
+``reason`` and no value. So a metric that could not be computed can be
+emitted with its reason instead of being omitted or written as 0.0, and "this
+run did not measure it" stays distinct from "this run measured zero".
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Annotated, Literal
 
 from pydantic import Field, field_serializer, model_validator
@@ -35,7 +42,8 @@ from rag_crucible.types import StrictModel
 #   3 — ingestion audit embedded in every newly written result
 #   4 — corpus and QA content digests preserved in the embedded spec
 #   5 — per-chunk clean-defense screening evidence
-RESULT_SCHEMA_VERSION = 5
+#   6 — every metric carries a state (and a reason when it was not measured)
+RESULT_SCHEMA_VERSION = 6
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -43,11 +51,69 @@ RESULT_SCHEMA_VERSION = 5
 SuiteStatus = Literal["succeeded", "failed", "skipped"]
 
 
+# Why a metric does or does not carry a number. Only "measured" does, and a
+# true zero is a measured 0.0. The rest say why there is no value: the data
+# cannot support it (no labels), it does not apply to this configuration, it
+# was deliberately not run, it failed, or it is undefined at any sample size
+# (a relative reduction against a zero baseline).
+MetricState = Literal[
+    "measured", "unsupported", "inapplicable", "skipped", "error", "not_estimable"
+]
+
+
 class Metric(StrictModel):
     suite: str
     name: str  # e.g. "recall@10", "hallucination_rate"
     variant: str = ""  # e.g. "rerank=on"; "" when the metric has one condition
-    value: float
+    value: float | None  # None exactly when state is not "measured"
+    state: MetricState = "measured"
+    reason: str | None = None  # required, non-empty, whenever state is not "measured"
+
+    @model_validator(mode="after")
+    def _value_present_exactly_when_measured(self) -> Metric:
+        if self.state == "measured":
+            if self.value is None:
+                raise ValueError("a measured metric needs a value; give another state and a reason")
+            # Not a measurement either. SQLite stores NaN as NULL and JSON
+            # writes NaN and inf as null, so a non-finite "measured" value
+            # would come back from storage as a measured metric with no value.
+            if not math.isfinite(self.value):
+                raise ValueError(f"a measured value must be finite, got {self.value}")
+            return self
+        if self.value is not None:
+            raise ValueError(f"a {self.state} metric carries no value, got {self.value}")
+        if not self.reason or not self.reason.strip():
+            raise ValueError(f"a {self.state} metric needs a reason")
+        return self
+
+    @property
+    def measured_value(self) -> float:
+        """The value, for code that can only show a number.
+
+        Raises ``MetricNotMeasuredError`` when there is none, so a metric that
+        was not measured fails loudly there instead of being drawn as one.
+        """
+        if self.value is None:  # exactly the not-measured states, by the validator
+            raise MetricNotMeasuredError(self)
+        return self.value
+
+
+class MetricNotMeasuredError(Exception):
+    """The metric exists, but carries no value: it was not measured.
+
+    Raised by ``EvalRunResult.metric``, whose ``None`` already means "the run
+    emitted no such metric". A metric that is present but unmeasured is a
+    third answer, and returning ``None`` for it would merge the two.
+    """
+
+    def __init__(self, metric: Metric) -> None:
+        self.metric = metric
+        self.state = metric.state
+        self.reason = metric.reason
+        variant = f" [{metric.variant}]" if metric.variant else ""
+        super().__init__(
+            f"{metric.suite}/{metric.name}{variant} is {metric.state}: {metric.reason}"
+        )
 
 
 class RetrievalRecord(StrictModel):
@@ -263,11 +329,22 @@ class EvalRunResult(StrictModel):
             return identity
         return spec.model_dump(mode="json")
 
-    def metric(self, suite: str, name: str, variant: str = "") -> float | None:
+    def metric_entry(self, suite: str, name: str, variant: str = "") -> Metric | None:
+        """The metric itself, whatever its state; ``None`` when it was not emitted."""
         for suite_result in self.suites:
             if suite_result.suite != suite:
                 continue
             for metric in suite_result.metrics:
                 if metric.name == name and metric.variant == variant:
-                    return metric.value
+                    return metric
         return None
+
+    def metric(self, suite: str, name: str, variant: str = "") -> float | None:
+        """A measured value, or ``None`` when the run emitted no such metric.
+
+        Raises ``MetricNotMeasuredError`` when the metric is present but not
+        measured, so that ``None`` keeps meaning only "absent". Use
+        ``metric_entry`` to read the state and reason instead.
+        """
+        entry = self.metric_entry(suite, name, variant)
+        return None if entry is None else entry.measured_value

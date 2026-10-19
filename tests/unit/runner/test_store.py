@@ -8,7 +8,13 @@ import pytest
 
 import rag_crucible.runner.store as store_module
 from rag_crucible.config import RunSpec
-from rag_crucible.eval.types import EvalRunResult, Metric, RetrievalRecord, SuiteResult
+from rag_crucible.eval.types import (
+    RESULT_SCHEMA_VERSION,
+    EvalRunResult,
+    Metric,
+    RetrievalRecord,
+    SuiteResult,
+)
 from rag_crucible.runner import DuplicateRunError, ResultStore, RunNotFoundError
 from rag_crucible.runner.ids import new_run_id
 
@@ -151,6 +157,45 @@ def test_save_and_read_results(store: ResultStore, tmp_path: Path) -> None:
     assert records[0].kind == "retrieval"
     roundtrip = RetrievalRecord.model_validate_json(records[0].payload_json)
     assert roundtrip.qid == "q1"
+
+
+def test_a_not_measured_metric_round_trips_with_its_state(
+    store: ResultStore, tmp_path: Path
+) -> None:
+    """A NULL value comes back as "not measured, and why", never as a number."""
+    spec = _spec(tmp_path)
+    run_id = store.submit_run(spec)
+    base = _result(spec)
+    unsupported = Metric(
+        suite="retrieval",
+        name="recall@5",
+        variant="rerank=off",
+        value=None,
+        state="unsupported",
+        reason="no item in qa.jsonl carries gold labels",
+    )
+    zero = Metric(suite="retrieval", name="ndcg@5", variant="rerank=off", value=0.0)
+    suite = base.suites[0].model_copy(
+        update={"metrics": (*base.suites[0].metrics, unsupported, zero)}
+    )
+    store.save_result(run_id, base.model_copy(update={"suites": (suite,)}))
+
+    by_name = {m.name: m for m in store.get_results(run_id).metrics}
+    assert by_name["recall@5"] == unsupported
+    assert by_name["recall@5"].value is None
+    assert by_name["ndcg@5"] == zero  # a measured zero stays a measured zero
+    assert by_name["mrr"].state == "measured"
+    assert store.get_results(run_id).suites[0].metric_count == 3
+
+
+def test_new_records_name_the_result_schema_of_their_payload(
+    store: ResultStore, tmp_path: Path
+) -> None:
+    spec = _spec(tmp_path)
+    run_id = store.submit_run(spec)
+    store.save_result(run_id, _result(spec))
+    (record,) = store.get_records(run_id)
+    assert record.payload_schema == RESULT_SCHEMA_VERSION
 
 
 def test_records_pagination(store: ResultStore, tmp_path: Path) -> None:

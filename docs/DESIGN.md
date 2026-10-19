@@ -353,9 +353,9 @@ Schema rules:
 (`rag_crucible/runner/store.py`) using the stdlib `sqlite3` module — no ORM.**
 
 Why: single-node scope, one writer (the worker), a handful of tables, and graders
-should be able to `sqlite3 artifacts/crucible.db` and look around. An ORM plus migrations is
-ceremony at this scale; the repository class keeps SQL in one file and pydantic models
-at the boundary. WAL mode + `busy_timeout` for API-reads-while-worker-writes. The swap
+should be able to `sqlite3 artifacts/crucible.db` and look around. An ORM plus a migration
+framework is ceremony at this scale; the repository class keeps SQL in one file and pydantic
+models at the boundary. WAL mode + `busy_timeout` for API-reads-while-worker-writes. The swap
 path to Postgres (change the repository, keep the interface) is documented, not built.
 
 ### Schema
@@ -388,8 +388,11 @@ CREATE TABLE metrics (                  -- flat + queryable: what the dashboard 
   suite    TEXT NOT NULL,
   name     TEXT NOT NULL,               -- "ndcg@10", "attack_success_rate", ...
   variant  TEXT NOT NULL DEFAULT '',    -- "rerank=on", "defense=prompt_isolation", ...
-  value    REAL NOT NULL,
-  PRIMARY KEY (run_id, suite, name, variant)
+  value    REAL,                        -- NULL exactly when state != 'measured'
+  state    TEXT NOT NULL DEFAULT 'measured', -- or unsupported|inapplicable|skipped|error|not_estimable
+  reason   TEXT,                        -- why there is no value; required unless measured
+  PRIMARY KEY (run_id, suite, name, variant),
+  CHECK ((value IS NULL) = (state != 'measured'))
 );
 
 CREATE TABLE records (                  -- per-item evidence behind every metric
@@ -397,7 +400,8 @@ CREATE TABLE records (                  -- per-item evidence behind every metric
   run_id   TEXT NOT NULL REFERENCES runs(id),
   suite    TEXT NOT NULL,
   kind     TEXT NOT NULL,               -- qa|attack|canary_probe
-  payload_json TEXT NOT NULL            -- serialized typed EvalRecord
+  payload_json TEXT NOT NULL,           -- serialized typed EvalRecord
+  payload_schema INTEGER                -- result schema of payload_json; NULL = not recorded
 );
 
 CREATE TABLE stage_timings (
@@ -417,6 +421,18 @@ The `metrics.variant` column is how one run carries its own comparisons (rerank
 on/off, defense conditions) — the dashboard's delta charts are a single indexed query.
 `records` keeps the per-item evidence so every headline number in the README is
 auditable down to individual transcripts.
+
+**Versioning.** The store keeps its schema version in SQLite's `PRAGMA user_version`.
+Opening a store applies the ordered migrations it is behind on, all in one transaction,
+and a store from a newer version is refused; a new store is created at the latest version
+directly. Version 0 is every store from before versioning. Version 1 rebuilt `metrics`,
+because SQLite cannot drop a `NOT NULL` in place, so that a metric that was not measured
+stores NULL with its state and reason; every existing row was copied as `measured`. It also
+added `records.payload_schema`: rows written from then on record the result schema of
+their payload, so a later reader can migrate them; earlier rows hold NULL, meaning unknown.
+The `metrics` CHECKs are `Metric`'s own rules, so SQL admits no row this build cannot
+read back, and adding a metric state is a store migration. A later nullable column, such as a per-metric sample size or interval
+bound, is a plain `ADD COLUMN` step and needs no rebuild.
 
 ---
 

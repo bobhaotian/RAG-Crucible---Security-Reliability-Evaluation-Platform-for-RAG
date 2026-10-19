@@ -198,7 +198,7 @@ RankedContext   {candidates[top_n], rerank_applied}
 Answer          {text, citations[], context, usage, timings}
    │  eval suites
 EvalRecord      {kind, query_id, payload}      → records table
-Metric          {suite, name, variant, value}  → metrics table
+Metric          {suite, name, variant, value?, state, reason?}  → metrics table
 SuiteResult     {suite, metrics[], records[]}  → suite_results table
 RunResult       {run_id, spec, suite_results, timings}
 ```

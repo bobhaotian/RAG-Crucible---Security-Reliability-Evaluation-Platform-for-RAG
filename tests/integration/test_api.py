@@ -11,6 +11,13 @@ import yaml
 from fastapi.testclient import TestClient
 
 from rag_crucible.api.main import create_app
+from rag_crucible.eval.types import (
+    RESULT_SCHEMA_VERSION,
+    EvalRunResult,
+    Metric,
+    RetrievalRecord,
+    SuiteResult,
+)
 from rag_crucible.runner import ResultStore, worker_loop
 
 from .test_eval_e2e import _eval_spec
@@ -76,6 +83,70 @@ def test_submit_poll_results_roundtrip(
     page = client.get(f"/runs/{run_id}/records", params={"suite": "retrieval", "limit": 2}).json()
     assert len(page["records"]) == 2
     assert page["records"][0]["kind"] == "retrieval"
+
+
+def test_a_not_measured_metric_reaches_the_api_as_null_with_its_state(
+    client: TestClient, tiny_corpus: Path, tmp_path: Path
+) -> None:
+    """``value`` is null, never 0, and the state and reason travel with it."""
+    store = ResultStore(tmp_path / "crucible.db")  # the database `client` serves
+    spec = _eval_spec(tiny_corpus, tmp_path, name="api-states")
+    run_id = store.submit_run(spec)
+    reason = "no item in qa.jsonl carries gold labels"
+    metrics = (
+        Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.0),
+        Metric(
+            suite="retrieval",
+            name="recall@5",
+            variant="rerank=off",
+            value=None,
+            state="unsupported",
+            reason=reason,
+        ),
+    )
+    record = RetrievalRecord(
+        qid="q1",
+        question="?",
+        first_hit_rank_initial=None,
+        first_hit_rank_reranked=None,
+        retrieved_initial=("c1",),
+        retrieved_reranked=(),
+    )
+    result = EvalRunResult(
+        name=spec.name,
+        spec_hash=spec.spec_hash(),
+        seed=spec.seed,
+        started_at="2026-10-18T00:00:00+00:00",
+        finished_at="2026-10-18T00:00:01+00:00",
+        suites=(SuiteResult(suite="retrieval", metrics=metrics, records=(record,)),),
+        stage_stats=(),
+        spec=spec,
+    )
+    store.save_result(run_id, result)
+    store.mark_succeeded(run_id)
+
+    response = client.get(f"/runs/{run_id}/results")
+    assert response.status_code == 200, response.text
+    by_name = {m["name"]: m for m in response.json()["metrics"]}
+    assert by_name["recall@5"] == {
+        "suite": "retrieval",
+        "name": "recall@5",
+        "variant": "rerank=off",
+        "value": None,
+        "state": "unsupported",
+        "reason": reason,
+    }
+    assert by_name["mrr"]["value"] == 0.0
+    assert by_name["mrr"]["state"] == "measured"
+    assert by_name["mrr"]["reason"] is None
+
+    page = client.get(f"/runs/{run_id}/records").json()
+    assert [r["payload_schema"] for r in page["records"]] == [RESULT_SCHEMA_VERSION]
+
+    # and the published schema says so, for clients generated from it
+    metric_schema = client.get("/openapi.json").json()["components"]["schemas"]["Metric"]
+    assert {"type": "null"} in metric_schema["properties"]["value"]["anyOf"]
+    assert "not_estimable" in metric_schema["properties"]["state"]["enum"]
 
 
 def test_cancel_pending_run(client: TestClient, tiny_corpus: Path, tmp_path: Path) -> None:

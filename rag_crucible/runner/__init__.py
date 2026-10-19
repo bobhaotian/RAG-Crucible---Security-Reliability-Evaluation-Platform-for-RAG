@@ -9,7 +9,13 @@ from rag_crucible.runner.models import (
     RunStatus,
     SuiteSummary,
 )
-from rag_crucible.runner.store import DuplicateRunError, ResultStore, RunNotFoundError
+from rag_crucible.runner.store import (
+    STORE_SCHEMA_VERSION,
+    DuplicateRunError,
+    ResultStore,
+    RunNotFoundError,
+    StoreSchemaError,
+)
 from rag_crucible.runner.worker import (
     default_worker_id,
     execute_or_wait_for_run,
@@ -18,6 +24,7 @@ from rag_crucible.runner.worker import (
 )
 
 __all__ = [
+    "STORE_SCHEMA_VERSION",
     "ClaimedRun",
     "DuplicateRunError",
     "RecordRow",
@@ -26,6 +33,7 @@ __all__ = [
     "RunResults",
     "RunRow",
     "RunStatus",
+    "StoreSchemaError",
     "SuiteSummary",
     "default_worker_id",
     "execute_or_wait_for_run",

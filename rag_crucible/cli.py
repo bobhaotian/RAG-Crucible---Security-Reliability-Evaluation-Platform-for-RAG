@@ -28,6 +28,7 @@ from rag_crucible.providers import ProviderError
 from rag_crucible.runner import (
     DuplicateRunError,
     ResultStore,
+    StoreSchemaError,
     execute_or_wait_for_run,
     new_run_id,
     worker_loop,
@@ -47,7 +48,11 @@ DbOption = Annotated[
 
 
 def _store(db: Path | None) -> ResultStore:
-    return ResultStore(db if db is not None else default_db_path())
+    try:
+        return ResultStore(db if db is not None else default_db_path())
+    except StoreSchemaError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
 
 
 def _load_spec_or_exit(spec_path: Path) -> RunSpec:
@@ -195,7 +200,7 @@ def eval_command(
             typer.echo(f"{suite.suite}: FAILED ({suite.error})")
             continue
         shown = [m for m in suite.metrics if m.variant in ("", "rerank=on", "defense=none")][:4]
-        rendered = " · ".join(f"{m.name}={m.value:.3f}" for m in shown)
+        rendered = " · ".join(f"{m.name}={m.measured_value:.3f}" for m in shown)
         typer.echo(f"{suite.suite}: {rendered}")
     typer.echo("wrote: " + ", ".join(str(p) for p in written))
 
@@ -286,6 +291,10 @@ def serve(
 
     from rag_crucible.api.main import create_app
 
+    # Open (and if needed upgrade) the store here first, so one this build
+    # cannot open is reported the way every other command reports it, not as
+    # a server traceback.
+    _store(db)
     uvicorn.run(create_app(db_path=db, serve_spec_path=spec_path), host=host, port=port)
 
 
