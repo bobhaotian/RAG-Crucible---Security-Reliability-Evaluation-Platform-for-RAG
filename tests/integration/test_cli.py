@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from rag_crucible.cli import app
-from rag_crucible.config import load_spec
+from rag_crucible.config import RunSpec, load_spec
+from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
 from rag_crucible.runner import STORE_SCHEMA_VERSION, ResultStore
 
 from ..conftest import make_fake_spec
@@ -174,3 +176,50 @@ def test_a_store_from_a_newer_version_is_refused_with_a_message(tmp_path: Path) 
     result = runner.invoke(app, ["runs", "--db", str(db_path)])
     assert result.exit_code == 2
     assert "written by a newer version" in result.output
+
+
+def test_eval_prints_the_state_and_reason_of_a_metric_it_could_not_measure(
+    tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No suite emits one yet, so the run is stubbed: the CLI line must carry
+    the state and reason, not a number and not a traceback."""
+    monkeypatch.chdir(tmp_path)
+    spec = _eval_spec(tiny_corpus, tmp_path, name="cli-states")
+    spec_path = tmp_path / "states.yaml"
+    spec_path.write_text(yaml.safe_dump(spec.model_dump(mode="json")), encoding="utf-8")
+    assert runner.invoke(app, ["ingest", str(spec_path)]).exit_code == 0
+
+    async def stub_run_eval(run_spec: RunSpec, index: Any, **_: Any) -> EvalRunResult:
+        metrics = (
+            Metric(suite="retrieval", name="mrr", variant="rerank=on", value=0.25),
+            Metric(
+                suite="retrieval",
+                name="recall@5",
+                variant="rerank=on",
+                value=None,
+                state="unsupported",
+                reason="no item in qa.jsonl carries gold labels",
+            ),
+        )
+        return EvalRunResult(
+            name=run_spec.name,
+            spec_hash=run_spec.spec_hash(),
+            seed=run_spec.seed,
+            started_at="2026-10-18T00:00:00+00:00",
+            finished_at="2026-10-18T00:00:01+00:00",
+            suites=(SuiteResult(suite="retrieval", metrics=metrics, records=()),),
+            stage_stats=(),
+            spec=run_spec,
+        )
+
+    monkeypatch.setattr("rag_crucible.cli.run_eval", stub_run_eval)
+    result = runner.invoke(app, ["eval", str(spec_path), "--out", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "retrieval: mrr=0.250 · recall@5=— (unsupported: no item in qa.jsonl carries gold labels)"
+        in result.output
+    )
+    summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
+    # no rerank=off metrics were emitted, so that column is absent, not zero
+    assert "| recall@5 | — | — (unsupported) | — |" in summary
