@@ -129,7 +129,9 @@ export default function App() {
 
       <main className="content">
         {compareMode ? (
-          <DiffView runs={runs} baseId={selected} />
+          <PanelBoundary key={`compare-${selected ?? ""}`} title="Compare runs">
+            <DiffView runs={runs} baseId={selected} />
+          </PanelBoundary>
         ) : results ? (
           <SingleRun results={results} spec={spec} onDrill={onDrill} />
         ) : (
@@ -138,12 +140,14 @@ export default function App() {
       </main>
 
       {drill && results && selected && (
-        <EvidenceDrawer
-          runId={selected}
-          results={results}
-          drill={drill}
-          onClose={() => setDrill(null)}
-        />
+        <PanelBoundary key={`evidence-${selected}-${drill.suite}`} title="Evidence">
+          <EvidenceDrawer
+            runId={selected}
+            results={results}
+            drill={drill}
+            onClose={() => setDrill(null)}
+          />
+        </PanelBoundary>
       )}
     </div>
   );
@@ -160,7 +164,6 @@ function SingleRun({
 }) {
   const { run, suites } = results;
   const chips = pipelineChips(spec);
-  const cards = kpis(results);
 
   return (
     <>
@@ -185,29 +188,9 @@ function SingleRun({
         </ul>
       )}
 
-      {cards.length > 0 && (
-        <PanelBoundary key={`kpis-${run.id}`} title="Headline metrics">
-          <ul className="kpis">
-            {cards.map((k) => (
-              <li key={k.key}>
-                <button onClick={() => onDrill({ suite: k.suite, label: k.label })}>
-                  <span className="kpi-label">{k.label}</span>
-                  {k.reading.measured ? (
-                    <span className="kpi-value">{k.reading.value.toFixed(3)}</span>
-                  ) : (
-                    // Not a number: the state, with the reason under it.
-                    <span className="kpi-value na">{k.reading.state}</span>
-                  )}
-                  <span className="kpi-detail">
-                    {k.detail} · {k.direction === "up" ? "higher is better" : "lower is better"}
-                  </span>
-                  {!k.reading.measured && <span className="kpi-reason">{k.reading.reason}</span>}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </PanelBoundary>
-      )}
+      <PanelBoundary key={`kpis-${run.id}`} title="Headline metrics">
+        <KpiRow results={results} onDrill={onDrill} />
+      </PanelBoundary>
 
       <div className="grid">
         {(
@@ -229,6 +212,34 @@ function SingleRun({
         ))}
       </div>
     </>
+  );
+}
+
+/** The headline cards. Computed inside the boundary that wraps it, so a
+ *  selector that throws is caught there instead of blanking the run view. */
+function KpiRow({ results, onDrill }: { results: RunResults; onDrill: (d: Drill) => void }) {
+  const cards = kpis(results);
+  if (cards.length === 0) return null;
+  return (
+    <ul className="kpis">
+      {cards.map((k) => (
+        <li key={k.key}>
+          <button onClick={() => onDrill({ suite: k.suite, label: k.label })}>
+            <span className="kpi-label">{k.label}</span>
+            {k.reading.measured ? (
+              <span className="kpi-value">{k.reading.value.toFixed(3)}</span>
+            ) : (
+              // Not a number: the state, with the reason under it.
+              <span className="kpi-value na">{k.reading.state}</span>
+            )}
+            <span className="kpi-detail">
+              {k.detail} · {k.direction === "up" ? "higher is better" : "lower is better"}
+            </span>
+            {!k.reading.measured && <span className="kpi-reason">{k.reading.reason}</span>}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

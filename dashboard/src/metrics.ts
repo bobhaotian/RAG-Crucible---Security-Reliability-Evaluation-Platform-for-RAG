@@ -7,12 +7,30 @@
 // it). A null is never drawn as 0, and a figure derived from two metrics (a
 // delta, a worst case, an inverted radar axis) exists only when every input
 // was measured.
+//
+// `inapplicable` follows Lighthouse: it carries no weight. Where a figure is
+// derived from several metrics, or one stands in for another, an inapplicable
+// metric is treated like one the run did not emit (see `applicable`). It is
+// still listed with its reason wherever it is shown.
 
 import type { Metric, MetricState, RunResults, RunRow, StageStat } from "./api";
 
+const NOT_MEASURED_STATES: readonly string[] = [
+  "unsupported",
+  "inapplicable",
+  "skipped",
+  "error",
+  "not_estimable",
+];
+
+/** Why a metric shows no number. The API's own states, plus two this
+ *  dashboard assigns when the API breaks its contract: a state it does not
+ *  know (`unrecognised`), or "measured" with no finite number (`invalid`). */
+export type DisplayState = Exclude<MetricState, "measured"> | "unrecognised" | "invalid";
+
 export interface NotMeasured {
   measured: false;
-  state: Exclude<MetricState, "measured">;
+  state: DisplayState;
   reason: string;
 }
 
@@ -21,16 +39,32 @@ export type Reading = { measured: true; value: number } | NotMeasured;
 /** A metric's value, or why it has none. */
 export function read(m: Metric): Reading {
   // A missing state is an API from before states existed, when every metric was measured.
-  const state = m.state ?? "measured";
-  if (state === "measured" && typeof m.value === "number" && Number.isFinite(m.value)) {
-    return { measured: true, value: m.value };
+  const state: string = m.state ?? "measured";
+  const given = m.reason?.trim() ? m.reason : undefined;
+  if (state === "measured") {
+    if (typeof m.value === "number" && Number.isFinite(m.value)) {
+      return { measured: true, value: m.value };
+    }
+    return { measured: false, state: "invalid", reason: "marked measured, but carries no number" };
+  }
+  if (NOT_MEASURED_STATES.includes(state)) {
+    return {
+      measured: false,
+      state: state as Exclude<MetricState, "measured">,
+      reason: given ?? "no reason given",
+    };
   }
   return {
     measured: false,
-    // A "measured" metric with no number breaks the API's own contract; say so rather than guess.
-    state: state === "measured" ? "error" : state,
-    reason: m.reason ?? "the API returned a measured metric with no value",
+    state: "unrecognised",
+    reason: `unrecognised state "${state}"${given ? `: ${given}` : ""}`,
   };
+}
+
+/** `undefined` for a metric that is absent or inapplicable: neither may stand
+ *  in for another metric or take part in a worst case. */
+export function applicable(r: Reading | undefined): Reading | undefined {
+  return r !== undefined && !r.measured && r.state === "inapplicable" ? undefined : r;
 }
 
 function find(results: RunResults, suite: string, name: string, variant: string) {
@@ -74,6 +108,25 @@ export interface Unmeasured extends NotMeasured {
   label: string;
 }
 
+export interface UnmeasuredGroup {
+  state: DisplayState;
+  reason: string;
+  labels: string[];
+}
+
+/** One line per distinct state and reason, as in summary.md: a suite that is
+ *  unsupported as a whole is one line, not one per metric. */
+export function groupUnmeasured(items: Unmeasured[]): UnmeasuredGroup[] {
+  const groups = new Map<string, UnmeasuredGroup>();
+  for (const u of items) {
+    const key = `${u.state}\u0000${u.reason}`;
+    const group = groups.get(key) ?? { state: u.state, reason: u.reason, labels: [] };
+    if (!group.labels.includes(u.label)) group.labels.push(u.label);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 export function unmeasured(label: string, r: Reading | undefined): Unmeasured[] {
   return r !== undefined && !r.measured ? [{ ...r, label }] : [];
 }
@@ -89,9 +142,11 @@ export function unmeasuredOf(metrics: Metric[]): Unmeasured[] {
 
 /** The larger of several rates, defined only when all of them were measured:
  *  a worst case over a set with an unknown member is itself unknown. Inputs
- *  the run did not emit are left out, as before. */
-function worstOf(parts: [string, Reading | undefined][]): Reading | undefined {
-  const present = parts.filter((p): p is [string, Reading] => p[1] !== undefined);
+ *  the run did not emit, or that are inapplicable, are left out. */
+export function worstOf(parts: [string, Reading | undefined][]): Reading | undefined {
+  const present = parts
+    .map(([name, r]): [string, Reading | undefined] => [name, applicable(r)])
+    .filter((p): p is [string, Reading] => p[1] !== undefined);
   if (present.length === 0) return undefined;
   const values: number[] = [];
   for (const [name, r] of present) {
@@ -126,10 +181,11 @@ export interface Kpi {
 /** The four properties in tension, each in its natural direction — no inverted
  *  axes to explain. The radar keeps the inverted framing for shape only. */
 export function kpis(results: RunResults): Kpi[] {
-  // Falls back to rerank off only when the run has no rerank-on figure at all;
-  // a rerank-on metric that was not measured is shown as such, not swapped out.
-  const rerankOn = reading(results, "retrieval", "ndcg@10", "rerank=on");
-  const retrieval = rerankOn ?? reading(results, "retrieval", "ndcg@10", "rerank=off");
+  // Falls back to rerank off only when the run has no rerank-on figure, or one
+  // that is inapplicable (no reranker); one that was not measured for any other
+  // reason is shown as such, not swapped out.
+  const rerankOn = applicable(reading(results, "retrieval", "ndcg@10", "rerank=on"));
+  const retrieval = rerankOn ?? applicable(reading(results, "retrieval", "ndcg@10", "rerank=off"));
   const attack = worstOf([
     ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
     ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
@@ -186,9 +242,9 @@ export interface Radar {
 
 export function tradeoffRadar(results: RunResults): Radar {
   const retrieval =
-    reading(results, "retrieval", "ndcg@10", "rerank=on") ??
-    reading(results, "retrieval", "ndcg@10", "rerank=off") ??
-    reading(results, "retrieval", "mrr", "rerank=off");
+    applicable(reading(results, "retrieval", "ndcg@10", "rerank=on")) ??
+    applicable(reading(results, "retrieval", "ndcg@10", "rerank=off")) ??
+    applicable(reading(results, "retrieval", "mrr", "rerank=off"));
   const faithfulness = reading(results, "faithfulness", "groundedness");
   const robustness = invert(
     worstOf([
@@ -224,8 +280,8 @@ export interface LiftRow {
 
 export interface LiftChart {
   rows: LiftRow[];
-  min: number;
-  max: number;
+  axis: { min: number; max: number } | undefined; // undefined: nothing measured to place
+  hasOn: boolean; // false: the run has no rerank-on figures, so there is no lift
   unmeasured: Unmeasured[];
 }
 
@@ -238,7 +294,7 @@ const HEADLINE_RETRIEVAL = ["recall@1", "recall@5", "ndcg@10", "mrr"];
 export function rerankLift(results: RunResults): LiftChart {
   const retrieval = results.metrics.filter((m) => m.suite === "retrieval");
   const off = retrieval.filter((m) => m.variant === "rerank=off");
-  if (off.length === 0) return { rows: [], min: 0, max: 1, unmeasured: [] };
+  if (off.length === 0) return { rows: [], axis: undefined, hasOn: false, unmeasured: [] };
   const on = new Map(
     retrieval.filter((m) => m.variant === "rerank=on").map((m) => [m.name, read(m)]),
   );
@@ -260,7 +316,9 @@ export function rerankLift(results: RunResults): LiftChart {
     })
     .sort((a, b) => {
       if (a.headline !== b.headline) return a.headline ? -1 : 1;
-      return Math.abs(b.delta ?? -1) - Math.abs(a.delta ?? -1);
+      // rows with no lift sort last, not as the largest movement
+      const size = (r: LiftRow) => (r.delta === undefined ? -1 : Math.abs(r.delta));
+      return size(b) - size(a);
     });
 
   const values = rows.flatMap((r) =>
@@ -269,7 +327,8 @@ export function rerankLift(results: RunResults): LiftChart {
   const unmeasuredRows = unmeasuredOf(
     retrieval.filter((m) => m.variant === "rerank=off" || m.variant === "rerank=on"),
   );
-  if (values.length === 0) return { rows, min: 0, max: 1, unmeasured: unmeasuredRows };
+  const hasOn = on.size > 0;
+  if (values.length === 0) return { rows, axis: undefined, hasOn, unmeasured: unmeasuredRows };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   // Pad so the dots never sit on the panel edge, and so a run where every
@@ -277,8 +336,8 @@ export function rerankLift(results: RunResults): LiftChart {
   const pad = Math.max((hi - lo) * 0.25, 0.01);
   return {
     rows,
-    min: Math.max(0, lo - pad),
-    max: Math.min(1, hi + pad),
+    axis: { min: Math.max(0, lo - pad), max: Math.min(1, hi + pad) },
+    hasOn,
     unmeasured: unmeasuredRows,
   };
 }
@@ -474,6 +533,55 @@ export function defenseGroups(
     });
     return { metric: name, bars };
   });
+}
+
+export type Contamination =
+  | { kind: "escaping"; arms: { defense: string; value: number }[] }
+  | { kind: "contained" };
+
+/** What the compromise panel may say about attacks escaping their question.
+ *
+ *  "Escaping" needs one measured arm above zero. "Contained" (nothing escaped)
+ *  is a claim about every arm, so it needs `cross_question_contamination_rate`
+ *  present and measured in every defense the panel shows, and some measured
+ *  competition to explain. Anything less says nothing: an unmeasured rate is
+ *  not evidence that nothing escaped. */
+export function contamination(groups: DefenseGroup[]): Contamination | undefined {
+  const positive = (name: string) =>
+    measuredBars(groups.find((g) => g.metric === name)?.bars ?? []).filter((b) => b.value > 0);
+  const escaping = positive("cross_question_contamination_rate");
+  if (escaping.length > 0) {
+    return { kind: "escaping", arms: escaping.map((b) => ({ defense: b.defense, value: b.value })) };
+  }
+  const cross = groups.find((g) => g.metric === "cross_question_contamination_rate");
+  if (cross === undefined) return undefined;
+  const defenses = new Set(groups.flatMap((g) => g.bars.map((b) => b.defense)));
+  const everyArmMeasured =
+    [...defenses].every((d) => cross.bars.some((b) => b.defense === d)) &&
+    cross.bars.every((b) => b.reading.measured);
+  if (!everyArmMeasured) return undefined;
+  return positive("attack_competition_rate").length > 0 ? { kind: "contained" } : undefined;
+}
+
+export interface DiffRow {
+  key: string;
+  a: Reading | undefined;
+  b: Reading | undefined;
+  delta: number | undefined; // only when both runs measured the metric
+}
+
+/** The two-run comparison, one row per metric either run emitted. */
+export function diffRows(base: RunResults, other: RunResults): DiffRow[] {
+  const keyOf = (m: Metric) => `${m.suite} · ${summaryMetric(m)}`;
+  const rows = new Map<string, { a?: Reading; b?: Reading }>();
+  for (const m of base.metrics) rows.set(keyOf(m), { a: read(m) });
+  for (const m of other.metrics) rows.set(keyOf(m), { ...(rows.get(keyOf(m)) ?? {}), b: read(m) });
+  return [...rows.entries()].map(([key, { a, b }]) => ({
+    key,
+    a,
+    b,
+    delta: a?.measured && b?.measured ? b.value - a.value : undefined,
+  }));
 }
 
 /** Suite metrics with no defense variant — the stage-level context that frames

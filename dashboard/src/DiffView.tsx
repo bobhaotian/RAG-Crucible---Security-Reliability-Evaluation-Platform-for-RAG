@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import type { RunResults, RunRow } from "./api";
 import { getResults } from "./api";
 import type { Reading } from "./metrics";
-import { formatReading, read, summaryMetric } from "./metrics";
+import { diffRows, formatReading } from "./metrics";
 
 export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | null }) {
   const [otherId, setOtherId] = useState<string | null>(null);
@@ -43,13 +43,6 @@ export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | nu
 }
 
 function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
-  const keyOf = (suite: string, label: string) => `${suite} · ${label}`;
-  const rows = new Map<string, { a?: Reading; b?: Reading }>();
-  for (const m of base.metrics) rows.set(keyOf(m.suite, summaryMetric(m)), { a: read(m) });
-  for (const m of other.metrics) {
-    const key = keyOf(m.suite, summaryMetric(m));
-    rows.set(key, { ...(rows.get(key) ?? {}), b: read(m) });
-  }
 
   return (
     <table className="diff">
@@ -62,9 +55,8 @@ function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
         </tr>
       </thead>
       <tbody>
-        {[...rows.entries()].map(([key, { a, b }]) => {
-          // A difference needs both runs to have measured the metric.
-          const delta = a?.measured && b?.measured ? b.value - a.value : undefined;
+        {diffRows(base, other).map(({ key, a, b, delta }) => {
+          // `delta` exists only when both runs measured the metric.
           return (
             <tr key={key}>
               <td>{key}</td>

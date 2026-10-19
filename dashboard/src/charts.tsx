@@ -25,13 +25,14 @@ import {
   METRIC_GLOSS,
   breakdown,
   understatements,
+  contamination,
   contextMetrics,
   defenseGroups,
   faithfulness,
   formatReading,
+  groupUnmeasured,
   judgeGap,
   latency,
-  measuredBars,
   read,
   rerankLift,
   tradeoffRadar,
@@ -76,16 +77,23 @@ function Panel({
 }
 
 /** Why each metric in a panel has no number — the panel's equivalent of the
- *  report's "Not measured" list. Renders nothing when everything was measured. */
+ *  report's "Not measured" list, one line per distinct state and reason.
+ *  Renders nothing when everything was measured. */
 function NotMeasuredList({ items }: { items: Unmeasured[] }) {
   if (items.length === 0) return null;
   return (
     <div className="not-measured">
       <h4>Not measured</h4>
       <ul>
-        {items.map((u) => (
-          <li key={u.label}>
-            <code>{u.label}</code> <span className={`state ${u.state}`}>{u.state}</span> {u.reason}
+        {groupUnmeasured(items).map((g) => (
+          <li key={`${g.state}|${g.reason}`}>
+            {g.labels.map((label, i) => (
+              <span key={label}>
+                {i > 0 && ", "}
+                <code>{label}</code>
+              </span>
+            ))}{" "}
+            <span className={`state ${g.state}`}>{g.state}</span> {g.reason}
           </li>
         ))}
       </ul>
@@ -93,14 +101,14 @@ function NotMeasuredList({ items }: { items: Unmeasured[] }) {
   );
 }
 
-/** Where a bar would be, for a metric that was not measured: its state, never
- *  an empty track (which reads as 0) and never the "0.00 ✓" of a true zero. */
 /** The narrow value column beside a bar. The state is already written in the
  *  track, so a metric that was not measured gets a bare dash here. */
 function barValue(r: Reading, digits: number): string {
   return r.measured ? r.value.toFixed(digits) : "—";
 }
 
+/** Where a bar would be, for a metric that was not measured: its state, never
+ *  an empty track (which reads as 0) and never the "0.00 ✓" of a true zero. */
 function StateInTrack({ reading }: { reading: Reading }) {
   if (reading.measured) return null;
   return (
@@ -124,7 +132,34 @@ function signed(v: number, digits = 3): string {
 
 export function TradeoffRadar({ results, onDrill }: PanelProps) {
   const { data, unmeasured: missing } = tradeoffRadar(results);
-  if (data.length < 3) return null;
+  if (data.length < 3 && missing.length === 0) return null;
+  const values = (
+    <ul className="axis-values">
+      {data.map((d) => (
+        <li key={String(d.name)}>
+          <span>{d.name}</span>
+          <b>{Number(d.value).toFixed(3)}</b>
+        </li>
+      ))}
+    </ul>
+  );
+  if (data.length < 3) {
+    // Too few measured axes for a shape, but the reasons still belong on the page.
+    return (
+      <Panel
+        title="Quality · robustness · privacy"
+        drill={{ suite: "security", label: "attacks behind the robustness axis" }}
+        onDrill={onDrill}
+        notMeasured={missing}
+      >
+        <p className="hint">
+          Only {data.length} of the four axes {data.length === 1 ? "was" : "were"} measured,
+          too few to draw the trade-off. An axis that was not measured is never drawn at 0.
+        </p>
+        {data.length > 0 && values}
+      </Panel>
+    );
+  }
   return (
     <Panel
       title="Quality · robustness · privacy"
@@ -140,14 +175,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
           <Radar dataKey="value" stroke={ACCENT} fill={ACCENT} fillOpacity={0.45} />
         </RadarChart>
       </ResponsiveContainer>
-      <ul className="axis-values">
-        {data.map((d) => (
-          <li key={String(d.name)}>
-            <span>{d.name}</span>
-            <b>{Number(d.value).toFixed(3)}</b>
-          </li>
-        ))}
-      </ul>
+      {values}
       <p className="hint">
         Each axis 0–1, bigger is safer. Robustness and privacy are plotted inverted
         (1 − attack success, 1 − leakage); the cards above show them undirected.
@@ -160,8 +188,22 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
 // ---------------------------------------------------------------- rerank lift
 
 export function RerankLift({ results, onDrill }: PanelProps) {
-  const { rows, min, max, unmeasured: missing } = rerankLift(results);
+  const { rows, axis, hasOn, unmeasured: missing } = rerankLift(results);
   if (rows.length === 0) return null;
+  if (axis === undefined) {
+    // Nothing to place on an axis: no empty 0.000–1.000 track, just the reasons.
+    return (
+      <Panel
+        title="Rerank lift"
+        drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
+        onDrill={onDrill}
+        notMeasured={missing}
+      >
+        <p className="hint">No retrieval metric in this run was measured, so there is nothing to plot.</p>
+      </Panel>
+    );
+  }
+  const { min, max } = axis;
   const shown = rows.filter((r) => r.headline);
   const rest = rows.filter((r) => !r.headline);
   const moved = rows.filter((r) => r.delta !== undefined);
@@ -231,19 +273,24 @@ export function RerankLift({ results, onDrill }: PanelProps) {
         <span>{min.toFixed(3)}</span>
         <span className="db-legend">
           <i className="db-dot off" /> rerank off
-          <i className="db-dot on" /> rerank on
+          {hasOn && (
+            <>
+              <i className="db-dot on" /> rerank on
+            </>
+          )}
         </span>
         <span>{max.toFixed(3)}</span>
       </div>
       <p className="hint">
-        Axis is scaled to the data, not to 0–1, so the lift is the visible quantity.
-        {best && best.delta !== undefined ? (
+        {!hasOn ? (
+          "This run has no rerank-on figures, so there is no lift; the dots are the rerank-off values."
+        ) : best && best.delta !== undefined ? (
           <>
-            {" "}
+            Axis is scaled to the data, not to 0–1, so the lift is the visible quantity.
             Largest movement: <b>{best.name}</b> {signed(best.delta)}.
           </>
         ) : (
-          " No metric has both sides measured, so there is no lift to show."
+          "No metric has both sides measured, so there is no lift to show."
         )}
       </p>
     </Panel>
@@ -511,10 +558,7 @@ export function Compromise({ results, onDrill }: PanelProps) {
   const groups = defenseGroups(results, "security", { only: COMPROMISE_METRICS });
   if (groups.length === 0) return null;
 
-  const rateFor = (name: string) =>
-    measuredBars(groups.find((g) => g.metric === name)?.bars ?? []).filter((b) => b.value > 0);
-  const competition = rateFor("attack_competition_rate");
-  const crossQuestion = rateFor("cross_question_contamination_rate");
+  const verdict = contamination(groups);
   const missed = understatements(results);
 
   return (
@@ -556,17 +600,17 @@ export function Compromise({ results, onDrill }: PanelProps) {
               Click any row to read the trials and see which attack produced each answer.
             </div>
           )}
-          {crossQuestion.length > 0 ? (
+          {verdict?.kind === "escaping" && (
             <p className="callout bad">
               <b>Attack documents are escaping their target question.</b>{" "}
-              {crossQuestion
+              {verdict.arms
                 .map((b) => `${b.defense} ${(b.value * 100).toFixed(0)}%`)
                 .join(", ")}{" "}
               of trials answered with a marker planted on a <i>different</i> question. That
               is a retrieval failure worth investigating on its own.
             </p>
-          ) : (
-            competition.length > 0 && (
+          )}
+          {verdict?.kind === "contained" && (
               <p className="callout">
                 <b>No cross-question contamination.</b> Every compromised-but-blocked trial
                 was beaten by the other attack on its <i>own</i> question — the poison and
@@ -574,7 +618,6 @@ export function Compromise({ results, onDrill }: PanelProps) {
                 compete for the same retrieval slots. Nothing escaped the question it was
                 written for.
               </p>
-            )
           )}
         </>
       }
