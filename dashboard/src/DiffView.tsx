@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import type { RunResults, RunRow } from "./api";
 import { getResults } from "./api";
+import { PanelBoundary } from "./Boundary";
 import type { Reading } from "./metrics";
 import { diffRows, formatReading } from "./metrics";
 
@@ -37,7 +38,13 @@ export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | nu
             ))}
         </select>
       </header>
-      {other ? <DiffTable base={base} other={other} /> : <p className="hint">Pick a second run.</p>}
+      {other ? (
+        <PanelBoundary key={`${base.run.id}-${other.run.id}`} title="Comparison">
+          <DiffTable base={base} other={other} />
+        </PanelBoundary>
+      ) : (
+        <p className="hint">Pick a second run.</p>
+      )}
     </>
   );
 }

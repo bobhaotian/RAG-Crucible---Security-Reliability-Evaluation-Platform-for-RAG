@@ -129,7 +129,9 @@ export default function App() {
 
       <main className="content">
         {compareMode ? (
-          <PanelBoundary key={`compare-${selected ?? ""}`} title="Compare runs">
+          // Keyed on the base run and the toggle; DiffView keys its own table on the
+          // compared run, so the run picker survives a table that throws.
+          <PanelBoundary key={`compare-${selected ?? ""}-${String(compareMode)}`} title="Compare runs">
             <DiffView runs={runs} baseId={selected} />
           </PanelBoundary>
         ) : results ? (
@@ -140,7 +142,12 @@ export default function App() {
       </main>
 
       {drill && results && selected && (
-        <PanelBoundary key={`evidence-${selected}-${drill.suite}`} title="Evidence">
+        <PanelBoundary
+          key={`evidence-${selected}-${drill.suite}-${drill.label}-${JSON.stringify(drill.filter ?? {})}`}
+          title="Evidence"
+          variant="drawer"
+          onClose={() => setDrill(null)}
+        >
           <EvidenceDrawer
             runId={selected}
             results={results}
