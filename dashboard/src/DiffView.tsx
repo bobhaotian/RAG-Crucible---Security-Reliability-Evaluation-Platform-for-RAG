@@ -5,7 +5,9 @@
 import { useEffect, useState } from "react";
 import type { RunResults, RunRow } from "./api";
 import { getResults } from "./api";
-import { summaryMetric } from "./metrics";
+import { PanelBoundary } from "./Boundary";
+import type { Reading } from "./metrics";
+import { diffRows, formatReading } from "./metrics";
 
 export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | null }) {
   const [otherId, setOtherId] = useState<string | null>(null);
@@ -36,19 +38,18 @@ export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | nu
             ))}
         </select>
       </header>
-      {other ? <DiffTable base={base} other={other} /> : <p className="hint">Pick a second run.</p>}
+      {other ? (
+        <PanelBoundary key={`${base.run.id}-${other.run.id}`} title="Comparison">
+          <DiffTable base={base} other={other} />
+        </PanelBoundary>
+      ) : (
+        <p className="hint">Pick a second run.</p>
+      )}
     </>
   );
 }
 
 function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
-  const keyOf = (suite: string, label: string) => `${suite} · ${label}`;
-  const rows = new Map<string, { a?: number; b?: number }>();
-  for (const m of base.metrics) rows.set(keyOf(m.suite, summaryMetric(m)), { a: m.value });
-  for (const m of other.metrics) {
-    const key = keyOf(m.suite, summaryMetric(m));
-    rows.set(key, { ...(rows.get(key) ?? {}), b: m.value });
-  }
 
   return (
     <table className="diff">
@@ -61,13 +62,13 @@ function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
         </tr>
       </thead>
       <tbody>
-        {[...rows.entries()].map(([key, { a, b }]) => {
-          const delta = a !== undefined && b !== undefined ? b - a : undefined;
+        {diffRows(base, other).map(({ key, a, b, delta }) => {
+          // `delta` exists only when both runs measured the metric.
           return (
             <tr key={key}>
               <td>{key}</td>
-              <td>{fmt(a)}</td>
-              <td>{fmt(b)}</td>
+              <Cell r={a} />
+              <Cell r={b} />
               <td className={delta === undefined ? "" : delta >= 0 ? "pos" : "neg"}>
                 {delta === undefined ? "—" : (delta >= 0 ? "+" : "") + delta.toFixed(4)}
               </td>
@@ -79,6 +80,12 @@ function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
   );
 }
 
-function fmt(v: number | undefined): string {
-  return v === undefined ? "—" : v.toFixed(4);
+/** A measured value, `— (<state>)` with the reason on hover, or `—` when the
+ *  run did not emit the metric. */
+function Cell({ r }: { r: Reading | undefined }) {
+  return (
+    <td className={r && !r.measured ? "na" : undefined} title={r && !r.measured ? r.reason : undefined}>
+      {formatReading(r, 4)}
+    </td>
+  );
 }

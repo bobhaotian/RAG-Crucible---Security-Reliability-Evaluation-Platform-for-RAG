@@ -11,6 +11,7 @@ import {
   RerankLift,
   TradeoffRadar,
 } from "./charts";
+import { PanelBoundary } from "./Boundary";
 import { DiffView } from "./DiffView";
 import type { Drill } from "./Evidence";
 import { EvidenceDrawer } from "./Evidence";
@@ -128,7 +129,11 @@ export default function App() {
 
       <main className="content">
         {compareMode ? (
-          <DiffView runs={runs} baseId={selected} />
+          // Keyed on the base run and the toggle; DiffView keys its own table on the
+          // compared run, so the run picker survives a table that throws.
+          <PanelBoundary key={`compare-${selected ?? ""}-${String(compareMode)}`} title="Compare runs">
+            <DiffView runs={runs} baseId={selected} />
+          </PanelBoundary>
         ) : results ? (
           <SingleRun results={results} spec={spec} onDrill={onDrill} />
         ) : (
@@ -137,12 +142,19 @@ export default function App() {
       </main>
 
       {drill && results && selected && (
-        <EvidenceDrawer
-          runId={selected}
-          results={results}
-          drill={drill}
+        <PanelBoundary
+          key={`evidence-${selected}-${drill.suite}-${drill.label}-${JSON.stringify(drill.filter ?? {})}`}
+          title="Evidence"
+          variant="drawer"
           onClose={() => setDrill(null)}
-        />
+        >
+          <EvidenceDrawer
+            runId={selected}
+            results={results}
+            drill={drill}
+            onClose={() => setDrill(null)}
+          />
+        </PanelBoundary>
       )}
     </div>
   );
@@ -159,7 +171,6 @@ function SingleRun({
 }) {
   const { run, suites } = results;
   const chips = pipelineChips(spec);
-  const cards = kpis(results);
 
   return (
     <>
@@ -184,33 +195,58 @@ function SingleRun({
         </ul>
       )}
 
-      {cards.length > 0 && (
-        <ul className="kpis">
-          {cards.map((k) => (
-            <li key={k.key}>
-              <button onClick={() => onDrill({ suite: k.suite, label: k.label })}>
-                <span className="kpi-label">{k.label}</span>
-                <span className="kpi-value">{(k.value as number).toFixed(3)}</span>
-                <span className="kpi-detail">
-                  {k.detail} · {k.direction === "up" ? "higher is better" : "lower is better"}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <PanelBoundary key={`kpis-${run.id}`} title="Headline metrics">
+        <KpiRow results={results} onDrill={onDrill} />
+      </PanelBoundary>
 
       <div className="grid">
-        <TradeoffRadar results={results} onDrill={onDrill} />
-        <RerankLift results={results} onDrill={onDrill} />
-        <Faithfulness results={results} onDrill={onDrill} />
-        <AttackSuccess results={results} onDrill={onDrill} />
-        <Compromise results={results} onDrill={onDrill} />
-        <DefenseCost results={results} onDrill={onDrill} />
-        <PrivacyLeakage results={results} onDrill={onDrill} />
-        <Latency results={results} />
+        {(
+          [
+            ["Quality · robustness · privacy", <TradeoffRadar results={results} onDrill={onDrill} />],
+            ["Rerank lift", <RerankLift results={results} onDrill={onDrill} />],
+            ["Answer faithfulness", <Faithfulness results={results} onDrill={onDrill} />],
+            ["Attack success by defense", <AttackSuccess results={results} onDrill={onDrill} />],
+            ["Model compromise by defense", <Compromise results={results} onDrill={onDrill} />],
+            ["What the defenses cost", <DefenseCost results={results} onDrill={onDrill} />],
+            ["Canary leakage by defense", <PrivacyLeakage results={results} onDrill={onDrill} />],
+            ["Per-stage latency", <Latency results={results} />],
+          ] as const
+        ).map(([title, panel]) => (
+          // Keyed by run, so a panel that failed on one run is retried on the next.
+          <PanelBoundary key={`${title}-${run.id}`} title={title}>
+            {panel}
+          </PanelBoundary>
+        ))}
       </div>
     </>
+  );
+}
+
+/** The headline cards. Computed inside the boundary that wraps it, so a
+ *  selector that throws is caught there instead of blanking the run view. */
+function KpiRow({ results, onDrill }: { results: RunResults; onDrill: (d: Drill) => void }) {
+  const cards = kpis(results);
+  if (cards.length === 0) return null;
+  return (
+    <ul className="kpis">
+      {cards.map((k) => (
+        <li key={k.key}>
+          <button onClick={() => onDrill({ suite: k.suite, label: k.label })}>
+            <span className="kpi-label">{k.label}</span>
+            {k.reading.measured ? (
+              <span className="kpi-value">{k.reading.value.toFixed(3)}</span>
+            ) : (
+              // Not a number: the state, with the reason under it.
+              <span className="kpi-value na">{k.reading.state}</span>
+            )}
+            <span className="kpi-detail">
+              {k.detail} · {k.direction === "up" ? "higher is better" : "lower is better"}
+            </span>
+            {!k.reading.measured && <span className="kpi-reason">{k.reading.reason}</span>}
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }
 

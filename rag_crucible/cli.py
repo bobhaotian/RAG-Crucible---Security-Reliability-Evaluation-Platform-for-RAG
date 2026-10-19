@@ -19,7 +19,7 @@ import typer
 from rag_crucible import __version__
 from rag_crucible.config import RunSpec, SpecError, load_spec
 from rag_crucible.eval import JudgeCacheMissError, QADatasetError, run_eval
-from rag_crucible.eval.report import write_report
+from rag_crucible.eval.report import describe_suite, write_report
 from rag_crucible.index import IndexMeta, VectorIndex, open_saved_index
 from rag_crucible.ingest import build_index, load_ingest_report
 from rag_crucible.paths import default_db_path, index_dir_for, submitted_run_results_dir
@@ -199,9 +199,7 @@ def eval_command(
         if suite.status == "failed":
             typer.echo(f"{suite.suite}: FAILED ({suite.error})")
             continue
-        shown = [m for m in suite.metrics if m.variant in ("", "rerank=on", "defense=none")][:4]
-        rendered = " · ".join(f"{m.name}={m.measured_value:.3f}" for m in shown)
-        typer.echo(f"{suite.suite}: {rendered}")
+        typer.echo(f"{suite.suite}: {describe_suite(suite)}")
     typer.echo("wrote: " + ", ".join(str(p) for p in written))
 
 

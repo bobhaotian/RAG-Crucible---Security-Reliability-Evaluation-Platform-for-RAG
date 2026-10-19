@@ -18,20 +18,26 @@ import {
 } from "recharts";
 import type { Metric, RunResults } from "./api";
 import type { Drill } from "./Evidence";
-import type { DefenseGroup } from "./metrics";
+import type { DefenseGroup, Reading, Unmeasured } from "./metrics";
 import {
   COMPROMISE_METRICS,
   COST_METRICS,
   METRIC_GLOSS,
   breakdown,
   understatements,
+  contamination,
   contextMetrics,
   defenseGroups,
   faithfulness,
+  formatReading,
+  groupUnmeasured,
   judgeGap,
   latency,
+  read,
   rerankLift,
   tradeoffRadar,
+  unmeasured,
+  unmeasuredOf,
 } from "./metrics";
 
 const ACCENT = "#6c5ce7";
@@ -45,11 +51,13 @@ function Panel({
   title,
   drill,
   onDrill,
+  notMeasured = [],
   children,
 }: {
   title: string;
   drill?: Drill;
   onDrill?: (drill: Drill) => void;
+  notMeasured?: Unmeasured[];
   children: ReactNode;
 }) {
   return (
@@ -63,7 +71,50 @@ function Panel({
         )}
       </div>
       {children}
+      <NotMeasuredList items={notMeasured} />
     </section>
+  );
+}
+
+/** Why each metric in a panel has no number — the panel's equivalent of the
+ *  report's "Not measured" list, one line per distinct state and reason.
+ *  Renders nothing when everything was measured. */
+function NotMeasuredList({ items }: { items: Unmeasured[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="not-measured">
+      <h4>Not measured</h4>
+      <ul>
+        {groupUnmeasured(items).map((g) => (
+          <li key={`${g.state}|${g.reason}`}>
+            {g.labels.map((label, i) => (
+              <span key={label}>
+                {i > 0 && ", "}
+                <code>{label}</code>
+              </span>
+            ))}{" "}
+            <span className={`state ${g.state}`}>{g.state}</span> {g.reason}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** The narrow value column beside a bar. The state is already written in the
+ *  track, so a metric that was not measured gets a bare dash here. */
+function barValue(r: Reading, digits: number): string {
+  return r.measured ? r.value.toFixed(digits) : "—";
+}
+
+/** Where a bar would be, for a metric that was not measured: its state, never
+ *  an empty track (which reads as 0) and never the "0.00 ✓" of a true zero. */
+function StateInTrack({ reading }: { reading: Reading }) {
+  if (reading.measured) return null;
+  return (
+    <span className="bar-na" title={reading.reason}>
+      {reading.state}
+    </span>
   );
 }
 
@@ -80,13 +131,41 @@ function signed(v: number, digits = 3): string {
 // ------------------------------------------------------------------ trade-off
 
 export function TradeoffRadar({ results, onDrill }: PanelProps) {
-  const data = tradeoffRadar(results);
-  if (data.length < 3) return null;
+  const { data, unmeasured: missing } = tradeoffRadar(results);
+  if (data.length < 3 && missing.length === 0) return null;
+  const values = (
+    <ul className="axis-values">
+      {data.map((d) => (
+        <li key={String(d.name)}>
+          <span>{d.name}</span>
+          <b>{Number(d.value).toFixed(3)}</b>
+        </li>
+      ))}
+    </ul>
+  );
+  if (data.length < 3) {
+    // Too few measured axes for a shape, but the reasons still belong on the page.
+    return (
+      <Panel
+        title="Quality · robustness · privacy"
+        drill={{ suite: "security", label: "attacks behind the robustness axis" }}
+        onDrill={onDrill}
+        notMeasured={missing}
+      >
+        <p className="hint">
+          Only {data.length} of the four axes {data.length === 1 ? "was" : "were"} measured,
+          too few to draw the trade-off. An axis that was not measured is never drawn at 0.
+        </p>
+        {data.length > 0 && values}
+      </Panel>
+    );
+  }
   return (
     <Panel
       title="Quality · robustness · privacy"
       drill={{ suite: "security", label: "attacks behind the robustness axis" }}
       onDrill={onDrill}
+      notMeasured={missing}
     >
       <ResponsiveContainer width="100%" height={230}>
         <RadarChart data={data} outerRadius="68%" margin={{ top: 16, right: 56, bottom: 8, left: 56 }}>
@@ -96,17 +175,11 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
           <Radar dataKey="value" stroke={ACCENT} fill={ACCENT} fillOpacity={0.45} />
         </RadarChart>
       </ResponsiveContainer>
-      <ul className="axis-values">
-        {data.map((d) => (
-          <li key={String(d.name)}>
-            <span>{d.name}</span>
-            <b>{Number(d.value).toFixed(3)}</b>
-          </li>
-        ))}
-      </ul>
+      {values}
       <p className="hint">
         Each axis 0–1, bigger is safer. Robustness and privacy are plotted inverted
         (1 − attack success, 1 − leakage); the cards above show them undirected.
+        {missing.length > 0 && " An axis that was not measured is left off, not drawn at 0."}
       </p>
     </Panel>
   );
@@ -115,29 +188,65 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
 // ---------------------------------------------------------------- rerank lift
 
 export function RerankLift({ results, onDrill }: PanelProps) {
-  const { rows, min, max } = rerankLift(results);
+  const { rows, axis, hasOn, unmeasured: missing } = rerankLift(results);
   if (rows.length === 0) return null;
+  if (axis === undefined) {
+    // Nothing to place on an axis: no empty 0.000–1.000 track, just the reasons.
+    return (
+      <Panel
+        title="Rerank lift"
+        drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
+        onDrill={onDrill}
+        notMeasured={missing}
+      >
+        <p className="hint">No retrieval metric in this run was measured, so there is nothing to plot.</p>
+      </Panel>
+    );
+  }
+  const { min, max } = axis;
   const shown = rows.filter((r) => r.headline);
   const rest = rows.filter((r) => !r.headline);
-  const best = rows.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
+  const moved = rows.filter((r) => r.delta !== undefined);
+  const best = moved.length
+    ? moved.reduce((a, b) => (Math.abs(b.delta ?? 0) > Math.abs(a.delta ?? 0) ? b : a))
+    : undefined;
 
   const row = (r: (typeof rows)[number]) => {
-    const a = pct(r.off, min, max);
-    const b = pct(r.on, min, max);
+    // Dots only for measured sides, the line only when both are; a side that
+    // was not measured is named in the delta column instead.
+    const a = r.off.measured ? pct(r.off.value, min, max) : undefined;
+    const b = r.on?.measured ? pct(r.on.value, min, max) : undefined;
+    const missingSide = !r.off.measured ? r.off : r.on && !r.on.measured ? r.on : undefined;
     return (
-      <li key={r.name} title={`off ${r.off.toFixed(4)} → on ${r.on.toFixed(4)}`}>
+      <li key={r.name} title={`off ${formatReading(r.off, 4)} → on ${formatReading(r.on, 4)}`}>
         <span className="db-label">{r.name}</span>
         <span className="db-track">
+          {a !== undefined && b !== undefined && r.delta !== undefined && (
+            <span
+              className={r.delta >= 0 ? "db-line pos" : "db-line neg"}
+              style={{ left: `${Math.min(a, b)}%`, width: `${Math.abs(b - a)}%` }}
+            />
+          )}
+          {a !== undefined && <span className="db-dot off" style={{ left: `${a}%` }} />}
+          {b !== undefined && <span className="db-dot on" style={{ left: `${b}%` }} />}
+        </span>
+        {missingSide && !missingSide.measured ? (
+          <span className="db-delta na" title={missingSide.reason}>
+            {missingSide.state}
+          </span>
+        ) : (
           <span
-            className={r.delta >= 0 ? "db-line pos" : "db-line neg"}
-            style={{ left: `${Math.min(a, b)}%`, width: `${Math.abs(b - a)}%` }}
-          />
-          <span className="db-dot off" style={{ left: `${a}%` }} />
-          <span className="db-dot on" style={{ left: `${b}%` }} />
-        </span>
-        <span className={r.delta > 0 ? "db-delta pos" : r.delta < 0 ? "db-delta neg" : "db-delta"}>
-          {signed(r.delta)}
-        </span>
+            className={
+              r.delta === undefined || r.delta === 0
+                ? "db-delta"
+                : r.delta > 0
+                  ? "db-delta pos"
+                  : "db-delta neg"
+            }
+          >
+            {r.delta === undefined ? "—" : signed(r.delta)}
+          </span>
+        )}
       </li>
     );
   };
@@ -147,6 +256,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
       title="Rerank lift"
       drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
       onDrill={onDrill}
+      notMeasured={missing}
     >
       <ul className="dumbbell">
         {shown.map(row)}
@@ -163,13 +273,25 @@ export function RerankLift({ results, onDrill }: PanelProps) {
         <span>{min.toFixed(3)}</span>
         <span className="db-legend">
           <i className="db-dot off" /> rerank off
-          <i className="db-dot on" /> rerank on
+          {hasOn && (
+            <>
+              <i className="db-dot on" /> rerank on
+            </>
+          )}
         </span>
         <span>{max.toFixed(3)}</span>
       </div>
       <p className="hint">
-        Axis is scaled to the data, not to 0–1, so the lift is the visible quantity.
-        Largest movement: <b>{best.name}</b> {signed(best.delta)}.
+        {!hasOn ? (
+          "This run has no rerank-on figures, so there is no lift; the dots are the rerank-off values."
+        ) : best && best.delta !== undefined ? (
+          <>
+            Axis is scaled to the data, not to 0–1, so the lift is the visible quantity.
+            Largest movement: <b>{best.name}</b> {signed(best.delta)}.
+          </>
+        ) : (
+          "No metric has both sides measured, so there is no lift to show."
+        )}
       </p>
     </Panel>
   );
@@ -180,12 +302,13 @@ export function RerankLift({ results, onDrill }: PanelProps) {
 export function Faithfulness({ results, onDrill }: PanelProps) {
   const rows = faithfulness(results);
   if (rows.length === 0) return null;
-  const gap = judgeGap(results);
+  const judge = judgeGap(results);
   return (
     <Panel
       title="Answer faithfulness"
       drill={{ suite: "faithfulness", label: "judged answers" }}
       onDrill={onDrill}
+      notMeasured={rows.flatMap((r) => unmeasured(r.name, r.reading))}
     >
       <ul className="bars">
         {rows.map((r) => (
@@ -195,20 +318,24 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
               {r.direction === "down" && <i className="dir" title="lower is better">↓</i>}
             </span>
             <span className="bar-track">
-              <span
-                className={r.direction === "down" ? "bar-fill warn" : "bar-fill"}
-                style={{ width: `${r.value * 100}%` }}
-              />
+              {r.reading.measured ? (
+                <span
+                  className={r.direction === "down" ? "bar-fill warn" : "bar-fill"}
+                  style={{ width: `${r.reading.value * 100}%` }}
+                />
+              ) : (
+                <StateInTrack reading={r.reading} />
+              )}
             </span>
-            <span className="bar-value">{r.value.toFixed(3)}</span>
+            <span className="bar-value">{barValue(r.reading, 3)}</span>
           </li>
         ))}
       </ul>
-      {gap !== undefined && gap > 0.2 && (
+      {judge !== undefined && judge.gap > 0.2 && (
         <p className="callout">
-          <b>The judge is the bottleneck.</b> {(rows[0].value * 100).toFixed(0)}% of answers
+          <b>The judge is the bottleneck.</b> {(judge.accuracy * 100).toFixed(0)}% of answers
           contain the gold answer string, but the configured judge scores only{" "}
-          {((rows[0].value - gap) * 100).toFixed(0)}% as grounded — a {gap.toFixed(2)} gap.
+          {(judge.grounded * 100).toFixed(0)}% as grounded — a {judge.gap.toFixed(2)} gap.
           Judge quality is a config choice (<code>suites.faithfulness.judge</code>), not a
           property of the pipeline under test.
         </p>
@@ -233,6 +360,7 @@ function DefenseBars({
   onDrill,
   context = [],
   footer,
+  extraUnmeasured = [],
 }: {
   groups: DefenseGroup[];
   suite: string;
@@ -242,11 +370,19 @@ function DefenseBars({
   onDrill?: (drill: Drill) => void;
   context?: Metric[];
   footer?: ReactNode;
+  extraUnmeasured?: Unmeasured[];
 }) {
   if (groups.length === 0) return null;
+  const missing = [
+    ...groups.flatMap((g) =>
+      g.bars.flatMap((b) => unmeasured(`${g.metric} [defense=${b.defense}]`, b.reading)),
+    ),
+    ...unmeasuredOf(context),
+    ...extraUnmeasured,
+  ];
 
   return (
-    <Panel title={title} drill={drill} onDrill={onDrill}>
+    <Panel title={title} drill={drill} onDrill={onDrill} notMeasured={missing}>
       {lead && <p className="lead">{lead}</p>}
       {groups.map((g) => (
         <div className="defense-group" key={g.metric}>
@@ -272,13 +408,21 @@ function DefenseBars({
                   {b.isBaseline && <i className="tag">baseline</i>}
                 </span>
                 <span className="bar-track">
-                  <span
-                    className={`bar-fill ${b.isBaseline ? "neutral" : b.tone}`}
-                    style={{ width: `${Math.max(b.value * 100, b.value === 0 ? 0 : 1)}%` }}
-                  />
-                  {b.value === 0 && <span className="bar-zero">0.00 ✓</span>}
+                  {b.reading.measured ? (
+                    <>
+                      <span
+                        className={`bar-fill ${b.isBaseline ? "neutral" : b.tone}`}
+                        style={{
+                          width: `${Math.max(b.reading.value * 100, b.reading.value === 0 ? 0 : 1)}%`,
+                        }}
+                      />
+                      {b.reading.value === 0 && <span className="bar-zero">0.00 ✓</span>}
+                    </>
+                  ) : (
+                    <StateInTrack reading={b.reading} />
+                  )}
                 </span>
-                <span className="bar-value">{b.value.toFixed(2)}</span>
+                <span className="bar-value">{barValue(b.reading, 2)}</span>
                 <span className={`bar-delta ${b.tone}`}>
                   {b.delta === undefined ? "" : `${b.delta > 0 ? "▲" : b.delta < 0 ? "▼" : ""} ${signed(b.delta, 2)}`}
                 </span>
@@ -289,7 +433,7 @@ function DefenseBars({
       ))}
       {context.length > 0 && (
         <p className="hint">
-          {context.map((m) => `${m.name} ${m.value.toFixed(2)}`).join(" · ")}
+          {context.map((m) => `${m.name} ${formatReading(read(m), 2)}`).join(" · ")}
         </p>
       )}
       {footer}
@@ -351,6 +495,7 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
     <DefenseBars
       groups={defenseGroups(results, "privacy")}
       onDrill={onDrill}
+      extraUnmeasured={unmeasuredOf(styles.map((s) => s.metric))}
       suite="privacy"
       title="Canary leakage by defense"
       lead={
@@ -382,13 +527,19 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
                 >
                   <span className="bar-label">{s.name}</span>
                   <span className="bar-track">
-                    <span
-                      className="bar-fill warn"
-                      style={{ width: `${Number(s.value) * 100}%` }}
-                    />
-                    {Number(s.value) === 0 && <span className="bar-zero">0.00 ✓</span>}
+                    {s.reading.measured ? (
+                      <>
+                        <span
+                          className="bar-fill warn"
+                          style={{ width: `${s.reading.value * 100}%` }}
+                        />
+                        {s.reading.value === 0 && <span className="bar-zero">0.00 ✓</span>}
+                      </>
+                    ) : (
+                      <StateInTrack reading={s.reading} />
+                    )}
                   </span>
-                  <span className="bar-value">{Number(s.value).toFixed(2)}</span>
+                  <span className="bar-value">{barValue(s.reading, 2)}</span>
                   <span className="bar-delta" />
                 </li>
               ))}
@@ -407,10 +558,7 @@ export function Compromise({ results, onDrill }: PanelProps) {
   const groups = defenseGroups(results, "security", { only: COMPROMISE_METRICS });
   if (groups.length === 0) return null;
 
-  const rateFor = (name: string) =>
-    groups.find((g) => g.metric === name)?.bars.filter((b) => b.value > 0) ?? [];
-  const competition = rateFor("attack_competition_rate");
-  const crossQuestion = rateFor("cross_question_contamination_rate");
+  const verdict = contamination(groups);
   const missed = understatements(results);
 
   return (
@@ -452,17 +600,17 @@ export function Compromise({ results, onDrill }: PanelProps) {
               Click any row to read the trials and see which attack produced each answer.
             </div>
           )}
-          {crossQuestion.length > 0 ? (
+          {verdict?.kind === "escaping" && (
             <p className="callout bad">
               <b>Attack documents are escaping their target question.</b>{" "}
-              {crossQuestion
+              {verdict.arms
                 .map((b) => `${b.defense} ${(b.value * 100).toFixed(0)}%`)
                 .join(", ")}{" "}
               of trials answered with a marker planted on a <i>different</i> question. That
               is a retrieval failure worth investigating on its own.
             </p>
-          ) : (
-            competition.length > 0 && (
+          )}
+          {verdict?.kind === "contained" && (
               <p className="callout">
                 <b>No cross-question contamination.</b> Every compromised-but-blocked trial
                 was beaten by the other attack on its <i>own</i> question — the poison and
@@ -470,7 +618,6 @@ export function Compromise({ results, onDrill }: PanelProps) {
                 compete for the same retrieval slots. Nothing escaped the question it was
                 written for.
               </p>
-            )
           )}
         </>
       }
