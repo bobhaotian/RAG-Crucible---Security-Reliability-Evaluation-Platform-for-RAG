@@ -204,7 +204,7 @@ the filter was written from, 10 held out), local Qwen2.5-0.5B generator.
 > not significant), so the model does read the path. Its effect on the rates above is
 > not established. The screening row does not depend on it, because retrieval,
 > reranking and the filter read only chunk text. Planted documents now get
-> corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)). The numbers above are left as
+> corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model. The numbers above are left as
 > recorded.
 
 **Honest reading** — this is what the platform is *for*: defenses that work and
@@ -259,7 +259,7 @@ Leakage by probe style (no defense): paraphrase 0.33 · direct 0.22 · indirect 
 > above) to 10/27 in one run on Qwen2.5-0.5B. All five changed probes went one way
 > (exact McNemar *p* = 0.0625, not significant), retrieval exposure stayed at 27/27,
 > and `pii_filter` stayed at 0/27. So 0.185 may under-count leakage, by an amount not
-> yet measured. Canaries now get corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)).
+> yet measured. Canaries now get corpus-shaped paths (see [CHANGELOG](CHANGELOG.md)). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model.
 > The numbers here are left as recorded.
 
 The decomposition is the point. **Retrieval exposure stays at 1.00 under redaction** —

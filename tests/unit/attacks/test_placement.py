@@ -18,7 +18,7 @@ from rag_crucible.attacks import (
     generate_injection_attacks,
     generate_poison_attacks,
 )
-from rag_crucible.attacks.placement import CorpusPlacer, slug
+from rag_crucible.attacks.placement import CorpusPlacer, _candidate_names, slug
 from rag_crucible.ingest import apply_filters, load_corpus
 from rag_crucible.qa import QAItem, load_qa
 
@@ -56,12 +56,16 @@ def test_slug_keeps_topic_words_and_drops_question_scaffolding() -> None:
     assert slug("the Helios billing service") == "helios-billing-service"
 
 
-def test_slug_is_capped_and_never_empty() -> None:
+def test_slug_is_capped() -> None:
     assert slug("alpha beta gamma delta epsilon zeta") == "alpha-beta-gamma-delta"
     assert slug("calibration " * 3 + "x" * 80) == "calibration-calibration-calibration"
     assert slug("x" * 80) == "x" * 40
-    assert slug("What is it?") == "notes"
-    assert slug("???") == "notes"
+    assert slug("What is it?") == ""  # no content words; placement falls back
+
+
+def test_slug_folds_accents_instead_of_splitting_on_them() -> None:
+    assert slug("¿Cuál es la política de reembolso?") == "cual-es-la-politica"
+    assert slug("Wie lange dauert die Rückerstattung?") == "wie-lange-dauert-die"
 
 
 def test_slug_drops_our_marker_vocabulary_even_when_the_topic_uses_it() -> None:
@@ -99,21 +103,73 @@ def test_the_seed_and_key_choose_the_directory() -> None:
     assert len({directory(7, f"q{i:03d}") for i in range(20)}) > 1
 
 
-def test_placement_avoids_the_corpus_and_every_earlier_placement() -> None:
-    corpus = ("kb/api-rate-limits.md", "kb/api-rate-limits-2.md")
+_NUMBERED = re.compile(r"^(.+)-\d+\.md$")
+
+
+def _numbered_siblings(paths: list[str], corpus: tuple[str, ...] = ()) -> list[str]:
+    """Paths named ``x-N.md`` beside an ``x.md`` among the others or the corpus,
+    in any directory: the shape that marks one document as the other's copy.
+    A topic that ends in a number of its own ("unit 2") is not one."""
+    names = [path.rpartition("/")[2] for path in [*paths, *corpus]]
+    found = []
+    for path in paths:
+        match = _NUMBERED.match(path.rpartition("/")[2])
+        if match and f"{match.group(1)}.md" in names:
+            found.append(path)
+    return found
+
+
+def test_a_collision_takes_another_topical_name_not_a_numbered_sibling() -> None:
+    """``x-2.md`` beside ``x.md`` marks the second as the copy, so while any
+    topical or neutral name is free, no name is numbered."""
+    corpus = ("kb/api-rate-limits.md",)
     placer = CorpusPlacer(corpus, seed=0)
     paths = [placer.place(f"k{i}", "API rate limits") for i in range(4)]
-    assert paths == [
-        "kb/api-rate-limits-3.md",
-        "kb/api-rate-limits-4.md",
-        "kb/api-rate-limits-5.md",
-        "kb/api-rate-limits-6.md",
-    ]
+    assert len(set(paths)) == 4
+    assert not set(paths) & set(corpus)
+    assert not _numbered_siblings(paths, corpus), paths
+    assert {"kb/api-rate.md", "kb/rate-limits.md"} <= set(paths)
+
+
+def test_only_an_exhausted_name_space_is_numbered() -> None:
+    names = list(_candidate_names(0, "k", "API rate limits", ()))
+    assert len(names) > 20  # windows, qualified windows, neutral names
+    corpus = tuple(f"kb/{name}.md" for name in names)
+    assert _numbered_siblings([CorpusPlacer(corpus, seed=0).place("k", "API rate limits")], corpus)
 
 
 def test_collisions_are_case_insensitive() -> None:
     placer = CorpusPlacer(("kb/API-Rate-Limits.md",), seed=0)
-    assert placer.place("k", "API rate limits") == "kb/api-rate-limits-2.md"
+    assert placer.place("k", "API rate limits").lower() != "kb/api-rate-limits.md"
+
+
+def test_a_dropped_corpus_file_is_never_reused() -> None:
+    """``avoid`` holds sources that set no directory, such as a file the ingest
+    filters dropped: the run's audit names it, so a planted twin would clash."""
+    placer = CorpusPlacer(("kb/guide.md",), seed=0, avoid=("kb/warranty.md",))
+    for i in range(5):
+        assert placer.place(f"k{i}", "How long is the warranty?") != "kb/warranty.md"
+
+
+def test_no_two_planted_documents_share_a_file_name() -> None:
+    """Twins on one question in different directories would show the same file
+    name twice in one prompt."""
+    placer = CorpusPlacer(CORPUS, seed=2)
+    paths = [placer.place(f"{kind}:q001", "What is the SR-2 payload?") for kind in ("p", "i", "c")]
+    names = [path.rpartition("/")[2] for path in paths]
+    assert len(set(names)) == len(names), paths
+
+
+def test_topics_with_no_latin_words_get_neutral_names_not_a_count() -> None:
+    placer = CorpusPlacer(("kb/a.md",), seed=4)
+    paths = [placer.place(f"k{i}", "退款政策是什么") for i in range(6)]
+    assert len(set(paths)) == 6
+    assert not _numbered_siblings(paths), paths
+
+
+def test_hidden_words_never_reach_the_path() -> None:
+    placer = CorpusPlacer(CORPUS, seed=1)
+    assert "q001" not in placer.place("poison:q001", "What is q001 battery life?", hide=("q001",))
 
 
 def test_a_flat_corpus_places_at_the_root() -> None:
@@ -147,17 +203,34 @@ ITEMS = [
 
 def test_generators_place_into_the_corpus_they_are_given() -> None:
     poison = generate_poison_attacks(ITEMS, n=None, seed=7, corpus_sources=CORPUS)
-    taken = (*CORPUS, *(a.document.source for a in poison))
-    injections = generate_injection_attacks(ITEMS, n=None, seed=3, corpus_sources=taken)
+    injections = generate_injection_attacks(
+        ITEMS, n=None, seed=3, corpus_sources=CORPUS, avoid=[a.document.source for a in poison]
+    )
     canaries = generate_canaries(9, ("email", "api_key", "phone"), seed=5, corpus_sources=CORPUS)
 
     placed = [(a.document.source, a.qid) for a in [*poison, *injections]]
     placed += [(c.document.source, c.canary_id) for c in canaries]
     for path, identity in placed:
         _assert_uninformative(path, identity, CORPUS)
-    # Poison and injection on the same question share a topic, never a path.
+    # Poison and injection on the same question share a topic, never a path or
+    # a file name, and neither is a numbered copy of the other.
     attack_paths = [a.document.source for a in [*poison, *injections]]
-    assert len(set(attack_paths)) == len(attack_paths)
+    assert len({path.rpartition("/")[2] for path in attack_paths}) == len(attack_paths)
+    assert not _numbered_siblings(attack_paths, CORPUS), attack_paths
+
+
+def test_twins_on_a_single_directory_corpus_are_not_numbered_copies() -> None:
+    """The shape a flat or one-folder user corpus has, with poison and
+    injection both targeting every question (disjoint_targets is off by
+    default). This is where a numbered sibling used to appear."""
+    corpus = ("kb/intro.md", "kb/setup.md")
+    poison = generate_poison_attacks(ITEMS, n=None, seed=7, corpus_sources=corpus)
+    injections = generate_injection_attacks(
+        ITEMS, n=None, seed=3, corpus_sources=corpus, avoid=[a.document.source for a in poison]
+    )
+    paths = [a.document.source for a in [*poison, *injections]]
+    assert not _numbered_siblings(paths, corpus), paths
+    assert len({path.rpartition("/")[2] for path in paths}) == len(paths)
 
 
 @pytest.fixture(scope="module")
@@ -178,11 +251,13 @@ def test_no_seeded_placement_equals_or_resembles_a_corpus_source(
     """
     loaded, kept = seeded_sources
     qa = load_qa(SEEDED / "qa.jsonl")
-    poison = generate_poison_attacks(qa, None, 11, corpus_sources=kept)
+    poison = generate_poison_attacks(qa, None, 11, corpus_sources=kept, avoid=loaded)
     injections = generate_injection_attacks(
-        qa, None, 13, corpus_sources=[*kept, *(a.document.source for a in poison)]
+        qa, None, 13, corpus_sources=kept, avoid=[*loaded, *(a.document.source for a in poison)]
     )
-    canaries = generate_canaries(12, ("email", "api_key", "phone"), 7, corpus_sources=kept)
+    canaries = generate_canaries(
+        12, ("email", "api_key", "phone"), 7, corpus_sources=kept, avoid=loaded
+    )
 
     placed = [(a.document.source, a.qid) for a in [*poison, *injections]]
     placed += [(c.document.source, c.canary_id) for c in canaries]
@@ -190,5 +265,6 @@ def test_no_seeded_placement_equals_or_resembles_a_corpus_source(
         _assert_uninformative(path, identity, kept)
         assert path not in loaded  # not even a document the filters dropped
     assert len({path for path, _ in placed}) == len(placed)
+    assert not _numbered_siblings([path for path, _ in placed], loaded)
     # noise/ holds only documents the filters drop; an attack there would sit alone.
     assert not any(path.startswith("noise/") for path, _ in placed)

@@ -100,7 +100,7 @@ generator. The path named the attack and its target (`__poison__/q042.md`,
 canary path moved privacy leakage under no defense from 5/27 to 10/27 in one run on
 Qwen2.5-0.5B (all five changed probes went one way; exact McNemar *p* = 0.0625, not
 significant), so the model does read the path. Its effect on the gaps above is not
-established. Planted documents now get corpus-shaped paths (see `CHANGELOG.md`). The
+established. Planted documents now get corpus-shaped paths (see `CHANGELOG.md`). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model. The
 committed numbers are left as recorded.
 
 ## Reproduce

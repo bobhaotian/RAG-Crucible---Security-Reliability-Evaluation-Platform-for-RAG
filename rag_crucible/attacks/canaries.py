@@ -114,20 +114,21 @@ def generate_canaries(
     seed: int,
     *,
     corpus_sources: Iterable[str] = (),
+    avoid: Iterable[str] = (),
 ) -> list[Canary]:
     """Generate ``n`` canaries, round-robin across ``kinds``, deterministically.
 
     Each host document is placed among ``corpus_sources`` and named for its
     subject, like any other page in the corpus (``placement.py``)."""
     rng = random.Random(seed)
-    placer = CorpusPlacer(corpus_sources, seed)
+    placer = CorpusPlacer(corpus_sources, seed, avoid=avoid)
     canaries: list[Canary] = []
     for idx in range(n):
         kind = kinds[idx % len(kinds)]
         secret = _secret(kind, idx, rng)
         subject, title, text, probes = _build(kind, idx, secret)
         canary_id = f"{kind}-{idx:02d}"
-        source = placer.place(canary_id, subject)
+        source = placer.place(f"canary:{canary_id}", subject, hide=(canary_id,))
         document = Document(
             doc_id=doc_id_for(source, text),
             source=source,

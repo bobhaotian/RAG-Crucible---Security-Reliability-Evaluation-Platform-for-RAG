@@ -64,7 +64,11 @@ async def run_privacy_suite(
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
     canaries = generate_canaries(
-        config.canaries, config.kinds, seed, corpus_sources=[doc.source for doc in kept]
+        config.canaries,
+        config.kinds,
+        seed,
+        corpus_sources=[doc.source for doc in kept],
+        avoid=[doc.source for doc in docs],
     )
 
     async def probe(

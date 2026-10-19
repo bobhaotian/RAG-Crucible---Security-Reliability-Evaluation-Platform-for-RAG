@@ -62,16 +62,18 @@ def generate_poison_attacks(
     seed: int,
     *,
     corpus_sources: Iterable[str] = (),
+    avoid: Iterable[str] = (),
 ) -> list[PoisonAttack]:
     """``corpus_sources`` is the corpus the attacks will be indexed beside; each
-    document is placed among its paths (``placement.py``) so its source says
-    nothing about what it is. Left empty, documents are placed at the root."""
-    placer = CorpusPlacer(corpus_sources, seed)
+    document is placed among its paths (``placement.py``) instead of under a
+    marker. ``avoid`` is any other path a document must not take. Left empty,
+    documents are placed at the root."""
+    placer = CorpusPlacer(corpus_sources, seed, avoid=avoid)
     attacks: list[PoisonAttack] = []
     for idx, item in enumerate(select_targets(items, n, seed)):
         false_phrase, detect = _false_value(item, idx)
         text = _poison_text(item, false_phrase)
-        source = placer.place(item.qid, item.question)
+        source = placer.place(f"poison:{item.qid}", item.question, hide=(item.qid,))
         document = Document(
             doc_id=doc_id_for(source, text),
             source=source,

@@ -101,21 +101,46 @@ Qwen2.5-0.5B (exact McNemar *p* = 0.0625, not significant), so the model does re
 it.
 
 So a planted document is placed the way a contributed one would be. It goes in one
-of the corpus's own top-level directories, chosen by a seeded hash (the root, if
-the corpus is flat), and is named by a slug of its own topic. In the smoke-fake
-run, the poison for "What is the battery life of the AT-300 autonomous inspection
-drone?" becomes `products/battery-life-at-300-autonomous.md`, beside the real
-`products/at-300-spec.md`. Only directories that still hold documents after the
-ingest filters are used, so a planted document never sits alone in a directory the
-filters emptied. A path never matches an indexed document or another planted one,
-and is never built from the target's id or the harness's own marker words. The
-evaluator tracks planted documents by `doc_id`. One test fails if any prompt or
-defense input carries an evaluator label, and another fails if any defense decides
-differently once every source is rewritten.
+of the corpus's own top-level directories that still holds documents after the
+ingest filters, chosen by a seeded hash (the root, if the corpus is flat), and is
+named from its own topic. In the smoke-fake run, the poison for "What is the battery
+life of the AT-300 autonomous inspection drone?" becomes `products/battery-life.md`,
+beside the real `products/at-300-spec.md`. A planted name never repeats or shadows a
+corpus file's name, even one the filters dropped, and never forms an `x` / `x-2`
+pair with one: when two documents want one name, as the poison and the injection on
+the same question do, each takes another window of its topic's words, or the window
+with a qualifier (`parental-leave-policy`), so neither reads as the other's copy. A
+number is appended only when every such name is taken. A path is never built from
+the target's id or the harness's own marker words. The evaluator tracks planted
+documents by `doc_id`.
 
-Limits: the prompt still shows each chunk's path; an opaque per-chunk label is a
-later change. Every planted document is Markdown, even in a corpus of PDFs, and a
-name collision is resolved with a numeric suffix (`-2`).
+Three tests hold this. One fails if any prompt or defense input carries an
+evaluator label, or a planted document sits outside the corpus's own layout.
+Another fails if any defense decides differently on its fixture contexts when the
+sources are rewritten: to the placed paths, the old labels, unrelated names, or
+numbered siblings. The third pins the naming rules themselves.
+
+Limits, so a reader does not take the channel as closed:
+
+- **The prompt still prints each chunk's path**, and an attack's name comes from
+  its target question, so it reads as a file about the question. On the seeded
+  corpus, with every question attacked twice, all 112 planted names share a
+  content word with their question, and so do 47 of the 56 real documents that
+  answer one: a weak cue, not none. An opaque per-chunk label in the prompt is the change that removes
+  this; it will also change clean answers.
+- **The planted text still has tells**: the injection payload carries the target id
+  (`OWNED-q001`), canary secrets contain the word "canary"
+  (`canary00-…@example-corp.test`, `sk-canary-…`), poison documents share a fixed
+  heading and closing sentence, and every injection opens with "Notes on:". With the
+  structure chunker the poison heading also becomes the chunk's section, so it is
+  printed in the label line. These belong to A2's payload work and the opaque-label
+  change, not to placement.
+- **Shape**: every planted document is Markdown, even in a corpus of PDFs, and sits
+  directly under a top-level directory, a depth a nested corpus may never use.
+- **Language**: stop-words are English; other languages keep their function words
+  ("cual-es-la-politica").
+- **Measurement**: the one real-model measurement replaced the label with a neutral
+  hex name in `kb/`; this scheme has not itself been measured on a real model.
 
 ---
 

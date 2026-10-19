@@ -27,7 +27,7 @@ import rag_crucible.pipeline.rag as rag
 from rag_crucible.config import SuitesConfig, load_spec
 from rag_crucible.eval import EvalRunResult, run_eval
 from rag_crucible.index import FaissIndex
-from rag_crucible.ingest import build_index, load_corpus
+from rag_crucible.ingest import apply_filters, build_index, load_corpus
 from rag_crucible.providers import GenerateResult, GenParams, Message
 from rag_crucible.providers.fake import FakeGenerator
 from rag_crucible.types import Chunk
@@ -126,12 +126,22 @@ async def test_no_prompt_or_defense_input_names_a_planted_document(
     docs, _ = load_corpus(REPO_ROOT / "datasets" / "seeded" / "corpus")
     corpus_ids = {doc.doc_id for doc in docs}
     corpus_sources = {doc.source for doc in docs}
+    kept, _ = apply_filters(docs, ["dedup", "language", "boilerplate"])
+    # Where an indexed corpus document can sit: its top-level directory, or the
+    # root if one sits there. The seeded corpus has no root files, so a planted
+    # document at the root would be the only one there.
+    kept_locations = {d.source.partition("/")[0] if "/" in d.source else "" for d in kept}
     for name, chunks in exposure.chunks.items():
         for chunk in chunks:
             assert not chunk.source.startswith("__"), f"{name} saw {chunk.source}"
             assert not any(label in chunk.source for label in EVALUATOR_LABELS)
         planted = {chunk.source for chunk in chunks if chunk.doc_id not in corpus_ids}
-        # A planted document never borrows a real document's path.
+        # A planted document never borrows a real document's path, and sits
+        # where indexed corpus documents do: this fails if the suites stop
+        # passing the corpus to the generators.
         assert not planted & corpus_sources
+        for source in planted:
+            location = source.partition("/")[0] if "/" in source else ""
+            assert location in kept_locations, f"{name} saw {source} outside the corpus layout"
         if name != "clean_chunk_screening_reason":  # that one screens clean chunks only
             assert planted, f"{name} never received a planted chunk"

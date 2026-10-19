@@ -147,7 +147,7 @@ not establish it.
   the model does read the path. Its effect on the compliance and corruption rates here
   is not established. The screening table does not depend on it, because retrieval,
   reranking and the filter read only chunk text. Planted documents now get
-  corpus-shaped paths (see `CHANGELOG.md`). The numbers on this page are left as
+  corpus-shaped paths (see `CHANGELOG.md`). That measurement replaced the path with a neutral hex name in `kb/`; the corpus-shaped scheme now shipped has not itself been measured on a real model. The numbers on this page are left as
   recorded.
 
 ## Reproduce

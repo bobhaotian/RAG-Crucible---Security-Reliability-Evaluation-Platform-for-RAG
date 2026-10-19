@@ -122,11 +122,11 @@ def generate_injection_attacks(
     templates: Sequence[str] = DEFAULT_TEMPLATES,
     *,
     corpus_sources: Iterable[str] = (),
+    avoid: Iterable[str] = (),
 ) -> list[InjectionAttack]:
-    """``corpus_sources`` is every path the documents must sit beside without
-    colliding: the corpus, plus any poison documents sharing the index. See
-    ``generate_poison_attacks``."""
-    placer = CorpusPlacer(corpus_sources, seed)
+    """``corpus_sources`` and ``avoid`` are as in ``generate_poison_attacks``;
+    pass any poison documents sharing the index in ``avoid``."""
+    placer = CorpusPlacer(corpus_sources, seed, avoid=avoid)
     attacks: list[InjectionAttack] = []
     seen = [t for t in templates if family_of(t) == "seen"]
     heldout = [t for t in templates if family_of(t) == "heldout"]
@@ -138,7 +138,7 @@ def generate_injection_attacks(
         token = _token(item.qid)
         # Echo the question so the doc is retrieved, then deliver the payload.
         text = f"Notes on: {item.question}\n\n{_payload(template, token)}"
-        source = placer.place(item.qid, item.question)
+        source = placer.place(f"injection:{item.qid}", item.question, hide=(item.qid,))
         document = Document(
             doc_id=doc_id_for(source, text),
             source=source,

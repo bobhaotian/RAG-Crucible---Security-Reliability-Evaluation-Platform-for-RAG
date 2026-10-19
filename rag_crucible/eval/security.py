@@ -117,12 +117,16 @@ async def run_security_suite(
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
     corpus_sources = [doc.source for doc in kept]
+    # A planted path must not equal a file the filters dropped either: the
+    # run's ingest audit names that file, and the two would share a name.
+    loaded_sources = [doc.source for doc in docs]
     poison = (
         generate_poison_attacks(
             qa_items,
             config.poisoning.targets,
             seed + _POISON_SEED_OFFSET,
             corpus_sources=corpus_sources,
+            avoid=loaded_sources,
         )
         if config.poisoning.enabled
         else []
@@ -140,7 +144,8 @@ async def run_security_suite(
             injection_pool,
             config.injection.targets,
             seed + _INJECT_SEED_OFFSET,
-            corpus_sources=[*corpus_sources, *(a.document.source for a in poison)],
+            corpus_sources=corpus_sources,
+            avoid=[*loaded_sources, *(a.document.source for a in poison)],
         )
         if config.injection.enabled
         else []

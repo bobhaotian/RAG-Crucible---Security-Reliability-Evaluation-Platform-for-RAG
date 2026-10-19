@@ -7,9 +7,11 @@ it. Planted on 17 Oct, ``startswith("__inject__")`` inside
 ``filter_injected_chunks`` left every test passing and lifted held-out
 screening from 0.33 to 1.00.
 
-So every defense entry point runs over the same contexts under three
+So every defense entry point runs over the same contexts under four
 labellings of the sources: the corpus-shaped paths placement gives, the old
-evaluator labels, and an unrelated corpus-like path per document. Ids, text and
+evaluator labels, an unrelated corpus-like path per document, and numbered
+siblings (``kb/notes.md``, ``kb/notes-2.md``), the shape a name collision
+used to give a twin. Ids, text and
 provenance are untouched, so a decision that moves can only have read the path.
 """
 
@@ -168,6 +170,18 @@ def _unrelated(context: RankedContext) -> Labeller:
     return names
 
 
+def _siblings(context: RankedContext) -> Labeller:
+    """Every document named as a numbered copy of the first, so a defense that
+    reads ``x-2.md`` beside ``x.md`` as "the copy" decides differently here."""
+    names: Labeller = {}
+    for candidate in context.candidates:
+        n = len(names)
+        names.setdefault(
+            candidate.chunk.doc_id, "kb/notes.md" if n == 0 else f"kb/notes-{n + 1}.md"
+        )
+    return names
+
+
 def _kept(context: RankedContext) -> tuple[str, ...]:
     return tuple(candidate.chunk.chunk_id for candidate in context.candidates)
 
@@ -213,10 +227,12 @@ def test_defense_decisions_do_not_depend_on_the_source(case: Case) -> None:
     placed = _decide(case.query, case.context)
     labelled = _decide(case.query, _relabel(case.context, case.evaluator_labels))
     unrelated = _decide(case.query, _relabel(case.context, _unrelated(case.context)))
+    siblings = _decide(case.query, _relabel(case.context, _siblings(case.context)))
     for defense in (f.name for f in fields(Decisions)):
         expected = getattr(unrelated, defense)
         assert getattr(placed, defense) == expected, f"{defense} read the placed path"
         assert getattr(labelled, defense) == expected, f"{defense} read the evaluator label"
+        assert getattr(siblings, defense) == expected, f"{defense} read a numbered name"
 
 
 def test_the_cases_exercise_every_kind_of_decision() -> None:
