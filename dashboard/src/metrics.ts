@@ -10,8 +10,9 @@
 //
 // `inapplicable` follows Lighthouse: it carries no weight. Where a figure is
 // derived from several metrics, or one stands in for another, an inapplicable
-// metric is treated like one the run did not emit (see `applicable`). It is
-// still listed with its reason wherever it is shown.
+// metric gives way to one that applies (see `firstApplicable`, `worstOf`). When
+// every input is inapplicable, the figure is shown as inapplicable, with its
+// reason, rather than vanishing.
 
 import type { Metric, MetricState, RunResults, RunRow, StageStat } from "./api";
 
@@ -65,6 +66,26 @@ export function read(m: Metric): Reading {
  *  in for another metric or take part in a worst case. */
 export function applicable(r: Reading | undefined): Reading | undefined {
   return r !== undefined && !r.measured && r.state === "inapplicable" ? undefined : r;
+}
+
+/** A fallback chain: the first candidate that applies, or, when none does, the
+ *  first that exists, so a figure whose every input is inapplicable is shown as
+ *  inapplicable instead of disappearing. */
+export function firstApplicable(...candidates: (Reading | undefined)[]): Reading | undefined {
+  return (
+    candidates.find((r) => applicable(r) !== undefined) ?? candidates.find((r) => r !== undefined)
+  );
+}
+
+/** Plain text inside markdown: one line, with the characters that would turn it
+ *  into emphasis, code, a link, an entity or raw HTML escaped, as summary.md
+ *  does, plus `|`, which would end a table cell. */
+export function plainMarkdown(text: string): string {
+  return text
+    .trim()
+    .split(/\s+/)
+    .join(" ")
+    .replace(/([\\`*_[\]<>~&|])/g, "\\$1");
 }
 
 function find(results: RunResults, suite: string, name: string, variant: string) {
@@ -142,12 +163,16 @@ export function unmeasuredOf(metrics: Metric[]): Unmeasured[] {
 
 /** The larger of several rates, defined only when all of them were measured:
  *  a worst case over a set with an unknown member is itself unknown. Inputs
- *  the run did not emit, or that are inapplicable, are left out. */
+ *  the run did not emit, or that are inapplicable, are left out; when every
+ *  input present is inapplicable, so is the worst case. */
 export function worstOf(parts: [string, Reading | undefined][]): Reading | undefined {
-  const present = parts
-    .map(([name, r]): [string, Reading | undefined] => [name, applicable(r)])
-    .filter((p): p is [string, Reading] => p[1] !== undefined);
-  if (present.length === 0) return undefined;
+  const emitted = parts.filter((p): p is [string, Reading] => p[1] !== undefined);
+  if (emitted.length === 0) return undefined;
+  const present = emitted.filter(([, r]) => applicable(r) !== undefined);
+  if (present.length === 0) {
+    const reasons = emitted.map(([name, r]) => `${name}: ${(r as NotMeasured).reason}`);
+    return { measured: false, state: "inapplicable", reason: reasons.join("; ") };
+  }
   const values: number[] = [];
   for (const [name, r] of present) {
     if (!r.measured) return { ...r, reason: `${name}: ${r.reason}` };
@@ -184,8 +209,9 @@ export function kpis(results: RunResults): Kpi[] {
   // Falls back to rerank off only when the run has no rerank-on figure, or one
   // that is inapplicable (no reranker); one that was not measured for any other
   // reason is shown as such, not swapped out.
-  const rerankOn = applicable(reading(results, "retrieval", "ndcg@10", "rerank=on"));
-  const retrieval = rerankOn ?? applicable(reading(results, "retrieval", "ndcg@10", "rerank=off"));
+  const on = reading(results, "retrieval", "ndcg@10", "rerank=on");
+  const off = reading(results, "retrieval", "ndcg@10", "rerank=off");
+  const retrieval = firstApplicable(on, off);
   const attack = worstOf([
     ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
     ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
@@ -195,7 +221,7 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "retrieval",
       label: "Retrieval quality",
-      detail: rerankOn === undefined ? "nDCG@10, rerank off" : "nDCG@10, rerank on",
+      detail: retrieval !== undefined && retrieval === off ? "nDCG@10, rerank off" : "nDCG@10, rerank on",
       reading: retrieval,
       direction: "up",
       suite: "retrieval",
@@ -241,10 +267,11 @@ export interface Radar {
 }
 
 export function tradeoffRadar(results: RunResults): Radar {
-  const retrieval =
-    applicable(reading(results, "retrieval", "ndcg@10", "rerank=on")) ??
-    applicable(reading(results, "retrieval", "ndcg@10", "rerank=off")) ??
-    applicable(reading(results, "retrieval", "mrr", "rerank=off"));
+  const retrieval = firstApplicable(
+    reading(results, "retrieval", "ndcg@10", "rerank=on"),
+    reading(results, "retrieval", "ndcg@10", "rerank=off"),
+    reading(results, "retrieval", "mrr", "rerank=off"),
+  );
   const faithfulness = reading(results, "faithfulness", "groundedness");
   const robustness = invert(
     worstOf([
@@ -688,7 +715,7 @@ export function summaryMarkdown(results: RunResults): string {
     const r = read(m);
     const cell = r.measured
       ? r.value.toFixed(4)
-      : `— (${r.state}: ${r.reason.trim().split(/\s+/).join(" ").replace(/\|/g, "\\|")})`;
+      : `— (${r.state}: ${plainMarkdown(r.reason)})`;
     lines.push(`| ${m.suite} | ${m.name} | ${m.variant || "—"} | ${cell} |`);
   }
   if (stage_stats.length > 0) {

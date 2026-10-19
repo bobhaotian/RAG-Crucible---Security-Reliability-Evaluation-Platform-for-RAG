@@ -167,6 +167,47 @@ describe("trade-off radar", () => {
     );
   });
 
+  test("an inapplicable rerank-off nDCG gives way to a measured MRR", () => {
+    const { data } = tradeoffRadar(
+      run(
+        nm("retrieval", "ndcg@10", "rerank=off", "inapplicable", "no cutoff of 10"),
+        m("retrieval", "mrr", "rerank=off", 0.42),
+        ...base.slice(1),
+      ),
+    );
+    assert.equal(data.find((d) => d.name === "Retrieval").value, 0.42);
+  });
+
+  test("an axis whose every input is inapplicable is listed, never dropped silently", () => {
+    const allOut = tradeoffRadar(
+      run(
+        nm("retrieval", "ndcg@10", "rerank=on", "inapplicable", "no reranker"),
+        nm("retrieval", "ndcg@10", "rerank=off", "inapplicable", "no cutoff"),
+        nm("faithfulness", "groundedness", "", "not_estimable"),
+        nm("security", "knowledge_corruption_rate", "defense=none", "inapplicable"),
+        nm("security", "injection_compliance_rate", "defense=none", "inapplicable"),
+        nm("privacy", "leakage_rate", "defense=none", "not_estimable"),
+      ),
+    );
+    assert.deepEqual(allOut.data, []);
+    assert.deepEqual(
+      allOut.unmeasured.map((u) => [u.label, u.state]),
+      [
+        ["Retrieval", "inapplicable"],
+        ["Faithfulness", "not_estimable"],
+        ["Robustness", "inapplicable"],
+        ["Privacy", "not_estimable"],
+      ],
+    );
+    const offOnly = tradeoffRadar(
+      run(nm("retrieval", "ndcg@10", "rerank=off", "inapplicable", "no cutoff"), ...base.slice(1)),
+    );
+    assert.deepEqual(
+      offOnly.unmeasured.map((u) => u.label),
+      ["Retrieval"],
+    );
+  });
+
   test("an inapplicable rerank-on axis falls back to the measured rerank-off value", () => {
     const { data } = tradeoffRadar(
       run(
@@ -217,7 +258,47 @@ describe("KPI cards", () => {
       ),
     );
     assert.deepEqual(card.reading, { measured: true, value: 0.3 });
-    assert.equal(worstOf([["a", read(nm("s", "a", "", "inapplicable"))]]), undefined);
+  });
+
+  test("when every attack is inapplicable, so is the worst case: shown, not dropped", () => {
+    const cards = kpis(
+      run(
+        nm("security", "knowledge_corruption_rate", "defense=none", "inapplicable", "no poison"),
+        nm("security", "injection_compliance_rate", "defense=none", "inapplicable", "no injection"),
+      ),
+    );
+    assert.deepEqual(
+      cards.map((k) => [k.key, k.reading]),
+      [
+        [
+          "security",
+          {
+            measured: false,
+            state: "inapplicable",
+            reason: "knowledge_corruption_rate: no poison; injection_compliance_rate: no injection",
+          },
+        ],
+      ],
+    );
+    assert.equal(worstOf([["a", read(nm("s", "a", "", "inapplicable"))]]).state, "inapplicable");
+  });
+
+  test("when every retrieval figure is inapplicable, the card stays and says so", () => {
+    const both = kpis(
+      run(
+        nm("retrieval", "ndcg@10", "rerank=on", "inapplicable", "no reranker configured"),
+        nm("retrieval", "ndcg@10", "rerank=off", "inapplicable", "retrieval not run"),
+      ),
+    );
+    assert.deepEqual(both[0].reading, {
+      measured: false,
+      state: "inapplicable",
+      reason: "no reranker configured",
+    });
+    assert.equal(both[0].detail, "nDCG@10, rerank on");
+    const offOnly = kpis(run(nm("retrieval", "ndcg@10", "rerank=off", "inapplicable", "x")));
+    assert.equal(offOnly[0].reading.state, "inapplicable");
+    assert.equal(offOnly[0].detail, "nDCG@10, rerank off");
   });
 
   test("an inapplicable rerank-on figure shows the measured rerank-off value, labelled as such", () => {
@@ -318,6 +399,18 @@ describe("cross-question contamination callout", () => {
     assert.deepEqual(contamination(groups), { kind: "contained" });
   });
 
+  test("every arm measured at zero, with no competition to explain, says nothing", () => {
+    const quiet = ["none", "prompt_isolation"].map((d) =>
+      m("security", "attack_competition_rate", `defense=${d}`, 0),
+    );
+    const groups = groupsOf(
+      ...quiet,
+      m("security", "cross_question_contamination_rate", "defense=none", 0),
+      m("security", "cross_question_contamination_rate", "defense=prompt_isolation", 0),
+    );
+    assert.equal(contamination(groups), undefined);
+  });
+
   test("one measured arm above zero is escaping, whatever the others are", () => {
     const groups = groupsOf(
       ...competition,
@@ -344,6 +437,35 @@ describe("not-measured lists and the markdown summary", () => {
   test("the copied summary gives the state and reason, with pipes escaped", () => {
     const md = summaryMarkdown(run(nm("retrieval", "mrr", "rerank=on", "error", "a | b")));
     assert.match(md, /\| retrieval \| mrr \| rerank=on \| — \(error: a \\\| b\) \|/);
+  });
+
+  test("the copied summary escapes a reason as summary.md does", () => {
+    const reason = "said **no** <b>x</b> [see](http://e.x) `code` & co_op ~~gone~~ \\ end";
+    const md = summaryMarkdown(run(nm("faithfulness", "groundedness", "", "error", reason)));
+    assert.ok(
+      md.includes(
+        "— (error: said \\*\\*no\\*\\* \\<b\\>x\\</b\\> \\[see\\](http://e.x) " +
+          "\\`code\\` \\& co\\_op \\~\\~gone\\~\\~ \\\\ end)",
+      ),
+      md,
+    );
+  });
+
+  test("different reasons under one state stay on separate lines", () => {
+    const groups = groupUnmeasured(
+      unmeasuredOf([
+        nm("retrieval", "mrr", "rerank=off", "unsupported", "no labels"),
+        nm("retrieval", "mrr", "rerank=on", "unsupported", "no reranker labels"),
+        nm("retrieval", "recall@1", "rerank=off", "unsupported", "no labels"),
+      ]),
+    );
+    assert.deepEqual(
+      groups.map((g) => [g.reason, g.labels]),
+      [
+        ["no labels", ["mrr [rerank=off]", "recall@1 [rerank=off]"]],
+        ["no reranker labels", ["mrr [rerank=on]"]],
+      ],
+    );
   });
 
   test("a probe-style leakage rate that was not measured is not drawn as 0.00", () => {
