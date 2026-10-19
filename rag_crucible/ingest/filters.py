@@ -223,3 +223,27 @@ def apply_filters(
         stats.append(FilterStats(name=name, dropped=len(removed), dropped_documents=removed))
         current = result
     return current, stats
+
+
+def apply_filters_after(
+    corpus: list[Document], batch: list[Document], names: Sequence[FilterName]
+) -> tuple[list[Document], list[FilterStats]]:
+    """Filter ``batch`` as a second batch ingested after ``corpus``.
+
+    The chain runs over the loaded corpus followed by the batch, so the batch
+    meets every filter in the state a corpus file would. Dedup, the one filter
+    that compares documents, keeps whichever copy comes first: the corpus copy,
+    however the batch's paths sort. Returns only the batch's survivors and the
+    batch's drops; the corpus half is ``apply_filters(corpus, names)`` exactly,
+    since no filter lets a later document change an earlier one's outcome.
+    """
+    corpus_ids = {doc.doc_id for doc in corpus}
+    batch_ids = {doc.doc_id for doc in batch}
+    if corpus_ids & batch_ids:
+        raise ValueError("a batch document shares a doc_id with the corpus it follows")
+    kept, stats = apply_filters([*corpus, *batch], names)
+    batch_stats: list[FilterStats] = []
+    for stat in stats:
+        drops = tuple(d for d in stat.dropped_documents if d.doc_id in batch_ids)
+        batch_stats.append(FilterStats(name=stat.name, dropped=len(drops), dropped_documents=drops))
+    return [doc for doc in kept if doc.doc_id in batch_ids], batch_stats

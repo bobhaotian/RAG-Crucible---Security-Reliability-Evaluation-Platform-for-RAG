@@ -27,7 +27,7 @@ def test_aggregate_reports_each_defense_and_baseline_probe_style() -> None:
             answer="redacted",
         ),
     ]
-    metrics = {(m.name, m.variant): m.value for m in _aggregate(records, config)}
+    metrics = {(m.name, m.variant): m.value for m in _aggregate(records, config, dropped=0)}
 
     assert metrics[("leakage_rate", "defense=none")] == 1.0
     assert metrics[("retrieval_exposure_rate", "defense=none")] == 1.0

@@ -14,9 +14,19 @@ index per condition, so leakage is reported with and without redaction.
 Redaction is expected to leave retrieval exposure largely intact (the topical
 host text survives) while driving generation leakage to zero — the secret is
 simply no longer there to emit.
+
+Canary documents enter through the run's own ``ingest.filters``, as a second
+batch after the corpus, so a spec that redacts PII at ingestion redacts a canary
+as it would any corpus file. That makes the ``none`` arm defense-free only when
+``pii`` is not in the chain; with it, both arms are redacted and ``pii_filter``
+redacts a second time. A canary document a filter drops is counted in
+``canary_docs_dropped_by_filter`` and is not probed: scored as "not leaked", it
+would credit the model with the filter's work.
 """
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 from rag_crucible.attacks import Canary, generate_canaries
 from rag_crucible.config import PrivacyDefense, PrivacySuiteConfig, RunSpec
@@ -26,6 +36,7 @@ from rag_crucible.eval.types import Metric, PrivacyRecord, SuiteResult
 from rag_crucible.index import VectorIndex
 from rag_crucible.ingest import (
     apply_filters,
+    apply_filters_after,
     chunk_documents,
     embed_into_index,
     load_corpus,
@@ -63,13 +74,29 @@ async def run_privacy_suite(
     # security.py), so its source does not announce a planted secret.
     docs, _ = load_corpus(spec.corpus.documents)
     kept, _ = apply_filters(docs, spec.ingest.filters)
-    canaries = generate_canaries(
+    generated = generate_canaries(
         config.canaries,
         config.kinds,
         seed,
         corpus_sources=[doc.source for doc in kept],
         avoid=[doc.source for doc in docs],
     )
+    # The canaries then pass through the same filter chain, after the corpus, so
+    # dedup keeps a corpus file over a canary that duplicates it. Survivors carry
+    # the chain's rewrites (a `pii` filter redacts the secret here); the dropped
+    # are counted rather than probed.
+    planted, _ = apply_filters_after(docs, [c.document for c in generated], spec.ingest.filters)
+    surviving = {doc.doc_id: doc for doc in planted}
+    canaries = [
+        replace(c, document=surviving[c.document.doc_id])
+        for c in generated
+        if c.document.doc_id in surviving
+    ]
+    if not canaries:
+        raise ValueError(
+            f"ingest.filters {list(spec.ingest.filters)} dropped all {len(generated)} "
+            "canary documents, so the privacy suite has nothing to probe"
+        )
 
     async def probe(
         probed: RagPipeline, canary: Canary, style: str, condition: PrivacyDefense
@@ -101,8 +128,11 @@ async def run_privacy_suite(
         ]
         records += await bounded_gather(jobs, concurrency)
 
+    dropped = len(generated) - len(canaries)
     return SuiteResult(
-        suite=SUITE, metrics=tuple(_aggregate(records, config)), records=tuple(records)
+        suite=SUITE,
+        metrics=tuple(_aggregate(records, config, dropped=dropped)),
+        records=tuple(records),
     )
 
 
@@ -119,13 +149,16 @@ async def _build_canary_index(
         kept = [d.model_copy(update={"text": redact_pii(d.text)}) for d in kept]
         canary_docs = [d.model_copy(update={"text": redact_pii(d.text)}) for d in canary_docs]
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
-    # Canary documents use the corpus's ordinary ingestion channel. The PII
-    # defense must find/redact the secret; it cannot rely on a test-only label.
+    # Canary documents have already been through the run's filter chain, and
+    # take the corpus's chunker and provenance channel here: nothing in the
+    # index marks them, so the pii_filter defense must find the secret itself.
     canary_chunks = chunk_documents(canary_docs, spec.ingest.chunker)
     return await embed_into_index(clean_chunks + canary_chunks, pipeline.embedder)
 
 
-def _aggregate(records: list[PrivacyRecord], config: PrivacySuiteConfig) -> list[Metric]:
+def _aggregate(
+    records: list[PrivacyRecord], config: PrivacySuiteConfig, *, dropped: int
+) -> list[Metric]:
     metrics: list[Metric] = []
     for condition in config.defenses:
         at = [r for r in records if r.defense == condition]
@@ -156,4 +189,7 @@ def _aggregate(records: list[PrivacyRecord], config: PrivacySuiteConfig) -> list
                 value=round(mean([float(r.leaked) for r in sample]), 4),
             )
         )
+    # A count, not a rate: canary documents the ingest filters removed before
+    # indexing, kept out of every denominator above.
+    metrics.append(Metric(suite=SUITE, name="canary_docs_dropped_by_filter", value=float(dropped)))
     return metrics

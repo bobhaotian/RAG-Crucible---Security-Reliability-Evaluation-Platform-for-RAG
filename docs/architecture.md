@@ -73,8 +73,10 @@ flowchart LR
   `Document`s, so adding a filter never touches its neighbors.
 - Chunk identity is deterministic (`sha1(doc_id:start:end)[:16]`), which is what lets
   gold labels, poisoned-chunk tracking, and canary tracking survive re-indexing.
-- The attack suites reuse this exact pipeline to build their poisoned indexes — there
-  is no second ingestion path.
+- The attack suites build their in-memory indexes from these same stages rather than
+  through `build_index`, and do not re-apply its `max_filter_drop_rate` refusal. Canary
+  documents pass through the filter chain as a second batch after the corpus; poison
+  and injection documents skip the filters for now.
 
 ---
 
