@@ -10,9 +10,12 @@ It is never printed as a number or drawn as a bar of height zero, and a figure
 derived from two metrics (the rerank lift) is given only when both were
 measured. A metric the run did not emit at all is an em dash.
 
-A plot is written only when something in it was measured. When one is not
-written, a file of that name left in the folder by an earlier run is removed,
-so the folder never holds a chart of numbers its summary says were not measured.
+Plots are drawn from measured values only. When a suite ran but nothing in
+its plot was measured, the plot is still written under its usual name, as a
+placeholder that says so and counts the states. It replaces whatever chart an
+earlier run left there, so the folder never holds a chart of numbers its
+summary says were not measured. A plot for a suite this run did not include is
+left untouched, as it always was: the report deletes nothing.
 """
 
 from __future__ import annotations
@@ -41,8 +44,10 @@ def format_value(metric: Metric | None, digits: int = 4) -> str:
 
 def describe_suite(suite: SuiteResult, limit: int = 4) -> str:
     """The ``rag-crucible eval`` line for one suite: up to ``limit`` headline
-    metrics, each distinct reason given once, then a count of every metric in
-    the suite that was not measured, shown or not.
+    metrics, each distinct reason given once, then counts of every metric in
+    the suite that was not measured, shown or not. ``inapplicable`` metrics are
+    counted on their own: they do not apply to this configuration, which is not
+    a gap in the measurement.
 
     Retrieval headlines are the rerank-on figures only when the suite measured
     at least one; otherwise rerank off. An ``inapplicable`` rerank-on metric
@@ -60,10 +65,13 @@ def describe_suite(suite: SuiteResult, limit: int = 4) -> str:
         detail = m.state if key in explained else f"{m.state}: {key[1]}"
         explained.add(key)
         parts.append(f"{m.name}={ABSENT} ({detail})")
-    missing = sum(m.value is None for m in suite.metrics)
-    if missing:
-        parts.append(f"{missing} not measured (see summary.md)")
-    return " · ".join(parts)
+    missing = sum(m.value is None and m.state != "inapplicable" for m in suite.metrics)
+    inapplicable = sum(m.state == "inapplicable" for m in suite.metrics)
+    counts = [f"{missing} not measured"] if missing else []
+    counts += [f"{inapplicable} inapplicable"] if inapplicable else []
+    if counts:
+        counts[-1] += " (see summary.md)"
+    return " · ".join(parts + counts)
 
 
 def _one_line(text: str | None) -> str:
@@ -322,6 +330,26 @@ def _any_measured(metrics: Iterable[Metric | None]) -> bool:
     return any(m is not None and m.value is not None for m in metrics)
 
 
+def _placeholder(
+    plt: Any, path: Path, title: str, metrics: Iterable[Metric | None], figsize: tuple[int, int]
+) -> None:
+    """The plot for a suite that ran with nothing in it measured: no axes and
+    no bars, just what happened, e.g. "nothing measured: unsupported (18)".
+    Written under the plot's usual name, so it replaces an earlier run's chart."""
+    states: dict[str, int] = {}
+    for m in metrics:
+        if m is not None:
+            states[m.state] = states.get(m.state, 0) + 1
+    detail = " · ".join(f"{state} ({n})" for state, n in states.items()) or "no metrics to plot"
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.set_axis_off()
+    ax.set_title(title)
+    ax.text(0.5, 0.55, f"nothing measured: {detail}", ha="center", va="center", fontsize=12)
+    ax.text(0.5, 0.4, "see summary.md for the reasons", ha="center", va="center", color="0.35")
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
 def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
     import matplotlib
 
@@ -330,27 +358,18 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
 
     written = []
     retrieval = _suite(result, "retrieval")
-    off = {m.name: m for m in retrieval.metrics if m.variant == "rerank=off"} if retrieval else {}
-    on = {m.name: m for m in retrieval.metrics if m.variant == "rerank=on"} if retrieval else {}
-    names = list(off)
-    off_bars = [off[n] for n in names]
-    on_bars: list[Metric | None] = [on.get(n) for n in names] if on else []
-    if _any_measured(off_bars + on_bars):
-        fig, ax = plt.subplots(figsize=(8, 4))
-        x = range(len(names))
-        if on:
-            _bars(ax, [i - 0.2 for i in x], off_bars, width=0.4, color="C0", label="rerank off")
-            _bars(ax, [i + 0.2 for i in x], on_bars, width=0.4, color="C1", label="rerank on")
-            ax.legend()
-        else:
-            _bars(ax, list(x), off_bars, width=0.5, color="C0")
-        ax.set_xticks(list(x), names, rotation=30, ha="right")
-        ax.set_ylim(0, 1.05)
-        ax.set_title(f"Retrieval quality — {result.name}")
-        fig.tight_layout()
+    if retrieval is not None:
+        off = {m.name: m for m in retrieval.metrics if m.variant == "rerank=off"}
+        on = {m.name: m for m in retrieval.metrics if m.variant == "rerank=on"}
+        names = list(off)
+        off_bars = [off[n] for n in names]
+        on_bars: list[Metric | None] = [on.get(n) for n in names] if on else []
         path = out_dir / "retrieval.png"
-        fig.savefig(path, dpi=120)
-        plt.close(fig)
+        title = f"Retrieval quality — {result.name}"
+        if _any_measured(off_bars + on_bars):
+            _retrieval_plot(plt, path, title, names, off_bars, on_bars if on else None)
+        else:
+            _placeholder(plt, path, title, off_bars + on_bars, figsize=(8, 4))
         written.append(path)
 
     security = _suite(result, "security")
@@ -362,7 +381,12 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         }
         names = list(dict.fromkeys(n for n, _ in success))
         defenses = list(dict.fromkeys(d for _, d in success))
-        if names and defenses and _any_measured(success.values()):
+        path = out_dir / "security.png"
+        if not (names and defenses and _any_measured(success.values())):
+            title = f"Attack success by defense — {result.name}"
+            _placeholder(plt, path, title, success.values(), figsize=(8, 4))
+            written.append(path)
+        else:
             fig, ax = plt.subplots(figsize=(8, 4))
             x = range(len(names))
             width = 0.8 / len(defenses)
@@ -382,7 +406,6 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             ax.set_title(f"Attack success by defense — {result.name}")
             ax.legend()
             fig.tight_layout()
-            path = out_dir / "security.png"
             fig.savefig(path, dpi=120)
             plt.close(fig)
             written.append(path)
@@ -398,7 +421,12 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             for vals in by_defense.values()
             for name in ("retrieval_exposure_rate", "leakage_rate")
         ]
-        if by_defense and _any_measured(shown):
+        path = out_dir / "privacy.png"
+        if not (by_defense and _any_measured(shown)):
+            title = f"Canary leakage by condition — {result.name}"
+            _placeholder(plt, path, title, shown, figsize=(7, 4))
+            written.append(path)
+        else:
             conditions = list(by_defense)
             fig, ax = plt.subplots(figsize=(7, 4))
             x = range(len(conditions))
@@ -424,7 +452,6 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             ax.set_title(f"Canary leakage by condition — {result.name}")
             ax.legend()
             fig.tight_layout()
-            path = out_dir / "privacy.png"
             fig.savefig(path, dpi=120)
             plt.close(fig)
             written.append(path)
@@ -446,12 +473,28 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         plt.close(fig)
         written.append(path)
 
-    # The default folder, results/<spec name>, is reused run after run. A plot
-    # this run did not draw must not survive from the last one.
-    for name in _PLOTS:
-        if out_dir / name not in written:
-            (out_dir / name).unlink(missing_ok=True)
     return written
 
 
-_PLOTS = ("retrieval.png", "security.png", "privacy.png", "latency.png")
+def _retrieval_plot(
+    plt: Any,
+    path: Path,
+    title: str,
+    names: list[str],
+    off_bars: list[Metric],
+    on_bars: list[Metric | None] | None,
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 4))
+    x = range(len(names))
+    if on_bars is not None:
+        _bars(ax, [i - 0.2 for i in x], off_bars, width=0.4, color="C0", label="rerank off")
+        _bars(ax, [i + 0.2 for i in x], on_bars, width=0.4, color="C1", label="rerank on")
+        ax.legend()
+    else:
+        _bars(ax, list(x), off_bars, width=0.5, color="C0")
+    ax.set_xticks(list(x), names, rotation=30, ha="right")
+    ax.set_ylim(0, 1.05)
+    ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)

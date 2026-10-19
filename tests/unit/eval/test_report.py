@@ -264,7 +264,7 @@ def test_cli_line_falls_back_to_rerank_off() -> None:
     no_reranker = _ranked("rerank=on", None, None, state="inapplicable")
     inapplicable = _suite("retrieval", *_ranked("rerank=off", 0.1, 0.2), *no_reranker)
     assert describe_suite(inapplicable) == (
-        "recall@1=0.100 · recall@5=0.200 · 2 not measured (see summary.md)"
+        "recall@1=0.100 · recall@5=0.200 · 2 inapplicable (see summary.md)"
     )
     # a reranker-off run emits rerank=off only, which main printed as a blank line
     off_only = _suite("retrieval", *_ranked("rerank=off", 0.1, 0.2))
@@ -283,6 +283,15 @@ def test_cli_line_gives_each_reason_once_and_counts_the_rest() -> None:
         "ndcg@10=— (unsupported) · mrr=— (unsupported) · 10 not measured (see summary.md)"
     )
     assert line.count("no labels") == 1
+
+
+def test_cli_line_counts_inapplicable_apart_from_not_measured() -> None:
+    suite = _suite(
+        "retrieval",
+        *_ranked("rerank=off", 0.1, None, None),
+        *_ranked("rerank=on", None, None, None, state="inapplicable"),
+    )
+    assert describe_suite(suite).endswith(" · 2 not measured · 3 inapplicable (see summary.md)")
 
 
 def test_cli_line_counts_arms_it_does_not_show() -> None:
@@ -370,7 +379,9 @@ def test_write_report_with_unmeasured_metrics_writes_every_artifact(tmp_path: Pa
     ]
 
 
-def test_a_plot_with_nothing_measured_is_not_written(tmp_path: Path) -> None:
+def test_a_suite_with_nothing_measured_gets_a_placeholder_plot(
+    tmp_path: Path, figures: dict[str, Any]
+) -> None:
     result = _result(
         tmp_path,
         _suite(
@@ -388,10 +399,45 @@ def test_a_plot_with_nothing_measured_is_not_written(tmp_path: Path) -> None:
 
     written = write_report(result, tmp_path / "out")
 
-    assert sorted(p.name for p in written) == ["results.json", "summary.md"]
+    assert sorted(p.name for p in written) == [
+        "privacy.png",
+        "results.json",
+        "retrieval.png",
+        "security.png",
+        "summary.md",
+    ]
+    expected = {
+        "Retrieval quality": "nothing measured: unsupported (2)",
+        "Attack success by defense": "nothing measured: unsupported (1) · error (1)",
+        "Canary leakage by condition": "nothing measured: unsupported (1)",
+    }
+    for title, line in expected.items():
+        ax = figures[f"{title} — {result.name}"].axes[0]
+        assert ax.texts[0].get_text() == line
+        assert not ax.patches and not ax.axison  # no bars, no axes: nothing to read as a value
     summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
     table = [line for line in summary.splitlines() if line.startswith("| ")]
     assert not any(NUMBER.search(line) for line in table)
+
+
+def test_the_retrieval_plot_is_judged_on_the_metrics_it_would_draw(
+    tmp_path: Path, figures: dict[str, Any]
+) -> None:
+    """A measured metric outside rerank on/off is not in the plot, so it does not make one."""
+    result = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            Metric(suite="retrieval", name="mrr", value=0.25),
+            _missing("retrieval", "recall@1", "rerank=off"),
+            _missing("retrieval", "recall@1", "rerank=on"),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    ax = figures[f"Retrieval quality — {result.name}"].axes[0]
+    assert ax.texts[0].get_text() == "nothing measured: unsupported (2)"
 
 
 @pytest.fixture
@@ -478,7 +524,7 @@ def test_state_labels_stay_inside_the_axes(tmp_path: Path, figures: dict[str, An
     assert lo <= text.get_position()[0] - 0.2 and text.get_position()[0] + 0.2 <= hi
 
 
-def test_a_plot_left_by_an_earlier_run_is_removed_when_this_run_skips_it(
+def test_a_suite_that_ran_replaces_its_old_chart_and_an_absent_suite_is_left_alone(
     tmp_path: Path,
 ) -> None:
     out = tmp_path / "out"
@@ -495,8 +541,8 @@ def test_a_plot_left_by_an_earlier_run_is_removed_when_this_run_skips_it(
         ),
     )
     write_report(earlier, out)
-    (out / "notes.png").write_bytes(b"not ours")
-    assert (out / "retrieval.png").is_file() and (out / "security.png").is_file()
+    old_retrieval = (out / "retrieval.png").read_bytes()
+    old_security = (out / "security.png").read_bytes()
 
     # nothing measured for retrieval, and no security suite at all this time
     later = _result(
@@ -509,6 +555,103 @@ def test_a_plot_left_by_an_earlier_run_is_removed_when_this_run_skips_it(
     )
     write_report(later, out)
 
-    assert not (out / "retrieval.png").exists()
-    assert not (out / "security.png").exists()
-    assert (out / "notes.png").read_bytes() == b"not ours"
+    assert (out / "retrieval.png").read_bytes() != old_retrieval  # now the placeholder
+    assert (out / "security.png").read_bytes() == old_security  # not this run's to touch
+
+
+def test_the_report_deletes_nothing_in_a_users_folder(tmp_path: Path) -> None:
+    """A run with no suites leaves every file alone, whatever its name or case."""
+    out = tmp_path / "out"
+    out.mkdir()
+    mine = ["latency.png", "retrieval.png", "security.PNG", "Privacy.png", "notes.png"]
+    for name in mine:
+        (out / name).write_bytes(name.encode())
+
+    write_report(_result(tmp_path), out)
+
+    for name in mine:
+        assert (out / name).read_bytes() == name.encode()
+
+    # A folder that shares a plot's name, for a suite this run did not include.
+    # (Separate directory: on a case-insensitive filesystem it would be Privacy.png.)
+    other = tmp_path / "other"
+    (other / "security.png").mkdir(parents=True)
+    write_report(_result(tmp_path), other)
+    assert (other / "security.png").is_dir()
+
+
+def test_an_absent_rerank_on_side_is_not_drawn_with_the_off_value(
+    tmp_path: Path, figures: dict[str, Any]
+) -> None:
+    result = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.5),
+            # no rerank=on metric for mrr at all
+            Metric(suite="retrieval", name="recall@1", variant="rerank=off", value=0.25),
+            Metric(suite="retrieval", name="recall@1", variant="rerank=on", value=0.75),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    fig = figures[f"Retrieval quality — {result.name}"]
+    assert _bars_of(fig) == [(-0.2, 0.5), (0.8, 0.25), (1.2, 0.75)]
+    assert list(fig.axes[0].texts) == []
+
+
+def _legend(fig: Any) -> dict[str, str]:
+    legend = fig.axes[0].get_legend()
+    return {
+        t.get_text(): to_hex(h.get_facecolor())
+        for t, h in zip(legend.get_texts(), legend.legend_handles, strict=True)
+    }
+
+
+def _bar_colours(fig: Any) -> set[str]:
+    return {to_hex(p.get_facecolor()) for p in fig.axes[0].patches}
+
+
+def test_security_series_keep_their_own_colours(tmp_path: Path, figures: dict[str, Any]) -> None:
+    result = _result(
+        tmp_path,
+        _suite(
+            "security",
+            Metric(suite="security", name="a_rate", variant="defense=none", value=0.5),
+            _missing("security", "a_rate", "defense=injection_filter", "error"),
+            Metric(suite="security", name="a_rate", variant="defense=prompt_isolation", value=0.25),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    fig = figures[f"Attack success by defense — {result.name}"]
+    assert _legend(fig) == {
+        "none": to_hex("C0"),
+        "injection_filter": to_hex("C1"),
+        "prompt_isolation": to_hex("C2"),
+    }
+    assert _bar_colours(fig) == {to_hex("C0"), to_hex("C2")}
+
+
+def test_privacy_series_keep_their_own_colours(tmp_path: Path, figures: dict[str, Any]) -> None:
+    result = _result(
+        tmp_path,
+        _suite(
+            "privacy",
+            Metric(
+                suite="privacy", name="retrieval_exposure_rate", variant="defense=none", value=1.0
+            ),
+            _missing("privacy", "leakage_rate", "defense=none", "not_estimable"),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    fig = figures[f"Canary leakage by condition — {result.name}"]
+    assert _legend(fig) == {
+        "retrieval exposure": to_hex("C0"),
+        "generation leakage": to_hex("C1"),
+    }
+    assert _bar_colours(fig) == {to_hex("C0")}
