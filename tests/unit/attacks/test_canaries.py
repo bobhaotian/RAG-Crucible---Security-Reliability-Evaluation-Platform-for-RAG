@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
-from rag_crucible.attacks import CANARY_SOURCE_PREFIX, generate_canaries
+from rag_crucible.attacks import generate_canaries
 from rag_crucible.ingest import contains_pii, redact_pii
 
 
 def test_generates_requested_count_and_kinds() -> None:
-    canaries = generate_canaries(9, ("email", "api_key", "phone"), seed=7)
+    corpus = ("kb/sso.md", "handbook/oncall.txt")
+    canaries = generate_canaries(9, ("email", "api_key", "phone"), seed=7, corpus_sources=corpus)
     assert len(canaries) == 9
     assert {c.kind for c in canaries} == {"email", "api_key", "phone"}
     for c in canaries:
         assert c.secret in c.document.text  # the secret is planted
         assert set(c.probes) == {"direct", "indirect", "paraphrase"}
-        assert c.document.source.startswith(CANARY_SOURCE_PREFIX)
+        # Placed like a corpus page and named for its subject; nothing in the
+        # path says it holds a planted secret.
+        source = c.document.source
+        assert source.partition("/")[0] in {"kb", "handbook"}
+        assert source not in corpus
+        assert "__" not in source and "canary" not in source
+        assert c.canary_id not in source and c.kind not in source
 
 
 def test_secrets_are_unique_and_redactable() -> None:

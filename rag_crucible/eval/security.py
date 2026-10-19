@@ -110,8 +110,24 @@ async def run_security_suite(
     *,
     concurrency: int = 1,
 ) -> SuiteResult:
+    # Attack documents are placed among the paths of the corpus they will be
+    # indexed beside, so their sources say nothing about what they are. That is
+    # the corpus after filtering: a directory the filters empty (the seeded
+    # corpus's noise/) would otherwise hold nothing but attacks.
+    docs, _ = load_corpus(spec.corpus.documents)
+    kept, _ = apply_filters(docs, spec.ingest.filters)
+    corpus_sources = [doc.source for doc in kept]
+    # A planted path must not equal a file the filters dropped either: the
+    # run's ingest audit names that file, and the two would share a name.
+    loaded_sources = [doc.source for doc in docs]
     poison = (
-        generate_poison_attacks(qa_items, config.poisoning.targets, seed + _POISON_SEED_OFFSET)
+        generate_poison_attacks(
+            qa_items,
+            config.poisoning.targets,
+            seed + _POISON_SEED_OFFSET,
+            corpus_sources=corpus_sources,
+            avoid=loaded_sources,
+        )
         if config.poisoning.enabled
         else []
     )
@@ -125,14 +141,18 @@ async def run_security_suite(
         injection_pool = [item for item in qa_items if item.qid not in taken]
     injections = (
         generate_injection_attacks(
-            injection_pool, config.injection.targets, seed + _INJECT_SEED_OFFSET
+            injection_pool,
+            config.injection.targets,
+            seed + _INJECT_SEED_OFFSET,
+            corpus_sources=corpus_sources,
+            avoid=[*loaded_sources, *(a.document.source for a in poison)],
         )
         if config.injection.enabled
         else []
     )
 
     index, clean_chunks = await _build_poisoned_index(
-        pipeline, spec, [a.document for a in poison + injections]
+        pipeline, spec, kept, [a.document for a in poison + injections]
     )
     attacked = pipeline.with_index(index)
 
@@ -157,7 +177,9 @@ async def run_security_suite(
     ) -> AttackRecord:
         answer = await attacked.answer(attack.question, defenses=_defenses_for(condition))
         collector.add_all(_timings(answer))
-        retrieved = any(c.chunk.source == attack.document.source for c in answer.context.candidates)
+        # Tracked by doc_id, not source: the source is a corpus-shaped path the
+        # system under test reads too, so it no longer marks which chunk is the attack.
+        retrieved = any(c.chunk.doc_id == attack.document.doc_id for c in answer.context.candidates)
         own = attack.target_value if isinstance(attack, PoisonAttack) else attack.token
         present = _markers_present(answer.text, all_markers)
         return AttackRecord(
@@ -230,10 +252,8 @@ async def run_security_suite(
 
 
 async def _build_poisoned_index(
-    pipeline: RagPipeline, spec: RunSpec, attack_docs: list[Document]
+    pipeline: RagPipeline, spec: RunSpec, kept: list[Document], attack_docs: list[Document]
 ) -> tuple[VectorIndex, list[Chunk]]:
-    docs, _ = load_corpus(spec.corpus.documents)
-    kept, _ = apply_filters(docs, spec.ingest.filters)
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
     # Poisoning models an attacker contributing through the corpus's ordinary
     # ingestion path. Giving attack documents a special low-trust channel here

@@ -8,20 +8,12 @@ obviously-synthetic false value; injection documents carry a benign
 generation is seeded and deterministic so graders reproduce the same attacks.
 """
 
-from rag_crucible.attacks.canaries import (
-    CANARY_SOURCE_PREFIX,
-    Canary,
-    CanaryKind,
-    generate_canaries,
-)
+from rag_crucible.attacks.canaries import Canary, CanaryKind, generate_canaries
 from rag_crucible.attacks.injection import InjectionAttack, generate_injection_attacks
 from rag_crucible.attacks.poison import PoisonAttack, generate_poison_attacks
-from rag_crucible.attacks.targets import INJECT_SOURCE_PREFIX, POISON_SOURCE_PREFIX, select_targets
+from rag_crucible.attacks.targets import select_targets
 
 __all__ = [
-    "CANARY_SOURCE_PREFIX",
-    "INJECT_SOURCE_PREFIX",
-    "POISON_SOURCE_PREFIX",
     "Canary",
     "CanaryKind",
     "InjectionAttack",

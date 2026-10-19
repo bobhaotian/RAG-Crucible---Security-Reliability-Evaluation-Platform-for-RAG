@@ -7,8 +7,6 @@ import re
 import pytest
 
 from rag_crucible.attacks import (
-    INJECT_SOURCE_PREFIX,
-    POISON_SOURCE_PREFIX,
     generate_injection_attacks,
     generate_poison_attacks,
     select_targets,
@@ -24,6 +22,18 @@ ITEMS = [
     )
     for i in range(1, 9)
 ]
+
+CORPUS = ("specs/widget.md", "handbook/returns.txt")
+
+
+def _assert_corpus_shaped(source: str, qid: str) -> None:
+    """The path reads like a corpus page, not a label: no marker, no qid."""
+    assert source.partition("/")[0] in {"specs", "handbook"}
+    assert source.endswith(".md")
+    assert source not in CORPUS
+    assert "__" not in source
+    assert qid not in source
+    assert not any(word in source for word in ("poison", "inject", "attack"))
 
 
 def test_select_targets_is_deterministic_and_sorted() -> None:
@@ -107,7 +117,7 @@ def test_the_seed_changes_which_targets_are_selected() -> None:
 
 
 def test_poison_doc_is_false_retrievable_and_detectable() -> None:
-    attacks = generate_poison_attacks(ITEMS, n=3, seed=7)
+    attacks = generate_poison_attacks(ITEMS, n=3, seed=7, corpus_sources=CORPUS)
     assert len(attacks) == 3
     for attack in attacks:
         item = next(i for i in ITEMS if i.qid == attack.qid)
@@ -117,7 +127,7 @@ def test_poison_doc_is_false_retrievable_and_detectable() -> None:
         assert item.answer not in text
         # echoes the question wording so it competes for retrieval
         assert item.question.rstrip("? ") in text
-        assert attack.document.source.startswith(POISON_SOURCE_PREFIX)
+        _assert_corpus_shaped(attack.document.source, attack.qid)
 
 
 def test_poison_is_deterministic() -> None:
@@ -129,13 +139,13 @@ def test_poison_is_deterministic() -> None:
 
 
 def test_injection_doc_carries_token_and_rotates_templates() -> None:
-    attacks = generate_injection_attacks(ITEMS, n=6, seed=3)
+    attacks = generate_injection_attacks(ITEMS, n=6, seed=3, corpus_sources=CORPUS)
     assert len(attacks) == 6
     for attack in attacks:
         assert attack.token == f"OWNED-{attack.qid}"
         assert attack.token in attack.document.text
         assert attack.question in attack.document.text  # retrievable
-        assert attack.document.source.startswith(INJECT_SOURCE_PREFIX)
+        _assert_corpus_shaped(attack.document.source, attack.qid)
     # Families alternate, so a small target count still samples both.
     assert {a.family for a in attacks} == {"seen", "heldout"}
     assert len([a for a in attacks if a.family == "seen"]) == 3

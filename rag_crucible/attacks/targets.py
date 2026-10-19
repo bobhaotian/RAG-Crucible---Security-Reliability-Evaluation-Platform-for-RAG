@@ -1,14 +1,10 @@
-"""Shared helpers for attack generation: deterministic target selection and
-the source-path prefixes that tag attack documents inside an index."""
+"""Shared helper for attack generation: deterministic target selection."""
 
 from __future__ import annotations
 
 import hashlib
 
 from rag_crucible.qa import QAItem
-
-POISON_SOURCE_PREFIX = "__poison__"
-INJECT_SOURCE_PREFIX = "__inject__"
 
 
 def select_targets(items: list[QAItem], n: int | None, seed: int) -> list[QAItem]:
