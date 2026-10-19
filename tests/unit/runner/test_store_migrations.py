@@ -10,15 +10,18 @@ true zero that has to survive as a measured 0.0.
 from __future__ import annotations
 
 import json
+import os
+import re
 import sqlite3
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 import rag_crucible.runner.store as store_module
-from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
+from rag_crucible.eval.types import EvalRunResult, Metric, MetricState, SuiteResult
 from rag_crucible.runner import STORE_SCHEMA_VERSION, ResultStore, StoreSchemaError
 
 from .test_store import _spec
@@ -163,15 +166,30 @@ def _user_version(path: Path) -> int:
     return int(_rows(path, "PRAGMA user_version")[0][0])
 
 
+def _normalised_sql(sql: str) -> str:
+    """A table's CREATE statement with whitespace collapsed, and without the
+    quotes SQLite adds when a rebuilt table is renamed into place or the line
+    break it keeps before a column ADD COLUMN appended."""
+    sql = re.sub(r"\s+", " ", sql).strip()
+    sql = re.sub(r"\(\s+", "(", re.sub(r"\s+([),])", r"\1", sql))
+    return re.sub(r'^CREATE TABLE "(\w+)"', r"CREATE TABLE \1", sql)
+
+
 def _shape(path: Path) -> dict[str, Any]:
-    """Every table's columns and indexes, as SQLite reports them."""
+    """Every table's columns, indexes and CREATE statement (so its CHECKs), as
+    SQLite reports them."""
     shape: dict[str, Any] = {}
-    for (table,) in _rows(path, "SELECT name FROM sqlite_master WHERE type = 'table'"):
+    tables = _rows(path, "SELECT name, sql FROM sqlite_master WHERE type = 'table'")
+    for table, sql in tables:
         indexes = {
             name: (unique, origin, _rows(path, f"PRAGMA index_info({name})"))
             for _, name, unique, origin, _ in _rows(path, f"PRAGMA index_list({table})")
         }
-        shape[table] = {"columns": _rows(path, f"PRAGMA table_xinfo({table})"), "indexes": indexes}
+        shape[table] = {
+            "columns": _rows(path, f"PRAGMA table_xinfo({table})"),
+            "indexes": indexes,
+            "sql": _normalised_sql(sql),
+        }
     return shape
 
 
@@ -309,6 +327,47 @@ def test_the_store_refuses_a_value_that_contradicts_its_state(tmp_path: Path, or
         _write(path, "INSERT INTO metrics VALUES ('r', 's', 'b', '', 0.0, 'unsupported', 'why')")
 
 
+# Rows SQLite would otherwise accept and this build could not read back.
+UNREADABLE_ROWS = {
+    "no reason": "(NULL, 'unsupported', NULL)",
+    "blank reason": "(NULL, 'unsupported', ' \t\n')",
+    "unknown state": "(NULL, 'bogus', 'why')",
+    "infinite value": "(9e999, 'measured', NULL)",
+    "negative infinity": "(-9e999, 'measured', NULL)",
+}
+
+
+@pytest.mark.parametrize("origin", ["fresh", "migrated"])
+@pytest.mark.parametrize("row", UNREADABLE_ROWS.values(), ids=UNREADABLE_ROWS.keys())
+def test_the_store_refuses_a_row_metric_could_not_load(
+    tmp_path: Path, origin: str, row: str
+) -> None:
+    """The CHECKs are Metric's own rules, so SQL never admits a row whose run
+    then fails to load."""
+    path = tmp_path / "crucible.db"
+    if origin == "migrated":
+        _legacy_store(path)
+    ResultStore(path)
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        _write(
+            path,
+            f"INSERT INTO metrics (run_id, suite, name, variant, value, state, reason) "
+            f"VALUES ('r', 's', 'x', '', {row[1:-1]})",
+        )
+
+
+def test_the_store_accepts_every_metric_state(tmp_path: Path) -> None:
+    """The state CHECK lists exactly MetricState. A new state changes the DDL,
+    which the shape test then holds to a new migration."""
+    path = tmp_path / "crucible.db"
+    ResultStore(path)
+    for i, state in enumerate(get_args(MetricState)):
+        value, reason = ("0.5", "NULL") if state == "measured" else ("NULL", "'why'")
+        _write(
+            path, f"INSERT INTO metrics VALUES ('r', 's', 'm{i}', '', {value}, '{state}', {reason})"
+        )
+
+
 def test_a_failed_migration_leaves_the_store_as_it_was(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -350,3 +409,70 @@ def test_concurrent_opens_of_a_legacy_store_migrate_it_once(tmp_path: Path) -> N
     assert len(stores) == 6
     assert _user_version(path) == STORE_SCHEMA_VERSION
     assert _rows(path, METRICS) == metrics_before
+
+
+def test_a_legacy_store_with_an_infinite_value_is_refused_unchanged(tmp_path: Path) -> None:
+    """The old Metric took inf and today's refuses it. Upgrading would produce a
+    run that cannot be read back, so the open stops first and names the row."""
+    path = tmp_path / "crucible.db"
+    run_id, _ = _legacy_store(path)
+    conn = sqlite3.connect(path)
+    with conn:
+        conn.execute(LEGACY_METRIC_INSERT, (run_id, "security", "boom", "defense=none", 9e999))
+    conn.close()
+    shape_before, metrics_before = _shape(path), _rows(path, METRICS)
+
+    with pytest.raises(StoreSchemaError, match=f"run {run_id} security/boom"):
+        ResultStore(path)
+
+    assert _user_version(path) == 0
+    assert _shape(path) == shape_before
+    assert _rows(path, METRICS) == metrics_before
+
+
+def test_an_unknown_negative_version_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "crucible.db"
+    ResultStore(path)
+    _write(path, "PRAGMA user_version = -1")
+    with pytest.raises(StoreSchemaError, match="unknown store schema -1"):
+        ResultStore(path)
+
+
+def test_a_file_that_is_not_a_complete_store_is_refused_untouched(tmp_path: Path) -> None:
+    path = tmp_path / "notes.db"
+    _write(path, "CREATE TABLE notes (body TEXT)")
+    with pytest.raises(StoreSchemaError, match="missing tables: metrics, records, runs"):
+        ResultStore(path)
+    assert _rows(path, "SELECT name FROM sqlite_master WHERE type = 'table'") == [("notes",)]
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_a_legacy_store_that_is_not_writable_says_why(tmp_path: Path) -> None:
+    path = tmp_path / "crucible.db"
+    _legacy_store(path)
+    path.chmod(stat.S_IRUSR)
+    try:
+        with pytest.raises(StoreSchemaError, match="not writable"):
+            ResultStore(path)
+    finally:
+        path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    assert _user_version(path) == 0
+
+
+def test_an_upgrade_that_cannot_get_the_lock_says_to_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another process mid-upgrade: past the wait, the loser is told to retry
+    instead of failing on a raw lock error."""
+    path = tmp_path / "crucible.db"
+    _legacy_store(path)
+    monkeypatch.setattr(store_module, "_MIGRATION_WAIT_S", 0.2)
+    holder = sqlite3.connect(path, isolation_level=None)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        with pytest.raises(StoreSchemaError, match="another process is upgrading"):
+            ResultStore(path)
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert _user_version(path) == 0

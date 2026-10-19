@@ -10,22 +10,23 @@ cheap for SQLite and trivially thread-safe under FastAPI's threadpool.
 The store is versioned in SQLite's ``PRAGMA user_version``. Opening one runs
 whatever migrations it is behind on, in a single transaction, and refuses a
 store written by a newer version. A fresh store is created at the latest
-version directly. Record payloads carry the result schema they were
-serialised at (``records.payload_schema``), so they can be migrated on read
-like a ``results.json`` is.
+version directly. Record payloads written from version 1 on carry the result
+schema they were serialised at (``records.payload_schema``), so a later reader
+can migrate them; rows written before that hold NULL, meaning unknown.
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 
 from rag_crucible.config import RunSpec
-from rag_crucible.eval.types import RESULT_SCHEMA_VERSION, EvalRunResult, Metric
+from rag_crucible.eval.types import RESULT_SCHEMA_VERSION, EvalRunResult, Metric, MetricState
 from rag_crucible.obs.aggregate import StageStats
 from rag_crucible.runner.ids import new_run_id
 from rag_crucible.runner.models import (
@@ -37,6 +38,17 @@ from rag_crucible.runner.models import (
     SuiteSummary,
 )
 
+# The metrics CHECKs enforce Metric's own rules in SQL, so a row a script or
+# an older writer puts in is one this build can read back: a state from the
+# MetricState literal, a value exactly when measured and never infinite (9e999
+# is SQLite's infinity; NaN is stored as NULL), and a non-blank reason whenever
+# the state is not "measured". "Blank" here is ASCII whitespace; Python's
+# str.strip also strips rarer Unicode spaces, which is the one place the two
+# can disagree. Adding a MetricState changes this DDL, so it needs a store
+# migration (a metrics rebuild), and an older build then refuses the store
+# instead of failing on a state it cannot read.
+_STATES_SQL = ", ".join(f"'{state}'" for state in get_args(MetricState))
+_BLANK_SQL = "char(32, 9, 10, 11, 12, 13)"
 # The latest schema, one statement per entry: ``_migrate`` runs them inside a
 # transaction it opened, and ``executescript`` would commit that early. A fresh
 # store is created from this directly, at STORE_SCHEMA_VERSION.
@@ -67,7 +79,7 @@ _SCHEMA: tuple[str, ...] = (
       PRIMARY KEY (run_id, suite)
     )
     """,
-    """
+    f"""
     CREATE TABLE metrics (
       run_id   TEXT NOT NULL REFERENCES runs(id),
       suite    TEXT NOT NULL,
@@ -77,7 +89,10 @@ _SCHEMA: tuple[str, ...] = (
       state    TEXT NOT NULL DEFAULT 'measured',
       reason   TEXT,
       PRIMARY KEY (run_id, suite, name, variant),
-      CHECK ((value IS NULL) = (state != 'measured'))
+      CHECK (state IN ({_STATES_SQL})),
+      CHECK ((value IS NULL) = (state != 'measured')),
+      CHECK (value IS NULL OR abs(value) < 9e999),
+      CHECK (state = 'measured' OR coalesce(length(trim(reason, {_BLANK_SQL})), 0) > 0)
     )
     """,
     """
@@ -118,7 +133,9 @@ _SCHEMA: tuple[str, ...] = (
 # such as dropping a NOT NULL, rebuilds the table instead: create the new
 # shape, copy every row, drop the old table, rename the new one into place.
 _MIGRATIONS: tuple[tuple[str, ...], ...] = (
-    # 0 -> 1. metrics.value loses its NOT NULL, because a metric that was not
+    # 0 -> 1. Written out literally, not from MetricState: a step is history,
+    # and must not change when the literal does.
+    # metrics.value loses its NOT NULL, because a metric that was not
     # measured has no value and says why in state and reason. Every existing
     # row was written when a metric could only be measured, so it is copied
     # as 'measured'. records gains payload_schema; existing rows keep NULL,
@@ -134,7 +151,12 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
           state    TEXT NOT NULL DEFAULT 'measured',
           reason   TEXT,
           PRIMARY KEY (run_id, suite, name, variant),
-          CHECK ((value IS NULL) = (state != 'measured'))
+          CHECK (state IN ('measured', 'unsupported', 'inapplicable', 'skipped', 'error',
+                           'not_estimable')),
+          CHECK ((value IS NULL) = (state != 'measured')),
+          CHECK (value IS NULL OR abs(value) < 9e999),
+          CHECK (state = 'measured'
+                 OR coalesce(length(trim(reason, char(32, 9, 10, 11, 12, 13))), 0) > 0)
         )
         """,
         "INSERT INTO metrics_v1 (run_id, suite, name, variant, value, state, reason) "
@@ -145,6 +167,36 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
     ),
 )
 STORE_SCHEMA_VERSION = len(_MIGRATIONS)
+
+# The tables every store has had since before versioning. A version-0 file that
+# is missing one is not a complete rag-crucible store.
+_LEGACY_TABLES = frozenset({"runs", "suite_results", "metrics", "records", "stage_timings"})
+
+
+def _refuse_non_finite_values(conn: sqlite3.Connection, path: Path) -> None:
+    """Before migration 1: a version-0 row can hold +/-inf, which the old
+    Metric accepted and today's refuses. Copying it would produce a store whose
+    run cannot be read back, so stop before changing anything and name it."""
+    bad = conn.execute(
+        "SELECT run_id, suite, name, variant FROM metrics WHERE abs(value) >= 9e999"
+    ).fetchall()
+    if bad:
+        named = "; ".join(f"run {r} {s}/{n}{f' [{v}]' if v else ''}" for r, s, n, v in bad[:5])
+        more = f" (and {len(bad) - 5} more)" if len(bad) > 5 else ""
+        raise StoreSchemaError(
+            f"{path} cannot be upgraded: it holds infinite metric values, which this "
+            f"version cannot read back: {named}{more}. Delete or correct those rows "
+            "and open it again."
+        )
+
+
+# Checks a migration needs before it changes anything, keyed on the version
+# it starts from.
+_PRECHECKS: dict[int, Callable[[sqlite3.Connection, Path], None]] = {0: _refuse_non_finite_values}
+
+
+# How long an open waits for another process's migration to finish.
+_MIGRATION_WAIT_S = 60.0
 
 
 class StoreSchemaError(Exception):
@@ -180,19 +232,26 @@ class ResultStore:
         Every step runs in one transaction, so a failure leaves the store as it
         was. ``BEGIN IMMEDIATE`` takes the write lock before the version is
         read again, so an API and a worker that open an old store together
-        migrate it once: the second waits, then finds nothing left to do.
+        migrate it once: the second waits up to ``_MIGRATION_WAIT_S``, then
+        finds nothing left to do. Migration time grows with the metrics table
+        (about 4 µs a row), so a wait that long only runs out on a store with
+        millions of metric rows; the loser is then told to retry rather than
+        handed a raw lock error.
         """
         # isolation_level=None: the sqlite3 module opens and commits no
         # transaction of its own, so the one below is the only one. Foreign
         # keys stay off, the default, as SQLite's table-rebuild procedure
         # requires; rows are copied as they are.
-        conn = sqlite3.connect(self._path, timeout=10.0, isolation_level=None)
+        conn = sqlite3.connect(self._path, timeout=_MIGRATION_WAIT_S, isolation_level=None)
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
             if self._version(conn) == STORE_SCHEMA_VERSION:
+                conn.execute("PRAGMA journal_mode=WAL")
                 return  # the common case, and it takes no write lock
-            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.OperationalError as exc:
+                raise self._unwritable(exc) from exc
             try:
                 version = self._version(conn)
                 if version > STORE_SCHEMA_VERSION:
@@ -201,21 +260,58 @@ class ResultStore:
                         f"{version}; this build reads up to {STORE_SCHEMA_VERSION}). "
                         "Upgrade rag-crucible to open it."
                     )
-                empty = (
-                    conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table'").fetchone()
-                    is None
-                )
-                steps = _SCHEMA if empty else tuple(s for m in _MIGRATIONS[version:] for s in m)
+                if version < 0:
+                    raise StoreSchemaError(f"{self._path} has an unknown store schema {version}")
+                tables = {
+                    name
+                    for (name,) in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+                if not tables:
+                    steps = _SCHEMA
+                else:
+                    if version == 0 and not tables >= _LEGACY_TABLES:
+                        missing = ", ".join(sorted(_LEGACY_TABLES - tables))
+                        raise StoreSchemaError(
+                            f"{self._path} is not a complete rag-crucible store "
+                            f"(missing tables: {missing}); pass a different --db"
+                        )
+                    for start in range(version, STORE_SCHEMA_VERSION):
+                        if start in _PRECHECKS:
+                            _PRECHECKS[start](conn, self._path)
+                    steps = tuple(s for m in _MIGRATIONS[version:] for s in m)
                 for statement in steps:
                     conn.execute(statement)
                 conn.execute(f"PRAGMA user_version = {STORE_SCHEMA_VERSION}")
                 conn.execute("COMMIT")
+            except sqlite3.OperationalError as exc:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                if "readonly" in str(exc) or "locked" in str(exc):
+                    raise self._unwritable(exc) from exc
+                raise
             except BaseException:
                 if conn.in_transaction:
                     conn.execute("ROLLBACK")
                 raise
         finally:
             conn.close()
+
+    def _unwritable(self, exc: sqlite3.OperationalError) -> Exception:
+        """A migration that cannot take the write lock, named as such."""
+        if "readonly" in str(exc):
+            return StoreSchemaError(
+                f"{self._path} needs a one-time upgrade to store schema "
+                f"{STORE_SCHEMA_VERSION}, and the file is not writable. Make it writable "
+                "and open it once, or point --db at a writable copy."
+            )
+        if "locked" in str(exc):
+            return StoreSchemaError(
+                f"another process is upgrading {self._path} and did not finish within "
+                f"{_MIGRATION_WAIT_S:.0f} s; retry once it has."
+            )
+        return exc
 
     @staticmethod
     def _version(conn: sqlite3.Connection) -> int:
@@ -428,8 +524,8 @@ class ResultStore:
                     suite=row["suite"],
                     status=row["status"],
                     error=row["error"],
-                    metric_count=int(summary.get("metric_count", 0)),
-                    record_count=int(summary.get("record_count", 0)),
+                    metric_count=int(summary["metric_count"]),
+                    record_count=int(summary["record_count"]),
                 )
             )
         return RunResults(

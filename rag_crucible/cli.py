@@ -200,7 +200,7 @@ def eval_command(
             typer.echo(f"{suite.suite}: FAILED ({suite.error})")
             continue
         shown = [m for m in suite.metrics if m.variant in ("", "rerank=on", "defense=none")][:4]
-        rendered = " · ".join(f"{m.name}={m.value:.3f}" for m in shown)
+        rendered = " · ".join(f"{m.name}={m.measured_value:.3f}" for m in shown)
         typer.echo(f"{suite.suite}: {rendered}")
     typer.echo("wrote: " + ", ".join(str(p) for p in written))
 
@@ -291,6 +291,10 @@ def serve(
 
     from rag_crucible.api.main import create_app
 
+    # Open (and if needed upgrade) the store here first, so one this build
+    # cannot open is reported the way every other command reports it, not as
+    # a server traceback.
+    _store(db)
     uvicorn.run(create_app(db_path=db, serve_spec_path=spec_path), host=host, port=port)
 
 

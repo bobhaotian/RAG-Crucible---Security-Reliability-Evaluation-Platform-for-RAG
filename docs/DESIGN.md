@@ -428,8 +428,10 @@ and a store from a newer version is refused; a new store is created at the lates
 directly. Version 0 is every store from before versioning. Version 1 rebuilt `metrics`,
 because SQLite cannot drop a `NOT NULL` in place, so that a metric that was not measured
 stores NULL with its state and reason; every existing row was copied as `measured`. It also
-added `records.payload_schema`, so stored payloads can be migrated on read the way a
-`results.json` is. A later nullable column, such as a per-metric sample size or interval
+added `records.payload_schema`: rows written from then on record the result schema of
+their payload, so a later reader can migrate them; earlier rows hold NULL, meaning unknown.
+The `metrics` CHECKs are `Metric`'s own rules, so SQL admits no row this build cannot
+read back, and adding a metric state is a store migration. A later nullable column, such as a per-metric sample size or interval
 bound, is a plain `ADD COLUMN` step and needs no rebuild.
 
 ---
