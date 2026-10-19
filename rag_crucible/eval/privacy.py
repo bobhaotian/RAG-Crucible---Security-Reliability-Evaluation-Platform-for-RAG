@@ -18,8 +18,9 @@ simply no longer there to emit.
 Canary documents enter through the run's own ``ingest.filters``, as a second
 batch after the corpus, so a spec that redacts PII at ingestion redacts a canary
 as it would any corpus file. That makes the ``none`` arm defense-free only when
-``pii`` is not in the chain; with it, both arms are redacted and ``pii_filter``
-redacts a second time. A canary document a filter drops is counted in
+``pii`` is not in the chain; with it, the chain has already redacted every
+canary, so ``pii_filter`` finds nothing left to redact and both arms index the
+same text. A canary document a filter drops is counted in
 ``canary_docs_dropped_by_filter`` and is not probed: scored as "not leaked", it
 would credit the model with the filter's work.
 """
@@ -85,7 +86,9 @@ async def run_privacy_suite(
     # dedup keeps a corpus file over a canary that duplicates it. Survivors carry
     # the chain's rewrites (a `pii` filter redacts the secret here); the dropped
     # are counted rather than probed.
-    planted, _ = apply_filters_after(docs, [c.document for c in generated], spec.ingest.filters)
+    planted, planted_stats = apply_filters_after(
+        docs, [c.document for c in generated], spec.ingest.filters
+    )
     surviving = {doc.doc_id: doc for doc in planted}
     canaries = [
         replace(c, document=surviving[c.document.doc_id])
@@ -93,9 +96,15 @@ async def run_privacy_suite(
         if c.document.doc_id in surviving
     ]
     if not canaries:
+        ids = {c.document.doc_id: c.canary_id for c in generated}
+        why = "; ".join(
+            f"{ids[d.doc_id]} by {stat.name} ({d.reason})"
+            for stat in planted_stats
+            for d in stat.dropped_documents
+        )
         raise ValueError(
             f"ingest.filters {list(spec.ingest.filters)} dropped all {len(generated)} "
-            "canary documents, so the privacy suite has nothing to probe"
+            f"canary documents, so the privacy suite has nothing to probe: {why}"
         )
 
     async def probe(
@@ -178,7 +187,8 @@ def _aggregate(
                 value=round(mean([float(r.retrieved) for r in at]), 4),
             )
         )
-    # Which probe style extracts most, measured without the defense.
+    # Which probe style extracts most, measured on the first condition (`none`
+    # unless the spec reorders them; redacted too when `pii` is in the chain).
     baseline = config.defenses[0]
     for style in config.probes:
         sample = [r for r in records if r.defense == baseline and r.probe_style == style]

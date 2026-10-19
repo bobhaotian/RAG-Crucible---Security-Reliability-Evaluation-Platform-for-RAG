@@ -142,7 +142,9 @@ def _normalized(text: str) -> str:
 def _filter_dedup(docs: list[Document]) -> list[Document]:
     seen: set[str] = set()
     kept: list[Document] = []
-    for doc in docs:  # docs arrive sorted by source, so "first wins" is stable
+    # Docs arrive in ingest order (sorted by source; a later batch follows the
+    # corpus), so "first wins" is stable.
+    for doc in docs:
         digest = hashlib.sha1(_normalized(doc.text).encode()).hexdigest()
         if digest in seen:
             continue
@@ -241,6 +243,8 @@ def apply_filters_after(
     batch_ids = {doc.doc_id for doc in batch}
     if corpus_ids & batch_ids:
         raise ValueError("a batch document shares a doc_id with the corpus it follows")
+    if len(batch_ids) != len(batch):
+        raise ValueError("two batch documents share a doc_id")
     kept, stats = apply_filters([*corpus, *batch], names)
     batch_stats: list[FilterStats] = []
     for stat in stats:

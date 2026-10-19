@@ -184,8 +184,8 @@ empty or error-heavy sample behind a successful-looking aggregate.
 
 **Current risk:** security and privacy currently create their temporary variants through
 `embed_into_index()`, which always returns FAISS, even when the run declares Qdrant.
-Injected attack/canary documents also do not traverse the identical configured filter
-path as clean documents. This can make a run look like it evaluated one backend and
+Injected poison and injection documents also do not traverse the configured filter
+chain as clean documents do (canary documents do, as a second batch after the corpus). This can make a run look like it evaluated one backend and
 ingestion policy when a suite actually evaluated another.
 
 Required work:

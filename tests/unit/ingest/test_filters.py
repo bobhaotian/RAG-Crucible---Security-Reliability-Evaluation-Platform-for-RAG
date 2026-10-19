@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from rag_crucible.config import FilterName
 from rag_crucible.ingest import apply_filters, apply_filters_after
 from rag_crucible.types import DocMeta, Document, doc_id_for
 
@@ -104,12 +105,30 @@ def test_a_second_batch_meets_each_filter_as_a_corpus_file_would() -> None:
     assert kept[0].doc_id == batch[1].doc_id  # identity survives the rewrite
 
 
-def test_a_second_batch_leaves_the_corpus_outcome_alone() -> None:
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["dedup", "language", "boilerplate", "pii"],
+        ["pii", "boilerplate", "language", "dedup"],
+        ["boilerplate", "dedup", "pii", "language"],
+    ],
+)
+def test_a_second_batch_leaves_the_corpus_outcome_alone(names: list[FilterName]) -> None:
     corpus = [_doc("a.txt", ENGLISH), _doc("b.txt", ENGLISH), _doc("c.txt", FRENCH)]
-    names = ["dedup", "language", "boilerplate"]
+    # Duplicates a corpus file, and sorts ahead of it: a last-wins dedup, or one
+    # ordered by path, would drop the corpus copy instead.
+    batch = [_doc("0.md", ENGLISH), _doc("z.md", ENGLISH + " New.")]
     alone, _ = apply_filters(corpus, names)
-    together, _ = apply_filters([*corpus, _doc("z.md", ENGLISH + " New.")], names)
+    together, _ = apply_filters([*corpus, *batch], names)
     assert together[: len(alone)] == alone
+    kept, _ = apply_filters_after(corpus, batch, names)
+    assert [d.source for d in kept] == ["z.md"]
+
+
+def test_a_second_batch_cannot_repeat_a_doc_id() -> None:
+    doc = _doc("kb/a.md", ENGLISH)
+    with pytest.raises(ValueError, match="two batch documents"):
+        apply_filters_after([], [doc, doc], ["dedup"])
 
 
 def test_a_second_batch_cannot_reuse_a_corpus_doc_id() -> None:

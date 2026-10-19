@@ -5,6 +5,7 @@ defense driving leakage to zero."""
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ from rag_crucible.eval import EvalRunResult, PrivacyRecord, run_eval
 from rag_crucible.eval.report import render_summary, write_report
 from rag_crucible.index import FaissIndex
 from rag_crucible.ingest import build_index
-from rag_crucible.types import Chunk
+from rag_crucible.types import Chunk, doc_id_for
 
 from ..conftest import make_fake_spec
 
@@ -150,7 +151,30 @@ async def test_pii_in_ingest_filters_redacts_canaries_before_indexing(
     # Redacted, not removed: the host documents are still found.
     exposure = result.metric("privacy", "retrieval_exposure_rate", "defense=none")
     assert exposure is not None and exposure > 0.9
-    assert "`none` is not defense-free here" in render_summary(result)
+    summary = render_summary(result)
+    assert "`none` is not defense-free here" in summary
+    assert "(no redaction)" not in summary
+    assert "Leakage by probe style (`none` arm, canaries redacted by `ingest.filters`)" in summary
+
+    # A result from code whose canaries skipped the filters carries no drop
+    # count; its spec saying `pii` does not mean its canaries were redacted.
+    old = result.model_copy(
+        update={
+            "suites": tuple(
+                s.model_copy(
+                    update={
+                        "metrics": tuple(
+                            m for m in s.metrics if m.name != "canary_docs_dropped_by_filter"
+                        )
+                    }
+                )
+                for s in result.suites
+            )
+        }
+    )
+    old_summary = render_summary(old)
+    assert "defense-free" not in old_summary
+    assert "(no redaction)" in old_summary
 
 
 async def test_default_chain_privacy_numbers_match_the_committed_run(
@@ -172,12 +196,17 @@ async def test_default_chain_privacy_numbers_match_the_committed_run(
 
 
 async def test_a_canary_the_filters_drop_is_counted_not_probed(
-    tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tiny_corpus: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    indexed: list[list[Chunk]],
 ) -> None:
     original = privacy.apply_filters_after
+    dropped: list[str] = []
 
     def dropping_the_first(*args: Any, **kwargs: Any) -> Any:
         kept, stats = original(*args, **kwargs)
+        dropped.append(kept[0].doc_id)
         return kept[1:], stats
 
     monkeypatch.setattr(privacy, "apply_filters_after", dropping_the_first)
@@ -187,13 +216,63 @@ async def test_a_canary_the_filters_drop_is_counted_not_probed(
     assert len(probed) == 5 and "email-00" not in probed  # 6 planted, the first dropped
     assert result.metric("privacy", "canary_docs_dropped_by_filter") == 1.0
     assert len(_records(result)) == 5 * 2  # the denominators hold the five probed
+    assert all(chunk.doc_id != dropped[0] for chunks in indexed for chunk in chunks)
     assert "Canary documents dropped by ingest filters: 1" in render_summary(result)
+
+
+async def test_a_canary_duplicating_a_corpus_file_loses_to_it_whatever_its_path(
+    tiny_corpus: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    indexed: list[list[Chunk]],
+) -> None:
+    """No monkeypatched filter: the run's own dedup drops a canary that copies
+    a corpus file, although the canary's path sorts ahead of the file's."""
+    returns = (tiny_corpus / "handbook" / "returns.txt").read_text(encoding="utf-8")
+    original = privacy.generate_canaries
+    copied: list[str] = []
+
+    def one_copies_the_corpus(*args: Any, **kwargs: Any) -> Any:
+        canaries = original(*args, **kwargs)
+        source = "handbook/a-returns.md"  # sorts before handbook/returns.txt
+        document = canaries[0].document.model_copy(
+            update={"doc_id": doc_id_for(source, returns), "source": source, "text": returns}
+        )
+        copied.append(document.doc_id)
+        return [replace(canaries[0], document=document), *canaries[1:]]
+
+    monkeypatch.setattr(privacy, "generate_canaries", one_copies_the_corpus)
+    result = await _run(_privacy_spec(tiny_corpus, ("none",)), tmp_path)
+
+    assert result.metric("privacy", "canary_docs_dropped_by_filter") == 1.0
+    assert "email-00" not in {record.canary_id for record in _records(result)}
+    sources = {chunk.source for chunk in indexed[0]}
+    assert "handbook/returns.txt" in sources  # the corpus copy is the one indexed
+    assert all(chunk.doc_id != copied[0] for chunk in indexed[0])
 
 
 async def test_a_privacy_suite_left_with_no_canaries_fails_rather_than_scoring(
     tiny_corpus: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(privacy, "apply_filters_after", lambda *args, **kwargs: ([], []))
+    returns = (tiny_corpus / "handbook" / "returns.txt").read_text(encoding="utf-8")
+    original = privacy.generate_canaries
+
+    def all_copy_the_corpus(*args: Any, **kwargs: Any) -> Any:
+        return [
+            replace(
+                canary,
+                document=canary.document.model_copy(
+                    update={
+                        "doc_id": doc_id_for(f"handbook/copy-{i}.md", returns),
+                        "source": f"handbook/copy-{i}.md",
+                        "text": returns,
+                    }
+                ),
+            )
+            for i, canary in enumerate(original(*args, **kwargs))
+        ]
+
+    monkeypatch.setattr(privacy, "generate_canaries", all_copy_the_corpus)
     spec = _privacy_spec(tiny_corpus, ("none",))
     await build_index(spec, tmp_path / "index")
     index, _ = FaissIndex.load(tmp_path / "index")
@@ -202,3 +281,5 @@ async def test_a_privacy_suite_left_with_no_canaries_fails_rather_than_scoring(
     suite = next(s for s in result.suites if s.suite == "privacy")
     assert suite.status == "failed" and suite.metrics == ()
     assert suite.error is not None and "dropped all 6 canary documents" in suite.error
+    # The error names what was dropped and by which filter, since no record will.
+    assert "email-00 by dedup (duplicate_content)" in suite.error

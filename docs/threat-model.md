@@ -164,9 +164,10 @@ text survives) while driving **generation leakage** to zero — the secret is no
 longer in the index to emit. Canary documents pass through the run's own
 `ingest.filters` as a second batch after the corpus, so with `pii` in that chain
 every arm is redacted at ingestion: the `none` arm is then not defense-free, and
-`pii_filter` redacts a second time. A canary a filter drops is counted in
-`canary_docs_dropped_by_filter` and kept out of the leakage denominators. The
-suite reports all of this honestly: it is a finding, not a gap. `answer_integrity` is an experimental consistency layer for
+`pii_filter` finds nothing left to redact, so both arms measure the same index.
+A canary a filter drops is counted in `canary_docs_dropped_by_filter` and kept
+out of the leakage denominators. The suite reports all of this honestly: it is
+a finding, not a gap. `answer_integrity` is an experimental consistency layer for
 quantity-valued claims. Attack documents take the same chunker and provenance
 channel as clean documents, so the harness does not label the poison for the
 defense. Poison and injection documents do not yet pass through
