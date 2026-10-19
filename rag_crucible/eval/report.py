@@ -9,10 +9,15 @@ its state, and each section lists the reasons under a "Not measured" heading.
 It is never printed as a number or drawn as a bar of height zero, and a figure
 derived from two metrics (the rerank lift) is given only when both were
 measured. A metric the run did not emit at all is an em dash.
+
+A plot is written only when something in it was measured. When one is not
+written, a file of that name left in the folder by an earlier run is removed,
+so the folder never holds a chart of numbers its summary says were not measured.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
@@ -34,16 +39,44 @@ def format_value(metric: Metric | None, digits: int = 4) -> str:
     return f"{metric.value:.{digits}f}"
 
 
-def describe(metric: Metric, digits: int = 3) -> str:
-    """A metric on one line, for the CLI: ``name=0.123``, or
-    ``name=— (unsupported: <reason>)`` when it was not measured."""
-    if metric.value is None:
-        return f"{metric.name}={ABSENT} ({metric.state}: {_one_line(metric.reason)})"
-    return f"{metric.name}={metric.value:.{digits}f}"
+def describe_suite(suite: SuiteResult, limit: int = 4) -> str:
+    """The ``rag-crucible eval`` line for one suite: up to ``limit`` headline
+    metrics, each distinct reason given once, then a count of every metric in
+    the suite that was not measured, shown or not.
+
+    Retrieval headlines are the rerank-on figures only when the suite measured
+    at least one; otherwise rerank off. An ``inapplicable`` rerank-on metric
+    (no reranker configured) is not a figure to show in its place.
+    """
+    rerank_on = any(m.variant == "rerank=on" and m.value is not None for m in suite.metrics)
+    headline = ("", "rerank=on" if rerank_on else "rerank=off", "defense=none")
+    explained: set[tuple[str, str]] = set()
+    parts: list[str] = []
+    for m in [m for m in suite.metrics if m.variant in headline][:limit]:
+        if m.value is not None:
+            parts.append(f"{m.name}={m.value:.3f}")
+            continue
+        key = (m.state, _one_line(m.reason))
+        detail = m.state if key in explained else f"{m.state}: {key[1]}"
+        explained.add(key)
+        parts.append(f"{m.name}={ABSENT} ({detail})")
+    missing = sum(m.value is None for m in suite.metrics)
+    if missing:
+        parts.append(f"{missing} not measured (see summary.md)")
+    return " · ".join(parts)
 
 
 def _one_line(text: str | None) -> str:
     return " ".join((text or "").split())
+
+
+# Characters that would make a reason render as emphasis, code, a link, an
+# entity or raw HTML. A reason is plain text; a backslash keeps it that way.
+_MARKDOWN = re.compile(r"([\\`*_\[\]<>~&])")
+
+
+def _plain(text: str | None) -> str:
+    return _MARKDOWN.sub(r"\\\1", _one_line(text))
 
 
 def _not_measured(metrics: Iterable[Metric]) -> list[str]:
@@ -53,8 +86,8 @@ def _not_measured(metrics: Iterable[Metric]) -> list[str]:
     grouped: dict[tuple[str, str], list[str]] = {}
     for m in metrics:
         if m.value is None:
-            label = f"{m.name} [{m.variant}]" if m.variant else m.name
-            grouped.setdefault((m.state, _one_line(m.reason)), []).append(label)
+            label = _label(m)
+            grouped.setdefault((m.state, _plain(m.reason)), []).append(label)
     if not grouped:
         return []
     lines = ["Not measured:", ""]
@@ -111,12 +144,16 @@ def _suite(result: EvalRunResult, name: str) -> SuiteResult | None:
 
 
 def _retrieval_table(suite: SuiteResult) -> list[str]:
+    ranked = [m for m in suite.metrics if m.variant in ("rerank=off", "rerank=on")]
     names: list[str] = []
-    for metric in suite.metrics:  # preserve emission order, dedupe across variants
+    for metric in ranked:  # preserve emission order, dedupe across variants
         if metric.name not in names:
             names.append(metric.name)
-    off = {m.name: m for m in suite.metrics if m.variant == "rerank=off"}
-    on = {m.name: m for m in suite.metrics if m.variant == "rerank=on"}
+    off = {m.name: m for m in ranked if m.variant == "rerank=off"}
+    on = {m.name: m for m in ranked if m.variant == "rerank=on"}
+    # No suite emits another variant today. Listed as itself rather than as an
+    # empty table row, which would show a measured value as absent.
+    other = [m for m in suite.metrics if m.variant not in ("rerank=off", "rerank=on")]
 
     lines = ["## Retrieval", ""]
     if on:
@@ -127,12 +164,20 @@ def _retrieval_table(suite: SuiteResult) -> list[str]:
         for name in names:
             a, b = off.get(name), on.get(name)
             lines.append(f"| {name} | {format_value(a)} | {format_value(b)} | {_lift(a, b)} |")
-    else:
+        lines.append("")
+    elif names:
         lines += ["| metric | value |", "|---|---|"]
         lines += [f"| {name} | {format_value(off.get(name))} |" for name in names]
-    lines.append("")
+        lines.append("")
+    if other:
+        lines += [f"- {_label(m)}: {format_value(m)}" for m in other]
+        lines.append("")
     lines += _not_measured(suite.metrics)
     return lines
+
+
+def _label(m: Metric) -> str:
+    return f"{m.name} [{m.variant}]" if m.variant else m.name
 
 
 def _faithfulness_table(suite: SuiteResult) -> list[str]:
@@ -239,17 +284,35 @@ def _bars(
     metrics: Sequence[Metric | None],
     *,
     width: float,
+    color: str,
     label: str | None = None,
 ) -> None:
-    """Bars for the measured metrics only. A metric that was not measured gets
-    its state written at its position instead, since an empty slot or a
-    zero-height bar would read as 0; one the run did not emit gets nothing."""
+    """One series: bars for its measured metrics only, in the series' colour.
+
+    A metric that was not measured gets its state written in its slot instead
+    of a bar, and the slot is kept inside the axes. A metric the run did not
+    emit gets nothing, so its empty slot looks the same as a measured zero (a
+    bar of height 0). That ambiguity predates metric states; the summary's
+    table tells the two apart.
+    """
     drawn = [
         (x, m.value) for x, m in zip(positions, metrics, strict=True) if m and m.value is not None
     ]
-    ax.bar([x for x, _ in drawn], [v for _, v in drawn], width=width, label=label)
+    if drawn:
+        ax.bar([x for x, _ in drawn], [v for _, v in drawn], width=width, label=label, color=color)
+    elif label is not None:
+        # With no bar to take its colour from, the legend would give this series
+        # the first series' colour. A zero-size stand-in keeps its own and draws
+        # nothing.
+        from matplotlib.container import BarContainer
+        from matplotlib.patches import Rectangle
+
+        stand_in = Rectangle((0, 0), 0, 0, facecolor=color)
+        ax.add_container(BarContainer([stand_in], label=label))
     for x, m in zip(positions, metrics, strict=True):
         if m is not None and m.value is None:
+            # The slot a bar would occupy, so the label is not drawn off the axes.
+            ax.update_datalim([(x - width / 2, 0.0), (x + width / 2, 0.0)])
             ax.text(
                 x, 0.02, m.state, rotation=90, ha="center", va="bottom", fontsize=8, color="0.35"
             )
@@ -267,20 +330,20 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
 
     written = []
     retrieval = _suite(result, "retrieval")
-    if retrieval is not None and _any_measured(retrieval.metrics):
-        off = {m.name: m for m in retrieval.metrics if m.variant == "rerank=off"}
-        on = {m.name: m for m in retrieval.metrics if m.variant == "rerank=on"}
-        names = list(off)
+    off = {m.name: m for m in retrieval.metrics if m.variant == "rerank=off"} if retrieval else {}
+    on = {m.name: m for m in retrieval.metrics if m.variant == "rerank=on"} if retrieval else {}
+    names = list(off)
+    off_bars = [off[n] for n in names]
+    on_bars: list[Metric | None] = [on.get(n) for n in names] if on else []
+    if _any_measured(off_bars + on_bars):
         fig, ax = plt.subplots(figsize=(8, 4))
         x = range(len(names))
         if on:
-            _bars(ax, [i - 0.2 for i in x], [off[n] for n in names], width=0.4, label="rerank off")
-            _bars(
-                ax, [i + 0.2 for i in x], [on.get(n) for n in names], width=0.4, label="rerank on"
-            )
+            _bars(ax, [i - 0.2 for i in x], off_bars, width=0.4, color="C0", label="rerank off")
+            _bars(ax, [i + 0.2 for i in x], on_bars, width=0.4, color="C1", label="rerank on")
             ax.legend()
         else:
-            _bars(ax, list(x), [off[n] for n in names], width=0.5)
+            _bars(ax, list(x), off_bars, width=0.5, color="C0")
         ax.set_xticks(list(x), names, rotation=30, ha="right")
         ax.set_ylim(0, 1.05)
         ax.set_title(f"Retrieval quality — {result.name}")
@@ -310,6 +373,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
                     [i + offset for i in x],
                     [success.get((n, defense)) for n in names],
                     width=width,
+                    color=f"C{j % 10}",  # the default cycle's own order
                     label=defense,
                 )
             ax.set_xticks(list(x), names, rotation=20, ha="right")
@@ -343,6 +407,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
                 [i - 0.2 for i in x],
                 [by_defense[c].get("retrieval_exposure_rate") for c in conditions],
                 width=0.4,
+                color="C0",
                 label="retrieval exposure",
             )
             _bars(
@@ -350,6 +415,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
                 [i + 0.2 for i in x],
                 [by_defense[c].get("leakage_rate") for c in conditions],
                 width=0.4,
+                color="C1",
                 label="generation leakage",
             )
             ax.set_xticks(list(x), conditions)
@@ -380,4 +446,12 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         plt.close(fig)
         written.append(path)
 
+    # The default folder, results/<spec name>, is reused run after run. A plot
+    # this run did not draw must not survive from the last one.
+    for name in _PLOTS:
+        if out_dir / name not in written:
+            (out_dir / name).unlink(missing_ok=True)
     return written
+
+
+_PLOTS = ("retrieval.png", "security.png", "privacy.png", "latency.png")

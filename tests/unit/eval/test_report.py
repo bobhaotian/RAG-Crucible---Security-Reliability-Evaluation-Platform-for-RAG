@@ -4,14 +4,22 @@ never as a number, a zero, or a bar."""
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import matplotlib
 import pytest
+from matplotlib.colors import to_hex
 
 from rag_crucible.eval import MetricState
-from rag_crucible.eval.report import _bars, describe, format_value, render_summary, write_report
+from rag_crucible.eval.report import (
+    _bars,
+    describe_suite,
+    format_value,
+    render_summary,
+    write_report,
+)
 from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
 
 from ...conftest import make_fake_spec
@@ -197,7 +205,8 @@ def test_privacy_table_and_probe_line(tmp_path: Path) -> None:
     assert _row(summary, "none") == "| none | — (error) | 0.2500 |"
     assert _row(summary, "pii_filter") == "| pii_filter | — | 0.0000 |"
     assert "direct 0.50 · indirect — (not_estimable)" in summary
-    assert "- leakage_rate@indirect — not_estimable: why leakage_rate@indirect" in summary
+    # the reason is markdown-escaped; the label is not
+    assert "- leakage_rate@indirect — not_estimable: why leakage\\_rate@indirect" in summary
 
 
 def test_reasons_are_kept_on_one_line(tmp_path: Path) -> None:
@@ -211,12 +220,97 @@ def test_reasons_are_kept_on_one_line(tmp_path: Path) -> None:
     summary = render_summary(_result(tmp_path, _suite("faithfulness", metric)))
 
     assert "- groundedness — error: judge failed twice" in summary
-    assert describe(metric) == "groundedness=— (error: judge failed twice)"
+    assert describe_suite(_suite("faithfulness", metric)) == (
+        "groundedness=— (error: judge failed twice) · 1 not measured (see summary.md)"
+    )
 
 
-def test_describe_for_the_cli() -> None:
-    assert describe(Metric(suite="s", name="mrr", value=0.25)) == "mrr=0.250"
-    assert describe(_missing("s", "mrr", state="skipped")) == "mrr=— (skipped: why mrr)"
+def test_reasons_are_plain_text_in_markdown(tmp_path: Path) -> None:
+    metric = Metric(
+        suite="faithfulness",
+        name="groundedness",
+        value=None,
+        state="error",
+        reason="judge said **no** <b>x</b> [see](http://e.x) `code` & co_op ~~gone~~ \\ end",
+    )
+    summary = render_summary(_result(tmp_path, _suite("faithfulness", metric)))
+
+    assert (
+        "- groundedness — error: judge said \\*\\*no\\*\\* \\<b\\>x\\</b\\> "
+        "\\[see\\](http://e.x) \\`code\\` \\& co\\_op \\~\\~gone\\~\\~ \\\\ end"
+    ) in summary
+
+
+def _ranked(
+    variant: str, *values: float | None, state: MetricState = "unsupported"
+) -> list[Metric]:
+    names = ("recall@1", "recall@5", "ndcg@10", "mrr", "recall@10")
+    return [
+        Metric(suite="retrieval", name=n, variant=variant, value=v)
+        if v is not None
+        else Metric(
+            suite="retrieval", name=n, variant=variant, value=None, state=state, reason="no labels"
+        )
+        for n, v in zip(names, values, strict=False)
+    ]
+
+
+def test_cli_line_shows_rerank_on_when_it_was_measured() -> None:
+    suite = _suite("retrieval", *_ranked("rerank=off", 0.1, 0.2), *_ranked("rerank=on", 0.3, 0.4))
+    assert describe_suite(suite) == "recall@1=0.300 · recall@5=0.400"
+
+
+def test_cli_line_falls_back_to_rerank_off() -> None:
+    no_reranker = _ranked("rerank=on", None, None, state="inapplicable")
+    inapplicable = _suite("retrieval", *_ranked("rerank=off", 0.1, 0.2), *no_reranker)
+    assert describe_suite(inapplicable) == (
+        "recall@1=0.100 · recall@5=0.200 · 2 not measured (see summary.md)"
+    )
+    # a reranker-off run emits rerank=off only, which main printed as a blank line
+    off_only = _suite("retrieval", *_ranked("rerank=off", 0.1, 0.2))
+    assert describe_suite(off_only) == "recall@1=0.100 · recall@5=0.200"
+
+
+def test_cli_line_gives_each_reason_once_and_counts_the_rest() -> None:
+    unlabelled = _suite(
+        "retrieval",
+        *_ranked("rerank=off", None, None, None, None, None),
+        *_ranked("rerank=on", None, None, None, None, None),
+    )
+    line = describe_suite(unlabelled)
+    assert line == (
+        "recall@1=— (unsupported: no labels) · recall@5=— (unsupported) · "
+        "ndcg@10=— (unsupported) · mrr=— (unsupported) · 10 not measured (see summary.md)"
+    )
+    assert line.count("no labels") == 1
+
+
+def test_cli_line_counts_arms_it_does_not_show() -> None:
+    """The headline is the `none` arm; a defense arm that all errored still shows up."""
+    suite = _suite(
+        "security",
+        Metric(
+            suite="security", name="knowledge_corruption_rate", variant="defense=none", value=0.5
+        ),
+        _missing("security", "knowledge_corruption_rate", "defense=prompt_isolation", "error"),
+        _missing("security", "injection_compliance_rate", "defense=prompt_isolation", "error"),
+    )
+    assert describe_suite(suite) == (
+        "knowledge_corruption_rate=0.500 · 2 not measured (see summary.md)"
+    )
+
+
+def test_a_retrieval_metric_outside_the_rerank_variants_is_shown_as_measured(
+    tmp_path: Path,
+) -> None:
+    result = _result(
+        tmp_path, _suite("retrieval", Metric(suite="retrieval", name="mrr", value=0.25))
+    )
+
+    summary = render_summary(result)
+
+    assert "- mrr: 0.2500" in summary
+    assert "| mrr |" not in summary
 
 
 def test_bars_draw_only_measured_values_and_label_the_rest() -> None:
@@ -228,6 +322,7 @@ def test_bars_draw_only_measured_values_and_label_the_rest() -> None:
         [0.0, 1.0, 2.0],
         [Metric(suite="s", name="a", value=0.0), _missing("s", "b", state="error"), None],
         width=0.4,
+        color="C0",
     )
     heights = [patch.get_height() for patch in ax.patches]
     texts = [(text.get_position()[0], text.get_text()) for text in ax.texts]
@@ -283,6 +378,11 @@ def test_a_plot_with_nothing_measured_is_not_written(tmp_path: Path) -> None:
             _missing("retrieval", "mrr", "rerank=off"),
             _missing("retrieval", "mrr", "rerank=on"),
         ),
+        _suite(
+            "security",
+            _missing("security", "knowledge_corruption_rate", "defense=none"),
+            _missing("security", "knowledge_corruption_rate", "defense=injection_filter", "error"),
+        ),
         _suite("privacy", _missing("privacy", "leakage_rate", "defense=none")),
     )
 
@@ -292,3 +392,123 @@ def test_a_plot_with_nothing_measured_is_not_written(tmp_path: Path) -> None:
     summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
     table = [line for line in summary.splitlines() if line.startswith("| ")]
     assert not any(NUMBER.search(line) for line in table)
+
+
+@pytest.fixture
+def figures(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
+    """The figures write_report draws, by title, kept open for inspection."""
+    import matplotlib.pyplot as plt
+
+    kept: dict[str, Any] = {}
+    close = plt.close
+    monkeypatch.setattr(plt, "close", lambda fig: kept.setdefault(fig.axes[0].get_title(), fig))
+    yield kept
+    for fig in kept.values():
+        close(fig)
+
+
+def _bars_of(fig: Any) -> list[tuple[float, float]]:
+    ax = fig.axes[0]
+    return sorted(
+        (round(p.get_x() + p.get_width() / 2, 6), round(p.get_height(), 6)) for p in ax.patches
+    )
+
+
+def test_a_missing_rerank_on_side_is_not_drawn_with_the_off_value(
+    tmp_path: Path, figures: dict[str, Any]
+) -> None:
+    result = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.5),
+            _missing("retrieval", "mrr", "rerank=on", "error"),
+            Metric(suite="retrieval", name="recall@1", variant="rerank=off", value=0.25),
+            Metric(suite="retrieval", name="recall@1", variant="rerank=on", value=0.75),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    fig = figures[f"Retrieval quality — {result.name}"]
+    assert _bars_of(fig) == [(-0.2, 0.5), (0.8, 0.25), (1.2, 0.75)]
+    assert [(t.get_position()[0], t.get_text()) for t in fig.axes[0].texts] == [(0.2, "error")]
+
+
+def test_a_series_with_no_bar_keeps_its_own_legend_colour(
+    tmp_path: Path, figures: dict[str, Any]
+) -> None:
+    result = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.5),
+            _missing("retrieval", "mrr", "rerank=on"),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    legend = figures[f"Retrieval quality — {result.name}"].axes[0].get_legend()
+    colours = {
+        t.get_text(): to_hex(h.get_facecolor())
+        for t, h in zip(legend.get_texts(), legend.legend_handles, strict=True)
+    }
+    assert colours == {"rerank off": to_hex("C0"), "rerank on": to_hex("C1")}
+
+
+def test_state_labels_stay_inside_the_axes(tmp_path: Path, figures: dict[str, Any]) -> None:
+    # The last slot holds only a not-measured metric, beyond every bar.
+    result = _result(
+        tmp_path,
+        _suite(
+            "security",
+            Metric(suite="security", name="a_rate", variant="defense=none", value=0.5),
+            Metric(suite="security", name="b_rate", variant="defense=none", value=0.5),
+            _missing("security", "b_rate", "defense=injection_filter", "error"),
+        ),
+    )
+
+    write_report(result, tmp_path / "out")
+
+    fig = figures[f"Attack success by defense — {result.name}"]
+    fig.canvas.draw()
+    lo, hi = fig.axes[0].get_xlim()
+    (text,) = fig.axes[0].texts
+    assert lo <= text.get_position()[0] - 0.2 and text.get_position()[0] + 0.2 <= hi
+
+
+def test_a_plot_left_by_an_earlier_run_is_removed_when_this_run_skips_it(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "out"
+    earlier = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.5),
+            Metric(suite="retrieval", name="mrr", variant="rerank=on", value=0.6),
+        ),
+        _suite(
+            "security",
+            Metric(suite="security", name="a_rate", variant="defense=none", value=0.5),
+        ),
+    )
+    write_report(earlier, out)
+    (out / "notes.png").write_bytes(b"not ours")
+    assert (out / "retrieval.png").is_file() and (out / "security.png").is_file()
+
+    # nothing measured for retrieval, and no security suite at all this time
+    later = _result(
+        tmp_path,
+        _suite(
+            "retrieval",
+            _missing("retrieval", "mrr", "rerank=off"),
+            _missing("retrieval", "mrr", "rerank=on"),
+        ),
+    )
+    write_report(later, out)
+
+    assert not (out / "retrieval.png").exists()
+    assert not (out / "security.png").exists()
+    assert (out / "notes.png").read_bytes() == b"not ours"

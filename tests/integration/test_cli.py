@@ -218,7 +218,7 @@ def test_eval_prints_the_state_and_reason_of_a_metric_it_could_not_measure(
     assert result.exit_code == 0, result.output
     assert (
         "retrieval: mrr=0.250 · recall@5=— (unsupported: no item in qa.jsonl carries gold labels)"
-        in result.output
+        " · 1 not measured (see summary.md)" in result.output
     )
     summary = (tmp_path / "out" / "summary.md").read_text(encoding="utf-8")
     # no rerank=off metrics were emitted, so that column is absent, not zero
