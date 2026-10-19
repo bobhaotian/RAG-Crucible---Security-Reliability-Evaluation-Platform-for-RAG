@@ -1,0 +1,18 @@
+{
+  // Compiles the dashboard's pure selectors (src/metrics.ts) to plain ES modules
+  // for `npm test`, which runs test/*.test.mjs with Node's built-in test runner.
+  // No test framework and no new dependency: the components are thin over these
+  // functions, and every rule about unmeasured metrics lives here.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "allowImportingTsExtensions": false,
+    "module": "ES2022",
+    "target": "ES2022",
+    "outDir": ".test-build",
+    "rootDir": "src"
+  },
+  "include": [],
+  "files": ["src/metrics.ts"]
+}

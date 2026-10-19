@@ -860,6 +860,84 @@ table.diff th {
   color: var(--bad-text);
 }
 
+/* ------------------------------------------------------ not measured */
+/* A metric with a state instead of a value. Styled as text, never as a bar or
+   a number, so it cannot be read as a zero. */
+
+.bar-na {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  line-height: 14px;
+  font-size: 10px;
+  color: var(--warn);
+}
+
+.kpi-value.na {
+  font-size: 18px;
+  color: var(--warn);
+  line-height: 1.7;
+}
+
+.kpi-reason {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  overflow-wrap: anywhere; /* a long reason wraps inside its card, never widens the page */
+}
+
+.kpis li,
+.kpis button {
+  min-width: 0;
+}
+
+.db-delta.na,
+table.diff td.na {
+  color: var(--warn);
+}
+
+.not-measured {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: #e6a23c14;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.not-measured h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warn);
+}
+
+.not-measured ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.not-measured li {
+  overflow-wrap: anywhere;
+}
+
+.not-measured .state {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.panel-error {
+  border-color: var(--bad);
+}
+
+.panel-error p {
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 860px) {
   .layout {
     grid-template-columns: 1fr;
