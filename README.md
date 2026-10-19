@@ -350,11 +350,18 @@ to `results/demo-local-baseline/<run_id>/`:
 results/demo-local-baseline/<run_id>/
 ├── results.json
 ├── summary.md
-├── retrieval.png
+├── retrieval.png      # each plot only when something in it was measured
 ├── security.png       # when the suite is configured
 ├── privacy.png        # when the suite is configured
 └── latency.png
 ```
+
+A plot is drawn only from measured values. A metric that was not measured (no gold
+labels, a skipped arm, an error) is shown in `summary.md` with its state and reason, and
+in a plot as its state written where its bar would be, never as a bar of zero. A plot
+with nothing measured in it is not written at all, and `rag-crucible eval`, which
+reuses `results/<spec name>/`, removes an older file of that name, so a folder never
+holds a chart of numbers its summary says were not measured.
 
 Each run gets its own directory, so `rag-crucible submit --force` never overwrites an
 earlier report. Set `RAG_CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
