@@ -1,17 +1,108 @@
 // Derive chart-ready shapes from a run's flat metric list. Every selector
 // tolerates missing suites, so partial runs still render.
+//
+// A metric reaches a panel in one of three conditions, and they are never
+// merged: measured (a number, which may be a true zero), emitted but not
+// measured (a state and a reason, value null), or absent (the run did not emit
+// it). A null is never drawn as 0, and a figure derived from two metrics (a
+// delta, a worst case, an inverted radar axis) exists only when every input
+// was measured.
 
-import type { Metric, RunResults, RunRow, StageStat } from "./api";
+import type { Metric, MetricState, RunResults, RunRow, StageStat } from "./api";
 
-export function metric(
+export interface NotMeasured {
+  measured: false;
+  state: Exclude<MetricState, "measured">;
+  reason: string;
+}
+
+export type Reading = { measured: true; value: number } | NotMeasured;
+
+/** A metric's value, or why it has none. */
+export function read(m: Metric): Reading {
+  // A missing state is an API from before states existed, when every metric was measured.
+  const state = m.state ?? "measured";
+  if (state === "measured" && typeof m.value === "number" && Number.isFinite(m.value)) {
+    return { measured: true, value: m.value };
+  }
+  return {
+    measured: false,
+    // A "measured" metric with no number breaks the API's own contract; say so rather than guess.
+    state: state === "measured" ? "error" : state,
+    reason: m.reason ?? "the API returned a measured metric with no value",
+  };
+}
+
+function find(results: RunResults, suite: string, name: string, variant: string) {
+  return results.metrics.find(
+    (m) => m.suite === suite && m.name === name && m.variant === variant,
+  );
+}
+
+/** The metric's reading, or `undefined` when the run did not emit it. */
+export function reading(
+  results: RunResults,
+  suite: string,
+  name: string,
+  variant = "",
+): Reading | undefined {
+  const m = find(results, suite, name, variant);
+  return m === undefined ? undefined : read(m);
+}
+
+/** The value of a measured metric. `undefined` both when the metric is absent
+ *  and when it was not measured, so use it only to compute something that needs
+ *  a number; to show a metric, use `reading`. */
+export function measured(
   results: RunResults,
   suite: string,
   name: string,
   variant = "",
 ): number | undefined {
-  return results.metrics.find(
-    (m) => m.suite === suite && m.name === name && m.variant === variant,
-  )?.value;
+  const r = reading(results, suite, name, variant);
+  return r?.measured ? r.value : undefined;
+}
+
+/** `0.123`, or `— (unsupported)` for a metric that was not measured. */
+export function formatReading(r: Reading | undefined, digits = 3): string {
+  if (r === undefined) return "—";
+  return r.measured ? r.value.toFixed(digits) : `— (${r.state})`;
+}
+
+/** One entry in a panel's "not measured" list. */
+export interface Unmeasured extends NotMeasured {
+  label: string;
+}
+
+export function unmeasured(label: string, r: Reading | undefined): Unmeasured[] {
+  return r !== undefined && !r.measured ? [{ ...r, label }] : [];
+}
+
+function labelOf(m: Metric): string {
+  return m.variant ? `${m.name} [${m.variant}]` : m.name;
+}
+
+/** The not-measured metrics in a list, labelled for a panel footnote. */
+export function unmeasuredOf(metrics: Metric[]): Unmeasured[] {
+  return metrics.flatMap((m) => unmeasured(labelOf(m), read(m)));
+}
+
+/** The larger of several rates, defined only when all of them were measured:
+ *  a worst case over a set with an unknown member is itself unknown. Inputs
+ *  the run did not emit are left out, as before. */
+function worstOf(parts: [string, Reading | undefined][]): Reading | undefined {
+  const present = parts.filter((p): p is [string, Reading] => p[1] !== undefined);
+  if (present.length === 0) return undefined;
+  const values: number[] = [];
+  for (const [name, r] of present) {
+    if (!r.measured) return { ...r, reason: `${name}: ${r.reason}` };
+    values.push(r.value);
+  }
+  return { measured: true, value: Math.max(...values) };
+}
+
+function invert(r: Reading | undefined): Reading | undefined {
+  return r?.measured ? { measured: true, value: 1 - r.value } : r;
 }
 
 export interface NamedSeries {
@@ -27,7 +118,7 @@ export interface Kpi {
   key: string;
   label: string;
   detail: string;
-  value: number | undefined;
+  reading: Reading;
   direction: Direction; // which way is better
   suite: string; // which evidence the card drills into
 }
@@ -35,22 +126,21 @@ export interface Kpi {
 /** The four properties in tension, each in its natural direction — no inverted
  *  axes to explain. The radar keeps the inverted framing for shape only. */
 export function kpis(results: RunResults): Kpi[] {
-  const retrieval =
-    metric(results, "retrieval", "ndcg@10", "rerank=on") ??
-    metric(results, "retrieval", "ndcg@10", "rerank=off");
-  const poison = metric(results, "security", "knowledge_corruption_rate", "defense=none");
-  const injection = metric(results, "security", "injection_compliance_rate", "defense=none");
-  const attack =
-    poison === undefined && injection === undefined
-      ? undefined
-      : Math.max(poison ?? 0, injection ?? 0);
+  // Falls back to rerank off only when the run has no rerank-on figure at all;
+  // a rerank-on metric that was not measured is shown as such, not swapped out.
+  const rerankOn = reading(results, "retrieval", "ndcg@10", "rerank=on");
+  const retrieval = rerankOn ?? reading(results, "retrieval", "ndcg@10", "rerank=off");
+  const attack = worstOf([
+    ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
+    ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
+  ]);
 
-  const cards: Kpi[] = [
+  const cards: (Omit<Kpi, "reading"> & { reading: Reading | undefined })[] = [
     {
       key: "retrieval",
       label: "Retrieval quality",
-      detail: "nDCG@10, rerank on",
-      value: retrieval,
+      detail: rerankOn === undefined ? "nDCG@10, rerank off" : "nDCG@10, rerank on",
+      reading: retrieval,
       direction: "up",
       suite: "retrieval",
     },
@@ -58,7 +148,7 @@ export function kpis(results: RunResults): Kpi[] {
       key: "faithfulness",
       label: "Answer accuracy",
       detail: "gold answer present",
-      value: metric(results, "faithfulness", "answer_accuracy"),
+      reading: reading(results, "faithfulness", "answer_accuracy"),
       direction: "up",
       suite: "faithfulness",
     },
@@ -66,7 +156,7 @@ export function kpis(results: RunResults): Kpi[] {
       key: "security",
       label: "Worst-case attack",
       detail: "poison vs injection, no defense",
-      value: attack,
+      reading: attack,
       direction: "down",
       suite: "security",
     },
@@ -74,50 +164,61 @@ export function kpis(results: RunResults): Kpi[] {
       key: "privacy",
       label: "Canary leakage",
       detail: "no defense",
-      value: metric(results, "privacy", "leakage_rate", "defense=none"),
+      reading: reading(results, "privacy", "leakage_rate", "defense=none"),
       direction: "down",
       suite: "privacy",
     },
   ];
-  return cards.filter((k) => k.value !== undefined);
+  // A card the run has no metric for is dropped; one it could not measure stays, with its reason.
+  return cards.flatMap((k) => (k.reading === undefined ? [] : [{ ...k, reading: k.reading }]));
 }
 
 // One headline number per property, 0..1, higher = better. Robustness and
 // privacy are inverted (1 − attack success / leakage) so the radar reads
 // "bigger is safer" on every axis.
-export function tradeoffRadar(results: RunResults): NamedSeries[] {
-  const retrieval =
-    metric(results, "retrieval", "ndcg@10", "rerank=on") ??
-    metric(results, "retrieval", "ndcg@10", "rerank=off") ??
-    metric(results, "retrieval", "mrr", "rerank=off");
-  const faithfulness = metric(results, "faithfulness", "groundedness");
-  const poison = metric(results, "security", "knowledge_corruption_rate", "defense=none");
-  const injection = metric(results, "security", "injection_compliance_rate", "defense=none");
-  const robustness =
-    poison === undefined && injection === undefined
-      ? undefined
-      : 1 - Math.max(poison ?? 0, injection ?? 0);
-  const leakage = metric(results, "privacy", "leakage_rate", "defense=none");
-  const privacy = leakage === undefined ? undefined : 1 - leakage;
+// An axis that was not measured is left off the radar and listed instead:
+// plotted as 0 it would read as the worst score, and inverted it would read as
+// a perfect one.
+export interface Radar {
+  data: NamedSeries[];
+  unmeasured: Unmeasured[];
+}
 
-  const axes: [string, number | undefined][] = [
+export function tradeoffRadar(results: RunResults): Radar {
+  const retrieval =
+    reading(results, "retrieval", "ndcg@10", "rerank=on") ??
+    reading(results, "retrieval", "ndcg@10", "rerank=off") ??
+    reading(results, "retrieval", "mrr", "rerank=off");
+  const faithfulness = reading(results, "faithfulness", "groundedness");
+  const robustness = invert(
+    worstOf([
+      ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
+      ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
+    ]),
+  );
+  const privacy = invert(reading(results, "privacy", "leakage_rate", "defense=none"));
+
+  const axes: [string, Reading | undefined][] = [
     ["Retrieval", retrieval],
     ["Faithfulness", faithfulness],
     ["Robustness", robustness],
     ["Privacy", privacy],
   ];
-  return axes
-    .filter(([, v]) => v !== undefined)
-    .map(([name, v]) => ({ name, value: Number((v as number).toFixed(3)) }));
+  return {
+    data: axes.flatMap(([name, r]) =>
+      r?.measured ? [{ name, value: Number(r.value.toFixed(3)) }] : [],
+    ),
+    unmeasured: axes.flatMap(([name, r]) => unmeasured(name, r)),
+  };
 }
 
 // --------------------------------------------------------------- rerank lift
 
 export interface LiftRow {
   name: string;
-  off: number;
-  on: number;
-  delta: number;
+  off: Reading;
+  on: Reading | undefined; // undefined: the run has no rerank-on figure for it
+  delta: number | undefined; // only when both sides were measured
   headline: boolean;
 }
 
@@ -125,6 +226,7 @@ export interface LiftChart {
   rows: LiftRow[];
   min: number;
   max: number;
+  unmeasured: Unmeasured[];
 }
 
 // The metrics worth showing before the reader asks for all of them.
@@ -134,42 +236,58 @@ const HEADLINE_RETRIEVAL = ["recall@1", "recall@5", "ndcg@10", "mrr"];
  *  [0,1], because the quantity of interest (the lift) is often a rounding
  *  error against a full 0–1 axis and disappears entirely. */
 export function rerankLift(results: RunResults): LiftChart {
-  const off = results.metrics.filter((m) => m.variant === "rerank=off");
-  if (off.length === 0) return { rows: [], min: 0, max: 1 };
+  const retrieval = results.metrics.filter((m) => m.suite === "retrieval");
+  const off = retrieval.filter((m) => m.variant === "rerank=off");
+  if (off.length === 0) return { rows: [], min: 0, max: 1, unmeasured: [] };
   const on = new Map(
-    results.metrics.filter((m) => m.variant === "rerank=on").map((m) => [m.name, m.value]),
+    retrieval.filter((m) => m.variant === "rerank=on").map((m) => [m.name, read(m)]),
   );
 
+  // A missing rerank-on figure is not a lift of zero: the row keeps its single
+  // dot and no delta, rather than borrowing the off value for both sides.
   const rows: LiftRow[] = off
     .map((m) => {
-      const onValue = on.get(m.name) ?? m.value;
+      const offR = read(m);
+      const onR = on.get(m.name);
+      const delta = offR.measured && onR?.measured ? onR.value - offR.value : undefined;
       return {
         name: m.name,
-        off: m.value,
-        on: onValue,
-        delta: onValue - m.value,
+        off: offR,
+        on: onR,
+        delta,
         headline: HEADLINE_RETRIEVAL.includes(m.name),
       };
     })
     .sort((a, b) => {
       if (a.headline !== b.headline) return a.headline ? -1 : 1;
-      return Math.abs(b.delta) - Math.abs(a.delta);
+      return Math.abs(b.delta ?? -1) - Math.abs(a.delta ?? -1);
     });
 
-  const values = rows.flatMap((r) => [r.off, r.on]);
+  const values = rows.flatMap((r) =>
+    [r.off, r.on].flatMap((x) => (x?.measured ? [x.value] : [])),
+  );
+  const unmeasuredRows = unmeasuredOf(
+    retrieval.filter((m) => m.variant === "rerank=off" || m.variant === "rerank=on"),
+  );
+  if (values.length === 0) return { rows, min: 0, max: 1, unmeasured: unmeasuredRows };
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   // Pad so the dots never sit on the panel edge, and so a run where every
   // metric is identical still renders a sane track instead of dividing by zero.
   const pad = Math.max((hi - lo) * 0.25, 0.01);
-  return { rows, min: Math.max(0, lo - pad), max: Math.min(1, hi + pad) };
+  return {
+    rows,
+    min: Math.max(0, lo - pad),
+    max: Math.min(1, hi + pad),
+    unmeasured: unmeasuredRows,
+  };
 }
 
 // --------------------------------------------------------------- suite panels
 
 export interface FaithfulnessRow {
   name: string;
-  value: number;
+  reading: Reading;
   direction: Direction;
 }
 
@@ -183,29 +301,40 @@ const FAITHFULNESS_ROWS: [string, Direction][] = [
 
 export function faithfulness(results: RunResults): FaithfulnessRow[] {
   return FAITHFULNESS_ROWS.flatMap(([name, direction]) => {
-    const value = metric(results, "faithfulness", name);
-    return value === undefined ? [] : [{ name, value, direction }];
+    const r = reading(results, "faithfulness", name);
+    return r === undefined ? [] : [{ name, reading: r, direction }];
   });
 }
 
 /** The gap the platform exists to surface: a deterministic accuracy check and
  *  an LLM judge disagreeing about the same answers means the judge, not the
  *  pipeline, is the binding constraint. */
-export function judgeGap(results: RunResults): number | undefined {
-  const accuracy = metric(results, "faithfulness", "answer_accuracy");
-  const grounded = metric(results, "faithfulness", "groundedness");
+export interface JudgeGap {
+  accuracy: number;
+  grounded: number;
+  gap: number;
+}
+
+export function judgeGap(results: RunResults): JudgeGap | undefined {
+  const accuracy = measured(results, "faithfulness", "answer_accuracy");
+  const grounded = measured(results, "faithfulness", "groundedness");
   if (accuracy === undefined || grounded === undefined) return undefined;
-  return accuracy - grounded;
+  return { accuracy, grounded, gap: accuracy - grounded };
 }
 
 export type Tone = "neutral" | "good" | "bad";
 
 export interface DefenseBar {
   defense: string;
-  value: number;
-  delta: number | undefined; // vs the no-defense baseline
+  reading: Reading;
+  delta: number | undefined; // vs the no-defense baseline, only when both were measured
   isBaseline: boolean;
   tone: Tone;
+}
+
+/** The bars that carry a number, with it. */
+export function measuredBars(bars: DefenseBar[]): (DefenseBar & { value: number })[] {
+  return bars.flatMap((b) => (b.reading.measured ? [{ ...b, value: b.reading.value }] : []));
 }
 
 export interface DefenseGroup {
@@ -286,7 +415,7 @@ export interface Understatement {
 /** Where a per-attack rate understates how often the model was compromised. */
 export function understatements(results: RunResults): Understatement[] {
   const value = (name: string, defense: string) =>
-    metric(results, "security", name, `defense=${defense}`);
+    measured(results, "security", name, `defense=${defense}`);
   const defenses = unique(
     results.metrics
       .filter((m) => m.suite === "security" && m.variant.startsWith("defense="))
@@ -328,17 +457,20 @@ export function defenseGroups(
   const ordered = opts.only ? opts.only.filter((n) => names.includes(n)) : names;
 
   return ordered.map((name) => {
-    const valueFor = (d: string) =>
-      scoped.find((m) => m.name === name && defenseOf(m) === d)?.value;
-    const baseline = valueFor(BASELINE);
+    const readingFor = (d: string) => {
+      const m = scoped.find((x) => x.name === name && defenseOf(x) === d);
+      return m === undefined ? undefined : read(m);
+    };
+    const baseline = readingFor(BASELINE);
     const bars = defenses.flatMap((defense) => {
-      const value = valueFor(defense);
-      if (value === undefined) return [];
+      const r = readingFor(defense);
+      if (r === undefined) return [];
       const isBaseline = defense === BASELINE;
-      const delta = isBaseline || baseline === undefined ? undefined : value - baseline;
+      const delta =
+        isBaseline || !baseline?.measured || !r.measured ? undefined : r.value - baseline.value;
       const improved = HIGHER_IS_BETTER.has(name) ? delta !== undefined && delta > 0 : delta !== undefined && delta < 0;
       const tone: Tone = delta === undefined || delta === 0 ? "neutral" : improved ? "good" : "bad";
-      return [{ defense, value, delta, isBaseline, tone }];
+      return [{ defense, reading: r, delta, isBaseline, tone }];
     });
     return { metric: name, bars };
   });
@@ -352,11 +484,17 @@ export function contextMetrics(results: RunResults, suite: string): Metric[] {
   );
 }
 
+export interface BreakdownRow {
+  name: string;
+  metric: Metric;
+  reading: Reading;
+}
+
 /** `leakage_rate@direct` style metrics: the same rate cut by probe style. */
-export function breakdown(results: RunResults, suite: string, name: string): NamedSeries[] {
+export function breakdown(results: RunResults, suite: string, name: string): BreakdownRow[] {
   return results.metrics
     .filter((m) => m.suite === suite && m.name.startsWith(`${name}@`) && m.variant === "")
-    .map((m) => ({ name: m.name.split("@")[1], value: m.value }));
+    .map((m) => ({ name: m.name.split("@")[1], metric: m, reading: read(m) }));
 }
 
 // -------------------------------------------------------------------- latency
@@ -439,7 +577,11 @@ export function summaryMarkdown(results: RunResults): string {
   for (const m of [...metrics].sort(
     (a, b) => a.suite.localeCompare(b.suite) || a.name.localeCompare(b.name),
   )) {
-    lines.push(`| ${m.suite} | ${m.name} | ${m.variant || "—"} | ${m.value.toFixed(4)} |`);
+    const r = read(m);
+    const cell = r.measured
+      ? r.value.toFixed(4)
+      : `— (${r.state}: ${r.reason.trim().split(/\s+/).join(" ").replace(/\|/g, "\\|")})`;
+    lines.push(`| ${m.suite} | ${m.name} | ${m.variant || "—"} | ${cell} |`);
   }
   if (stage_stats.length > 0) {
     lines.push("", "| stage | count | p50 ms | p95 ms |", "|---|---|---|---|");

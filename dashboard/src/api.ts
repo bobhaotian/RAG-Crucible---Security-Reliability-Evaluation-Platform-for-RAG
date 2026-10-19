@@ -21,11 +21,23 @@ export interface RunRow {
   finished_at: string | null;
 }
 
+/** Why a metric does or does not carry a number (rag_crucible.eval.types.MetricState).
+ *  Only "measured" does; every other state comes with a reason and a null value. */
+export type MetricState =
+  | "measured"
+  | "unsupported"
+  | "inapplicable"
+  | "skipped"
+  | "error"
+  | "not_estimable";
+
 export interface Metric {
   suite: string;
   name: string;
   variant: string;
-  value: number;
+  value: number | null; // null exactly when state is not "measured" — never a zero
+  state: MetricState;
+  reason: string | null; // set whenever state is not "measured"
 }
 
 export interface SuiteSummary {
