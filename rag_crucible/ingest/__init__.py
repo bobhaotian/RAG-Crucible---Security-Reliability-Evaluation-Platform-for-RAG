@@ -9,7 +9,12 @@ from rag_crucible.ingest.build import (
     load_or_build_index,
 )
 from rag_crucible.ingest.chunkers import chunk_document
-from rag_crucible.ingest.filters import DroppedDocument, FilterStats, apply_filters
+from rag_crucible.ingest.filters import (
+    DroppedDocument,
+    FilterStats,
+    apply_filters,
+    apply_filters_after,
+)
 from rag_crucible.ingest.loaders import LoaderError, SkippedFile, load_corpus, register_loader
 from rag_crucible.ingest.pii import contains_pii, redact_pii
 
@@ -20,6 +25,7 @@ __all__ = [
     "LoaderError",
     "SkippedFile",
     "apply_filters",
+    "apply_filters_after",
     "build_index",
     "chunk_document",
     "chunk_documents",

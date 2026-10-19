@@ -161,11 +161,18 @@ poisoned fact is not syntactically adversarial, so a pattern filter won't flag
 it and an isolation prompt won't un-believe it. For privacy, `pii_filter` acts
 at ingestion: it leaves **retrieval exposure** largely intact (the topical host
 text survives) while driving **generation leakage** to zero — the secret is no
-longer in the index to emit. The suite reports all of this honestly: it is a
-finding, not a gap. `answer_integrity` is an experimental consistency layer for
-quantity-valued claims. Attack documents enter through the same ingestion
+longer in the index to emit. Canary documents pass through the run's own
+`ingest.filters` as a second batch after the corpus, so with `pii` in that chain
+every arm is redacted at ingestion: the `none` arm is then not defense-free, and
+`pii_filter` finds nothing left to redact, so both arms measure the same index.
+A canary a filter drops is counted in `canary_docs_dropped_by_filter` and kept
+out of the leakage denominators. The suite reports all of this honestly: it is
+a finding, not a gap. `answer_integrity` is an experimental consistency layer for
+quantity-valued claims. Attack documents take the same chunker and provenance
 channel as clean documents, so the harness does not label the poison for the
-defense. Clean-traffic abstention and accuracy are reported beside attack
+defense. Poison and injection documents do not yet pass through
+`ingest.filters`, so a filter that would remove one in deployment gets no
+credit. Clean-traffic abstention and accuracy are reported beside attack
 reduction, making refusal cost visible rather than treating it as a free win.
 
 ## What "with and without defenses" demonstrates

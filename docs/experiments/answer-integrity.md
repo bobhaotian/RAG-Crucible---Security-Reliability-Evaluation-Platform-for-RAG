@@ -9,7 +9,7 @@ enabling the defense or claim that it addresses knowledge corruption.
 
 ## Fair-evaluation changes
 
-- Poison and canary documents enter through the same ingestion channel as the
+- Poison and canary documents take the same chunker and provenance channel as the
   ordinary corpus. The harness no longer supplies a test-only low-trust label.
 - Poison and injection targets are disjoint.
 - The comparison uses the local MiniLM/cross-encoder/Qwen pipeline in

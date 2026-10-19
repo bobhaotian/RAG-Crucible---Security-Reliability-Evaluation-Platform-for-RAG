@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from rag_crucible.ingest import apply_filters
+import pytest
+
+from rag_crucible.config import FilterName
+from rag_crucible.ingest import apply_filters, apply_filters_after
 from rag_crucible.types import DocMeta, Document, doc_id_for
 
 ENGLISH = (
@@ -75,3 +78,60 @@ def test_filters_run_in_order_and_report_per_filter() -> None:
     assert [s.name for s in stats] == ["dedup", "language", "boilerplate"]
     assert [s.dropped for s in stats] == [1, 1, 0]
     assert [d.source for d in kept] == ["en.txt"]
+
+
+def test_a_second_batch_loses_a_duplicate_to_the_corpus_whatever_its_path() -> None:
+    corpus = [_doc("z/original.txt", ENGLISH), _doc("z/other.txt", FRENCH)]
+    # Sorts ahead of the corpus copy: ordering by path would keep it instead.
+    batch = [_doc("a/planted.md", ENGLISH), _doc("m/fresh.md", ENGLISH + " Unique.")]
+    kept, stats = apply_filters_after(corpus, batch, ["dedup", "language"])
+    assert [d.source for d in kept] == ["m/fresh.md"]
+    # Only the batch's drops are reported; the corpus's French file is not.
+    assert [(s.name, s.dropped) for s in stats] == [("dedup", 1), ("language", 0)]
+    assert stats[0].dropped_documents[0].source == "a/planted.md"
+    assert stats[0].dropped_documents[0].reason == "duplicate_content"
+
+
+def test_a_second_batch_meets_each_filter_as_a_corpus_file_would() -> None:
+    secret = "canary07-1f2e@example-corp.test"
+    batch = [
+        _doc("kb/fr.md", FRENCH),
+        _doc("kb/entry.md", f"{ENGLISH} Reach the lead at {secret}."),
+    ]
+    kept, stats = apply_filters_after([_doc("kb/en.md", ENGLISH)], batch, ["language", "pii"])
+    assert [d.source for d in kept] == ["kb/entry.md"]
+    assert stats[0].dropped_documents[0].reason == "language_not_supported"
+    assert secret not in kept[0].text  # rewritten in place, as `pii` does to the corpus
+    assert kept[0].doc_id == batch[1].doc_id  # identity survives the rewrite
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["dedup", "language", "boilerplate", "pii"],
+        ["pii", "boilerplate", "language", "dedup"],
+        ["boilerplate", "dedup", "pii", "language"],
+    ],
+)
+def test_a_second_batch_leaves_the_corpus_outcome_alone(names: list[FilterName]) -> None:
+    corpus = [_doc("a.txt", ENGLISH), _doc("b.txt", ENGLISH), _doc("c.txt", FRENCH)]
+    # Duplicates a corpus file, and sorts ahead of it: a last-wins dedup, or one
+    # ordered by path, would drop the corpus copy instead.
+    batch = [_doc("0.md", ENGLISH), _doc("z.md", ENGLISH + " New.")]
+    alone, _ = apply_filters(corpus, names)
+    together, _ = apply_filters([*corpus, *batch], names)
+    assert together[: len(alone)] == alone
+    kept, _ = apply_filters_after(corpus, batch, names)
+    assert [d.source for d in kept] == ["z.md"]
+
+
+def test_a_second_batch_cannot_repeat_a_doc_id() -> None:
+    doc = _doc("kb/a.md", ENGLISH)
+    with pytest.raises(ValueError, match="two batch documents"):
+        apply_filters_after([], [doc, doc], ["dedup"])
+
+
+def test_a_second_batch_cannot_reuse_a_corpus_doc_id() -> None:
+    doc = _doc("kb/a.md", ENGLISH)
+    with pytest.raises(ValueError, match="shares a doc_id"):
+        apply_filters_after([doc], [doc], ["dedup"])

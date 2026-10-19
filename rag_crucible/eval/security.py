@@ -255,9 +255,10 @@ async def _build_poisoned_index(
     pipeline: RagPipeline, spec: RunSpec, kept: list[Document], attack_docs: list[Document]
 ) -> tuple[VectorIndex, list[Chunk]]:
     clean_chunks = chunk_documents(kept, spec.ingest.chunker)
-    # Poisoning models an attacker contributing through the corpus's ordinary
-    # ingestion path. Giving attack documents a special low-trust channel here
-    # would hand the defense an oracle unavailable in deployment.
+    # Attack documents take the corpus's chunker and provenance channel: a
+    # special low-trust channel would hand the defense an oracle unavailable in
+    # deployment. They do not yet pass through ingest.filters, which the corpus
+    # did, so a filter that would remove one in deployment gets no credit here.
     attack_chunks = chunk_documents(attack_docs, spec.ingest.chunker)
     return await embed_into_index(clean_chunks + attack_chunks, pipeline.embedder), clean_chunks
 

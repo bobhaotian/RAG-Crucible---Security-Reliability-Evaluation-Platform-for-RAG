@@ -141,7 +141,8 @@ def render_summary(result: EvalRunResult) -> str:
         lines += _security_table(security)
     privacy = _suite(result, "privacy")
     if privacy is not None:
-        lines += _privacy_table(privacy)
+        lines += _privacy_table(privacy, redacted_at_ingest=_canaries_redacted_at_ingest(result))
+        lines += _privacy_ingest_notes(result, privacy)
     if result.stage_stats:
         lines += _latency_table(result)
     return "\n".join(lines) + "\n"
@@ -237,7 +238,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
     return lines
 
 
-def _privacy_table(suite: SuiteResult) -> list[str]:
+def _privacy_table(suite: SuiteResult, *, redacted_at_ingest: bool = False) -> list[str]:
     """Canary leakage with vs. without redaction, decomposed into retrieval
     exposure and generation leakage, plus the per-probe-style breakdown."""
     by_defense: dict[str, dict[str, Metric]] = {}
@@ -262,12 +263,58 @@ def _privacy_table(suite: SuiteResult) -> list[str]:
             lines.append(f"| {defense} | {exposure} | {leakage} |")
         lines.append("")
     if by_probe:
+        # Measured on the first condition, which `pii` in the chain has redacted too.
+        arm = (
+            "`none` arm, canaries redacted by `ingest.filters`"
+            if redacted_at_ingest
+            else "no redaction"
+        )
         lines.append(
-            "Leakage by probe style (no redaction): "
+            f"Leakage by probe style ({arm}): "
             + " · ".join(f"{style} {format_value(m, 2)}" for style, m in by_probe.items())
         )
         lines.append("")
     lines += _not_measured(suite.metrics)
+    return lines
+
+
+def _dropped_canaries(suite: SuiteResult) -> Metric | None:
+    return next((m for m in suite.metrics if m.name == "canary_docs_dropped_by_filter"), None)
+
+
+def _canaries_redacted_at_ingest(result: EvalRunResult) -> bool:
+    """Whether the run's own `pii` filter redacted the canaries. Only code that
+    routes canaries through the filters emits the drop count, so a result
+    without it was written by code whose canaries skipped them, whatever the
+    spec says."""
+    privacy = _suite(result, "privacy")
+    return (
+        privacy is not None
+        and _dropped_canaries(privacy) is not None
+        and "pii" in result.spec.ingest.filters
+    )
+
+
+def _privacy_ingest_notes(result: EvalRunResult, suite: SuiteResult) -> list[str]:
+    """What the run's own ingest filters did to the canaries, which pass
+    through them like corpus files. With `pii` in the chain no arm is
+    defense-free, so the comparison above is not redaction versus none."""
+    lines: list[str] = []
+    dropped = _dropped_canaries(suite)
+    if dropped is not None:
+        count = format_value(dropped) if dropped.value is None else f"{dropped.value:.0f}"
+        lines.append(
+            f"Canary documents dropped by ingest filters: {count} "
+            "(not probed, and outside every rate above)."
+        )
+    if _canaries_redacted_at_ingest(result):
+        lines.append(
+            "`pii` is in `ingest.filters`, so canaries were redacted at ingestion in every "
+            "condition: `none` is not defense-free here, and `pii_filter` finds nothing left "
+            "to redact, so both rows measure the same index."
+        )
+    if lines:
+        lines.append("")
     return lines
 
 

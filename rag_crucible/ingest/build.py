@@ -1,8 +1,11 @@
 """Ingestion orchestrator: corpus directory → saved vector index.
 
-This is the only index-build path in the project — the attack suites (Phase 4)
-build their poisoned indexes through this exact function, so there is no
-second ingestion code path to drift.
+``build_index`` builds the persisted index a pipeline serves from. The security
+and privacy suites build their in-memory attack indexes from the same parts
+(``load_corpus``, ``apply_filters``, ``chunk_documents``, ``embed_chunks``), not
+through it, and do not re-apply its ``max_filter_drop_rate`` refusal. Canary
+documents pass through the filter chain as a second batch after the corpus
+(``apply_filters_after``); poison and injection documents do not yet.
 """
 
 from __future__ import annotations
