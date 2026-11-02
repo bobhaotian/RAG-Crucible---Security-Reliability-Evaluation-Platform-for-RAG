@@ -4,10 +4,12 @@
 // a null is never drawn as 0, never inverted to 1, and never feeds a delta.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
   PROBE_STYLE_HEADING,
+  betterOf,
   breakdown,
   canariesRedactedAtIngest,
   contamination,
@@ -884,5 +886,42 @@ describe("privacy labels name the arm, and the pii caveat is keyed on the run", 
     assert.equal(canariesRedactedAtIngest(withCount, null), false);
     // An older run whose spec lists `pii` but whose canaries skipped the filters.
     assert.equal(canariesRedactedAtIngest(run(m("privacy", "leakage_rate", "defense=none", 0.5)), pii), false);
+  });
+});
+
+describe("which way is better", () => {
+  // docs/metrics.md is generated from rag_crucible/eval/catalog.py, so this
+  // keeps the dashboard's colours in step with the catalog's `better` field.
+  const doc = readFileSync(new URL("../../docs/metrics.md", import.meta.url), "utf8");
+  const entries = [...doc.matchAll(/^### `([^`]+)`\n[\s\S]*?^- \*\*Kind:\*\* [^\n]*?(better is (higher|lower)|no better direction)/gm)].map(
+    (x) => [x[1], x[3] ?? "neither"],
+  );
+  const instance = (name) =>
+    name.replace("{k}", "10").replace("{family}", "heldout").replace("{style}", "direct");
+
+  test("every catalogued metric's direction matches the catalog", () => {
+    assert.ok(entries.length >= 26, `parsed only ${entries.length} entries`);
+    for (const [name, better] of entries) {
+      assert.equal(betterOf(instance(name)), better, name);
+    }
+  });
+
+  test("screening the attack out is good; an abstention or competition is neither", () => {
+    const groups = defenseGroups(
+      run(
+        m("security", "injection_screened_rate@seen", "defense=none", 0),
+        m("security", "injection_screened_rate@seen", "defense=injection_filter", 1),
+        m("security", "attack_abstention_rate", "defense=none", 0),
+        m("security", "attack_abstention_rate", "defense=answer_integrity", 0.5),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.4),
+        m("security", "knowledge_corruption_rate", "defense=prompt_isolation", 0.6),
+      ),
+      "security",
+    );
+    const tone = (metric, defense) =>
+      groups.find((g) => g.metric === metric).bars.find((b) => b.defense === defense).tone;
+    assert.equal(tone("injection_screened_rate@seen", "injection_filter"), "good");
+    assert.equal(tone("attack_abstention_rate", "answer_integrity"), "neutral");
+    assert.equal(tone("knowledge_corruption_rate", "prompt_isolation"), "bad");
   });
 });

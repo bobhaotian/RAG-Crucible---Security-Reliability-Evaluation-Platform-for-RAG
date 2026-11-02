@@ -542,17 +542,18 @@ export interface FaithfulnessRow {
   direction: Direction;
 }
 
-const FAITHFULNESS_ROWS: [string, Direction][] = [
-  ["answer_accuracy", "up"],
-  ["groundedness", "up"],
-  ["hallucination_rate", "down"],
-  ["citation_parse_rate", "up"],
-  ["citation_precision", "up"],
+const FAITHFULNESS_ROWS = [
+  "answer_accuracy",
+  "groundedness",
+  "hallucination_rate",
+  "citation_parse_rate",
+  "citation_precision",
 ];
 
 export function faithfulness(results: RunResults): FaithfulnessRow[] {
-  return FAITHFULNESS_ROWS.flatMap(([name, direction]) => {
+  return FAITHFULNESS_ROWS.flatMap((name) => {
     const r = reading(results, "faithfulness", name);
+    const direction: Direction = betterOf(name) === "lower" ? "down" : "up";
     return r === undefined ? [] : [{ name, reading: r, direction }];
   });
 }
@@ -609,9 +610,27 @@ export const COST_METRICS = [
   "clean_answer_accuracy",
 ];
 
-/** Defense metrics where higher is better. Everything else in a defense panel
- *  is a rate we want driven down. */
-const HIGHER_IS_BETTER = new Set(["clean_answer_accuracy"]);
+/** Which way is better for each metric, as `rag_crucible/eval/catalog.py`
+ *  defines it (rendered in docs/metrics.md, which npm test checks this table
+ *  against). `neither` metrics are read for what they are, never coloured as a
+ *  gain or a loss: an abstention defeats the attack and the question alike. */
+export type Better = "higher" | "lower" | "neither";
+
+const BETTER: [RegExp, Better][] = [
+  [/^(recall|ndcg)@[^@]+$/, "higher"],
+  [/^mrr$/, "higher"],
+  [/^(groundedness|citation_parse_rate|answer_accuracy|citation_precision)$/, "higher"],
+  [/^injection_screened_rate@[^@]+$/, "higher"],
+  [/^clean_answer_accuracy$/, "higher"],
+  [/^(attack_abstention_rate|attack_competition_rate)$/, "neither"],
+  [/^canary_docs_dropped_by_filter$/, "neither"],
+];
+
+/** Better is lower for every other metric: attack success, compromise,
+ *  exposure, leakage, hallucination and the costs of a defense. */
+export function betterOf(name: string): Better {
+  return BETTER.find(([pattern]) => pattern.test(name))?.[1] ?? "lower";
+}
 
 export const COMPROMISE_METRICS = [
   "poison_compromise_rate",
@@ -723,8 +742,10 @@ export function defenseGroups(
       const isBaseline = defense === BASELINE;
       const delta =
         isBaseline || !baseline?.measured || !r.measured ? undefined : r.value - baseline.value;
-      const improved = HIGHER_IS_BETTER.has(name) ? delta !== undefined && delta > 0 : delta !== undefined && delta < 0;
-      const tone: Tone = delta === undefined || delta === 0 ? "neutral" : improved ? "good" : "bad";
+      const better = betterOf(name);
+      const improved = better === "higher" ? delta !== undefined && delta > 0 : delta !== undefined && delta < 0;
+      const tone: Tone =
+        delta === undefined || delta === 0 || better === "neither" ? "neutral" : improved ? "good" : "bad";
       return [{ defense, reading: r, delta, isBaseline, tone }];
     });
     return { metric: name, bars };
