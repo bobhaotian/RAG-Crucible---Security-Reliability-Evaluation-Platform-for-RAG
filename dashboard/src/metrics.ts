@@ -159,8 +159,9 @@ export function formatReading(r: Reading | undefined, digits = 3): string {
  *  not a regression. */
 export const COUNT_METRICS: ReadonlySet<string> = new Set(["canary_docs_dropped_by_filter"]);
 
+/** Whether a metric is a count. A cut of a count (`name@style`) is one too. */
 export function isCount(name: string): boolean {
-  return COUNT_METRICS.has(name);
+  return COUNT_METRICS.has(name.split("@")[0]);
 }
 
 /** A metric's value as text: an integer for a count, `digits` places for a
