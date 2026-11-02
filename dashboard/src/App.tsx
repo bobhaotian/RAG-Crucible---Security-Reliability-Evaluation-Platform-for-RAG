@@ -239,13 +239,8 @@ function SuiteNotices({ results }: { results: RunResults }) {
           <h3>
             {n.suite} <span className={`status ${n.status}`}>{n.status}</span>
           </h3>
-          {n.status === "failed" && (
-            <p className="suite-error">
-              {n.error ?? "The run recorded no error message."} Its panels are empty because the
-              suite produced no results.
-            </p>
-          )}
-          {n.reasons.length > 0 ? (
+          {n.message && <p className="suite-error">{n.message}</p>}
+          {n.reasons.length > 0 && (
             <ul>
               {n.reasons.map((g) => (
                 <li key={`${g.state}|${g.reason}`}>
@@ -254,8 +249,6 @@ function SuiteNotices({ results }: { results: RunResults }) {
                 </li>
               ))}
             </ul>
-          ) : (
-            n.status === "skipped" && <p className="suite-error">No reason was recorded.</p>
           )}
         </section>
       ))}

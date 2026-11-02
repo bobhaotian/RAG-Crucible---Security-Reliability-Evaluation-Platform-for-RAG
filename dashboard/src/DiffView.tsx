@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 import type { RunResults, RunRow } from "./api";
 import { getResults } from "./api";
 import { PanelBoundary } from "./Boundary";
-import type { DiffRow, Reading } from "./metrics";
-import { diffRows, formatReading, subsetShort } from "./metrics";
+import type { Reading } from "./metrics";
+import { diffCell, diffDelta, diffFootnote, diffRows } from "./metrics";
 
 export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | null }) {
   const [otherId, setOtherId] = useState<string | null>(null);
@@ -51,7 +51,7 @@ export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | nu
 
 function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
   const rows = diffRows(base, other);
-  const unlike = rows.filter((r) => r.nDiffers).length;
+  const footnote = diffFootnote(rows);
   return (
     <>
       <table className="diff">
@@ -64,51 +64,29 @@ function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.key}>
-              <td>{row.key}</td>
-              <Cell r={row.a} count={row.count} />
-              <Cell r={row.b} count={row.count} />
-              <Delta row={row} />
-            </tr>
-          ))}
+          {rows.map((row) => {
+            const d = diffDelta(row);
+            return (
+              <tr key={row.key}>
+                <td>{row.key}</td>
+                <Cell r={row.a} text={diffCell(row.a, row.count)} />
+                <Cell r={row.b} text={diffCell(row.b, row.count)} />
+                <td className={`${d.tone}${d.mark ? " ndiff" : ""}`.trim() || undefined} title={d.title}>
+                  {d.text}
+                  {d.mark && <i className="ndiff-mark"> {d.mark}</i>}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
-      {unlike > 0 && (
-        <p className="hint">
-          <b>≠n</b> marks {unlike} {unlike === 1 ? "metric" : "metrics"} scored over a different
-          number of units in each run, so the delta compares unlike samples.
-        </p>
-      )}
+      {footnote && <p className="hint">{footnote}</p>}
     </>
   );
 }
 
-/** The change, only when both runs measured the metric. A count's change is
- *  neither good nor bad, and a delta over unlike denominators is flagged. */
-function Delta({ row }: { row: DiffRow }) {
-  const { delta, count, nDiffers, n } = row;
-  if (delta === undefined) return <td>—</td>;
-  const tone = count || delta === 0 ? "" : delta > 0 ? "pos" : "neg";
-  const text = (delta > 0 ? "+" : "") + delta.toFixed(count ? 0 : 4);
-  return (
-    <td
-      className={`${tone}${nDiffers ? " ndiff" : ""}`.trim() || undefined}
-      title={nDiffers ? `n differs: ${n[0]} vs ${n[1]}, so this is not like-for-like` : undefined}
-    >
-      {text}
-      {nDiffers && <i className="ndiff-mark"> ≠n</i>}
-    </td>
-  );
-}
-
-/** A measured value (an integer for a count, with "53 of 56" when scored over
- *  a subset), `— (<state>)` with the reason on hover, or `—` when the run did
- *  not emit the metric. */
-function Cell({ r, count }: { r: Reading | undefined; count: boolean }) {
-  const text = r?.measured
-    ? `${r.value.toFixed(count ? 0 : 4)}${r.subset ? ` (${subsetShort(r.subset)})` : ""}`
-    : formatReading(r, 4);
+/** A cell whose text `diffCell` decided; the reason on hover when not measured. */
+function Cell({ r, text }: { r: Reading | undefined; text: string }) {
   return (
     <td className={r && !r.measured ? "na" : undefined} title={r && !r.measured ? r.reason : undefined}>
       {text}

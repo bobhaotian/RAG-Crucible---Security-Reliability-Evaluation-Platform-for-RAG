@@ -1065,3 +1065,32 @@ table.diff td.ndiff {
   font-style: normal;
   font-size: 10px;
 }
+
+/* Units left out of every rate (a question with no retrieval label, a canary
+   an ingest filter dropped), listed under the trials, never among them. */
+.excluded-items {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--neutral);
+  border-radius: 8px;
+  background: #ffffff08;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.excluded-items h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.excluded-items ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.excluded-items li {
+  overflow-wrap: anywhere;
+}
