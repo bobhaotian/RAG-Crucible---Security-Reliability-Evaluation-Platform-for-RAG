@@ -759,6 +759,12 @@ export function contamination(groups: DefenseGroup[]): Contamination | undefined
   return positive("attack_competition_rate").length > 0 ? { kind: "contained" } : undefined;
 }
 
+/** Why a delta compares unlike samples: the two runs scored the metric over a
+ *  different number of units (`n`), or over the same number but a different
+ *  set, judged by what each excluded (`set`). Set only when both runs measured
+ *  the metric, so every flag has a delta to mark. */
+export type Unlike = "n" | "set";
+
 export interface DiffRow {
   key: string;
   a: Reading | undefined;
@@ -766,7 +772,7 @@ export interface DiffRow {
   delta: number | undefined; // only when both runs measured the metric
   count: boolean; // a count: written as an integer, and a change is neither good nor bad
   n: [number | undefined, number | undefined]; // each run's denominator, when recorded
-  nDiffers: boolean; // both recorded, and different: the delta compares unlike samples
+  unlike: Unlike | undefined;
 }
 
 /** The two-run comparison, one row per metric either run emitted. */
@@ -781,16 +787,74 @@ export function diffRows(base: RunResults, other: RunResults): DiffRow[] {
     const a = ma === undefined ? undefined : read(ma);
     const b = mb === undefined ? undefined : read(mb);
     const n: [number | undefined, number | undefined] = [count(ma?.n), count(mb?.n)];
+    const both = a?.measured === true && b?.measured === true;
+    let unlike: Unlike | undefined;
+    if (both && n[0] !== undefined && n[1] !== undefined && n[0] !== n[1]) {
+      unlike = "n";
+    } else if (both && (a.subset || b.subset)) {
+      // A subset on either side, and the two sides did not exclude the same
+      // number from the same denominator (or one did not record it): the
+      // runs were scored over different sets.
+      const ex: [number | undefined, number | undefined] = [count(ma?.n_excluded), count(mb?.n_excluded)];
+      if (n[0] === undefined || n[1] === undefined || ex[0] !== ex[1]) unlike = "set";
+    }
     return {
       key,
       a,
       b,
-      delta: a?.measured && b?.measured ? b.value - a.value : undefined,
+      delta: both ? (b as { value: number }).value - (a as { value: number }).value : undefined,
       count: isCount(name),
       n,
-      nDiffers: n[0] !== undefined && n[1] !== undefined && n[0] !== n[1],
+      unlike,
     };
   });
+}
+
+/** A compare-view cell: the value (an integer for a count, with "53 of 56"
+ *  when scored over a subset), `— (<state>)`, or `—` when the run did not
+ *  emit the metric. */
+export function diffCell(r: Reading | undefined, isCountMetric: boolean): string {
+  if (!r?.measured) return formatReading(r, 4);
+  const value = r.value.toFixed(isCountMetric ? 0 : 4);
+  return r.subset ? `${value} (${subsetShort(r.subset)})` : value;
+}
+
+export interface DiffDelta {
+  text: string;
+  tone: "" | "pos" | "neg"; // a count's change, or no change, has no tone
+  mark: "≠n" | "≠set" | undefined;
+  title: string | undefined;
+}
+
+/** A compare-view delta: only when both runs measured the metric, flagged
+ *  when it compares unlike samples. */
+export function diffDelta(row: DiffRow): DiffDelta {
+  const { delta, count: isCountMetric, unlike, n } = row;
+  if (delta === undefined) return { text: "—", tone: "", mark: undefined, title: undefined };
+  return {
+    text: (delta > 0 ? "+" : "") + delta.toFixed(isCountMetric ? 0 : 4),
+    tone: isCountMetric || delta === 0 ? "" : delta > 0 ? "pos" : "neg",
+    mark: unlike === "n" ? "≠n" : unlike === "set" ? "≠set" : undefined,
+    title:
+      unlike === "n"
+        ? `n differs: ${n[0]} vs ${n[1]}, so this is not like-for-like`
+        : unlike === "set"
+          ? "scored over different sets of units in each run, so this is not like-for-like"
+          : undefined,
+  };
+}
+
+/** The note under the compare table, counting exactly the marks drawn. */
+export function diffFootnote(rows: DiffRow[]): string | undefined {
+  const marks = rows.map((r) => diffDelta(r).mark);
+  const byN = marks.filter((m) => m === "≠n").length;
+  const bySet = marks.filter((m) => m === "≠set").length;
+  const metrics = (k: number) => `${k} ${k === 1 ? "metric" : "metrics"}`;
+  const parts = [
+    byN > 0 ? `≠n marks ${metrics(byN)} scored over a different number of units in each run` : "",
+    bySet > 0 ? `≠set marks ${metrics(bySet)} scored over different sets of units` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? `${parts.join("; ")}, so their deltas compare unlike samples.` : undefined;
 }
 
 /** Suite metrics with no defense variant — the stage-level context that frames

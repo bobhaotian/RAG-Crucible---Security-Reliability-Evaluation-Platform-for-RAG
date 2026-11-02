@@ -12,6 +12,9 @@ import {
   canariesRedactedAtIngest,
   contamination,
   defenseGroups,
+  diffCell,
+  diffDelta,
+  diffFootnote,
   diffRows,
   formatMetric,
   formatReading,
@@ -697,13 +700,66 @@ describe("compare view denominators", () => {
       ),
     );
     assert.deepEqual(
-      rows.map((r) => [r.key, r.nDiffers, r.n]),
+      rows.map((r) => [r.key, r.unlike, r.n]),
       [
-        ["s · a", true, [53, 56]],
-        ["s · b", false, [56, 56]],
-        ["s · c", false, [undefined, 40]],
+        ["s · a", "n", [53, 56]],
+        ["s · b", undefined, [56, 56]],
+        ["s · c", undefined, [undefined, 40]],
       ],
     );
+  });
+
+  test("a side that was not measured flags nothing, so no mark goes uncounted", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 56, 0)),
+      run({ ...nm("s", "a", "", "unsupported", "no labels"), n: 0, n_excluded: 56 }),
+    );
+    assert.equal(rows[0].unlike, undefined);
+    assert.equal(diffFootnote(rows), undefined);
+  });
+
+  test("the same number of units over a different set, or an unrecorded side, is flagged as a set", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 53, 3), m("s", "c", "", 0.5)),
+      run(sub("s", "a", "", 0.6, 53, 0), sub("s", "b", "", 0.6, 53, 3), sub("s", "c", "", 0.6, 50, 6)),
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.unlike]),
+      [
+        ["s · a", "set"],
+        ["s · b", undefined], // the same (n, excluded) on both sides: nothing to say
+        ["s · c", "set"],
+      ],
+    );
+  });
+
+  test("the footnote counts exactly the marks drawn", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 53, 3), sub("s", "c", "", 0.5, 56, 0)),
+      run(sub("s", "a", "", 0.6, 56, 0), sub("s", "b", "", 0.6, 53, 0), nm("s", "c", "", "error")),
+    );
+    const marks = rows.map((r) => diffDelta(r).mark).filter(Boolean);
+    assert.deepEqual(marks, ["≠n", "≠set"]);
+    assert.equal(
+      diffFootnote(rows),
+      "≠n marks 1 metric scored over a different number of units in each run; " +
+        "≠set marks 1 metric scored over different sets of units, so their deltas compare unlike samples.",
+    );
+  });
+
+  test("cells show subsets and counts; a count's delta is an integer with no tone", () => {
+    assert.equal(diffCell(read(sub("s", "a", "", 0.94339, 53, 3)), false), "0.9434 (53 of 56)");
+    assert.equal(diffCell(read(m("privacy", "canary_docs_dropped_by_filter", "", 2)), true), "2");
+    assert.equal(diffCell(undefined, false), "—");
+    assert.equal(diffCell(read(nm("s", "a", "", "error")), false), "— (error)");
+    const [row] = diffRows(
+      run(m("privacy", "canary_docs_dropped_by_filter", "", 0)),
+      run(m("privacy", "canary_docs_dropped_by_filter", "", 2)),
+    );
+    assert.deepEqual(diffDelta(row), { text: "+2", tone: "", mark: undefined, title: undefined });
+    const [rate] = diffRows(run(m("s", "a", "", 0.5)), run(m("s", "a", "", 0.25)));
+    assert.equal(diffDelta(rate).tone, "neg");
+    assert.equal(diffDelta(rate).text, "-0.2500");
   });
 });
 
