@@ -322,12 +322,20 @@ def test_the_store_refuses_a_value_that_contradicts_its_state(tmp_path: Path, or
         _legacy_store(path)
     ResultStore(path)
     with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
-        _write(path, "INSERT INTO metrics VALUES ('r', 's', 'a', '', NULL, 'measured', NULL)")
+        _write(
+            path,
+            f"INSERT INTO metrics {COLUMNS} VALUES ('r', 's', 'a', '', NULL, 'measured', NULL)",
+        )
     with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
-        _write(path, "INSERT INTO metrics VALUES ('r', 's', 'b', '', 0.0, 'unsupported', 'why')")
+        _write(
+            path,
+            f"INSERT INTO metrics {COLUMNS} VALUES ('r', 's', 'b', '', 0.0, 'unsupported', 'why')",
+        )
 
 
 # Rows SQLite would otherwise accept and this build could not read back.
+COLUMNS = "(run_id, suite, name, variant, value, state, reason)"
+
 UNREADABLE_ROWS = {
     "no reason": "(NULL, 'unsupported', NULL)",
     "blank reason": "(NULL, 'unsupported', ' \t\n')",
@@ -364,7 +372,8 @@ def test_the_store_accepts_every_metric_state(tmp_path: Path) -> None:
     for i, state in enumerate(get_args(MetricState)):
         value, reason = ("0.5", "NULL") if state == "measured" else ("NULL", "'why'")
         _write(
-            path, f"INSERT INTO metrics VALUES ('r', 's', 'm{i}', '', {value}, '{state}', {reason})"
+            path,
+            f"INSERT INTO metrics {COLUMNS} VALUES ('r', 's', 'm{i}', '', {value}, '{state}', {reason})",
         )
 
 
@@ -476,3 +485,75 @@ def test_an_upgrade_that_cannot_get_the_lock_says_to_retry(
         holder.execute("ROLLBACK")
         holder.close()
     assert _user_version(path) == 0
+
+
+UNREADABLE_COUNTS = {
+    "negative n": "(0.5, 'measured', NULL, -1, 0)",
+    "negative n_excluded": "(0.5, 'measured', NULL, 3, -1)",
+    "measured over no units": "(0.0, 'measured', NULL, 0, 3)",
+}
+
+
+@pytest.mark.parametrize("origin", ["fresh", "migrated"])
+@pytest.mark.parametrize("row", UNREADABLE_COUNTS.values(), ids=UNREADABLE_COUNTS.keys())
+def test_the_store_refuses_counts_metric_could_not_load(
+    tmp_path: Path, origin: str, row: str
+) -> None:
+    """n and n_excluded count units, and a measured value is computed over at
+    least one: the same rules as Metric, so no such row can be written."""
+    path = tmp_path / "crucible.db"
+    if origin == "migrated":
+        _legacy_store(path)
+    ResultStore(path)
+    with pytest.raises(sqlite3.IntegrityError, match="CHECK"):
+        _write(
+            path,
+            "INSERT INTO metrics (run_id, suite, name, variant, value, state, reason, n, "
+            f"n_excluded) VALUES ('r', 's', 'x', '', {row[1:-1]})",
+        )
+
+
+def test_an_unmeasured_metric_over_an_empty_sample_is_stored(tmp_path: Path) -> None:
+    """n = 0 is a legitimate record for a metric that was not measured: the
+    sample was empty, and n_excluded says how much was set aside."""
+    path = tmp_path / "crucible.db"
+    ResultStore(path)
+    _write(
+        path,
+        "INSERT INTO metrics (run_id, suite, name, variant, value, state, reason, n, n_excluded) "
+        "VALUES ('r', 's', 'mrr', '', NULL, 'unsupported', 'no labels', 0, 56)",
+    )
+
+
+def test_a_version_1_store_keeps_every_row_and_gains_unrecorded_counts(tmp_path: Path) -> None:
+    """The 1 -> 2 rebuild copies unmeasured rows as they are, and their counts
+    read as NULL: the writer did not record them, so they are not zero."""
+    path = tmp_path / "crucible.db"
+    _legacy_store(path)
+    conn = sqlite3.connect(path)
+    with conn:
+        for statement in store_module._MIGRATIONS[0]:
+            conn.execute(statement)
+        conn.execute(
+            f"INSERT INTO metrics {COLUMNS} "
+            "VALUES ('r', 's', 'mrr', '', NULL, 'unsupported', 'no labels')"
+        )
+        before = conn.execute(
+            "SELECT run_id, suite, name, variant, value, state, reason FROM metrics "
+            "ORDER BY run_id, suite, name, variant"
+        ).fetchall()
+    conn.execute("PRAGMA user_version = 1")
+    conn.close()
+
+    ResultStore(path)
+    conn = sqlite3.connect(path)
+    after = conn.execute(
+        "SELECT run_id, suite, name, variant, value, state, reason FROM metrics "
+        "ORDER BY run_id, suite, name, variant"
+    ).fetchall()
+    counts = conn.execute("SELECT DISTINCT n, n_excluded FROM metrics").fetchall()
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    conn.close()
+    assert after == before and len(after) > 1
+    assert counts == [(None, None)]
+    assert version == STORE_SCHEMA_VERSION == 2

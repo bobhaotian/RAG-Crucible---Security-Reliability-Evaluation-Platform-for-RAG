@@ -18,6 +18,14 @@ exactly when ``value`` carries a number; every other state carries a
 ``reason`` and no value. So a metric that could not be computed can be
 emitted with its reason instead of being omitted or written as 0.0, and "this
 run did not measure it" stays distinct from "this run measured zero".
+
+**A metric says what it was computed over.** ``n`` is the number of units in
+its denominator (questions, answers, trials, probes, chunks, citations; for a
+count, the units examined), and ``n_excluded`` the units in its scope left out
+because they were not eligible, such as questions with no retrieval label. A
+partially labelled set is scored over its labelled part, and the count of what
+was left out travels with the number. ``rag_crucible.eval.catalog`` defines,
+for every metric, which units are eligible and what an empty sample means.
 """
 
 from __future__ import annotations
@@ -43,7 +51,8 @@ from rag_crucible.types import StrictModel
 #   4 — corpus and QA content digests preserved in the embedded spec
 #   5 — per-chunk clean-defense screening evidence
 #   6 — every metric carries a state (and a reason when it was not measured)
-RESULT_SCHEMA_VERSION = 6
+#   7 — every metric carries n and n_excluded, its sample size and exclusions
+RESULT_SCHEMA_VERSION = 7
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -68,9 +77,16 @@ class Metric(StrictModel):
     value: float | None  # None exactly when state is not "measured"
     state: MetricState = "measured"
     reason: str | None = None  # required, non-empty, whenever state is not "measured"
+    # Units in the denominator, and units in scope left out as ineligible. None
+    # means "not recorded" (a result written before schema 7), never zero.
+    n: int | None = None
+    n_excluded: int | None = None
 
     @model_validator(mode="after")
     def _value_present_exactly_when_measured(self) -> Metric:
+        for field, count in (("n", self.n), ("n_excluded", self.n_excluded)):
+            if count is not None and count < 0:
+                raise ValueError(f"{field} counts units and cannot be negative, got {count}")
         if self.state == "measured":
             if self.value is None:
                 raise ValueError("a measured metric needs a value; give another state and a reason")
@@ -79,6 +95,10 @@ class Metric(StrictModel):
             # would come back from storage as a measured metric with no value.
             if not math.isfinite(self.value):
                 raise ValueError(f"a measured value must be finite, got {self.value}")
+            # A value over no units is the invented zero this model exists to
+            # prevent: an empty sample is not_estimable, unsupported or skipped.
+            if self.n == 0:
+                raise ValueError("a measured metric was computed over at least one unit; n is 0")
             return self
         if self.value is not None:
             raise ValueError(f"a {self.state} metric carries no value, got {self.value}")

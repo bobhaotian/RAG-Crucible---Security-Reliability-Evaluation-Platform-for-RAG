@@ -44,9 +44,10 @@ from rag_crucible.runner.models import (
 # is SQLite's infinity; NaN is stored as NULL), and a non-blank reason whenever
 # the state is not "measured". "Blank" here is ASCII whitespace; Python's
 # str.strip also strips rarer Unicode spaces, which is the one place the two
-# can disagree. Adding a MetricState changes this DDL, so it needs a store
-# migration (a metrics rebuild), and an older build then refuses the store
-# instead of failing on a state it cannot read.
+# can disagree. The counts n and n_excluded are never negative, and a measured
+# row is never computed over zero units. Adding a MetricState changes this DDL,
+# so it needs a store migration (a metrics rebuild), and an older build then
+# refuses the store instead of failing on a state it cannot read.
 _STATES_SQL = ", ".join(f"'{state}'" for state in get_args(MetricState))
 _BLANK_SQL = "char(32, 9, 10, 11, 12, 13)"
 # The latest schema, one statement per entry: ``_migrate`` runs them inside a
@@ -88,11 +89,16 @@ _SCHEMA: tuple[str, ...] = (
       value    REAL,
       state    TEXT NOT NULL DEFAULT 'measured',
       reason   TEXT,
+      n          INTEGER,
+      n_excluded INTEGER,
       PRIMARY KEY (run_id, suite, name, variant),
       CHECK (state IN ({_STATES_SQL})),
       CHECK ((value IS NULL) = (state != 'measured')),
       CHECK (value IS NULL OR abs(value) < 9e999),
-      CHECK (state = 'measured' OR coalesce(length(trim(reason, {_BLANK_SQL})), 0) > 0)
+      CHECK (state = 'measured' OR coalesce(length(trim(reason, {_BLANK_SQL})), 0) > 0),
+      CHECK (n IS NULL OR n >= 0),
+      CHECK (n_excluded IS NULL OR n_excluded >= 0),
+      CHECK (state != 'measured' OR n IS NULL OR n >= 1)
     )
     """,
     """
@@ -127,11 +133,13 @@ _SCHEMA: tuple[str, ...] = (
 # test_a_migrated_store_has_the_shape_of_a_fresh_one checks.
 #
 # A nullable, unconstrained column is added in place with ``ALTER TABLE ...
-# ADD COLUMN``. That covers the per-metric statistics planned next (B2: n,
-# n_clusters, ci_low, ci_high, method), so they are one more step of plain
-# ADD COLUMNs and need no second rebuild. What SQLite cannot alter in place,
-# such as dropping a NOT NULL, rebuilds the table instead: create the new
-# shape, copy every row, drop the old table, rename the new one into place.
+# ADD COLUMN``. That covers the rest of the per-metric statistics planned for
+# B2 (n_clusters, ci_low, ci_high, method), so they are one more step of plain
+# ADD COLUMNs. What SQLite cannot alter in place rebuilds the table instead:
+# create the new shape, copy every row, drop the old table, rename the new one
+# into place. Dropping a NOT NULL is one such change; so is a column with a
+# CHECK, since one added in place would sit after the table's constraints and
+# give a migrated store a different shape from a fresh one.
 _MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # 0 -> 1. Written out literally, not from MetricState: a step is history,
     # and must not change when the literal does.
@@ -164,6 +172,38 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "DROP TABLE metrics",
         "ALTER TABLE metrics_v1 RENAME TO metrics",
         "ALTER TABLE records ADD COLUMN payload_schema INTEGER",
+    ),
+    # 1 -> 2. metrics gains n and n_excluded, each metric's sample size and
+    # the units it left out as ineligible, with CHECKs, so it is rebuilt.
+    # Existing rows keep NULL in both: their writers did not record them.
+    (
+        """
+        CREATE TABLE metrics_v2 (
+          run_id   TEXT NOT NULL REFERENCES runs(id),
+          suite    TEXT NOT NULL,
+          name     TEXT NOT NULL,
+          variant  TEXT NOT NULL DEFAULT '',
+          value    REAL,
+          state    TEXT NOT NULL DEFAULT 'measured',
+          reason   TEXT,
+          n          INTEGER,
+          n_excluded INTEGER,
+          PRIMARY KEY (run_id, suite, name, variant),
+          CHECK (state IN ('measured', 'unsupported', 'inapplicable', 'skipped', 'error',
+                           'not_estimable')),
+          CHECK ((value IS NULL) = (state != 'measured')),
+          CHECK (value IS NULL OR abs(value) < 9e999),
+          CHECK (state = 'measured'
+                 OR coalesce(length(trim(reason, char(32, 9, 10, 11, 12, 13))), 0) > 0),
+          CHECK (n IS NULL OR n >= 0),
+          CHECK (n_excluded IS NULL OR n_excluded >= 0),
+          CHECK (state != 'measured' OR n IS NULL OR n >= 1)
+        )
+        """,
+        "INSERT INTO metrics_v2 (run_id, suite, name, variant, value, state, reason) "
+        "SELECT run_id, suite, name, variant, value, state, reason FROM metrics",
+        "DROP TABLE metrics",
+        "ALTER TABLE metrics_v2 RENAME TO metrics",
     ),
 )
 STORE_SCHEMA_VERSION = len(_MIGRATIONS)
@@ -435,8 +475,8 @@ class ResultStore:
                 for metric in suite.metrics:
                     conn.execute(
                         "INSERT OR REPLACE INTO metrics "
-                        "(run_id, suite, name, variant, value, state, reason) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "(run_id, suite, name, variant, value, state, reason, n, n_excluded) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             run_id,
                             metric.suite,
@@ -445,6 +485,8 @@ class ResultStore:
                             metric.value,
                             metric.state,
                             metric.reason,
+                            metric.n,
+                            metric.n_excluded,
                         ),
                     )
                 for record in suite.records:
@@ -507,7 +549,7 @@ class ResultStore:
                 (run_id,),
             ).fetchall()
             metric_rows = conn.execute(
-                "SELECT suite, name, variant, value, state, reason FROM metrics "
+                "SELECT suite, name, variant, value, state, reason, n, n_excluded FROM metrics "
                 "WHERE run_id = ? ORDER BY suite, name, variant",
                 (run_id,),
             ).fetchall()

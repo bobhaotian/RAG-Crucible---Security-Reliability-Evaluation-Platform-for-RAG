@@ -151,3 +151,30 @@ def test_metric_entry_returns_the_metric_whatever_its_state(tmp_path: Path) -> N
     assert result.metric_entry("retrieval", "mrr") == skipped
     assert result.metric_entry("retrieval", "mrr", "rerank=on") is None
     assert result.metric_entry("privacy", "mrr") is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"value": 0.5, "n": -1}, "cannot be negative"),
+        ({"value": 0.5, "n": 3, "n_excluded": -2}, "cannot be negative"),
+        ({"value": 0.0, "n": 0}, "at least one unit"),
+    ],
+)
+def test_metric_counts_are_units(fields: dict[str, float], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        Metric(suite="retrieval", name="mrr", **fields)  # type: ignore[arg-type]
+
+
+def test_an_empty_sample_is_recorded_on_a_metric_that_was_not_measured() -> None:
+    metric = Metric(
+        suite="retrieval",
+        name="mrr",
+        value=None,
+        state="unsupported",
+        reason="no labels",
+        n=0,
+        n_excluded=56,
+    )
+    assert (metric.n, metric.n_excluded) == (0, 56)
+    assert Metric(suite="retrieval", name="mrr", value=0.5).n is None  # not recorded
