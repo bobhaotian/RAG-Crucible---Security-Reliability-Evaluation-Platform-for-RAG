@@ -557,6 +557,11 @@ describe("values scored over a subset", () => {
       ],
     );
     assert.match(subsetLine({ n: undefined, excluded: 2 }), /not recorded/);
+    // Same number excluded, different denominators: still two lines.
+    const sameExcluded = groupSubsets(
+      subsettedOf([sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 40, 3)]),
+    );
+    assert.equal(sameExcluded.length, 2);
   });
 
   test("the KPI card says a subset figure is one, and the worst case keeps its input's subset", () => {
@@ -591,6 +596,22 @@ describe("values scored over a subset", () => {
     assert.deepEqual(
       radar.subsets.map((x) => x.label),
       ["Retrieval"],
+    );
+    // An inverted axis is still scored over its input's subset.
+    const inverted = tradeoffRadar(
+      run(
+        m("retrieval", "ndcg@10", "rerank=on", 0.8),
+        m("faithfulness", "groundedness", "", 0.7),
+        sub("security", "knowledge_corruption_rate", "defense=none", 0.2, 8, 2),
+        sub("privacy", "leakage_rate", "defense=none", 0.1, 20, 7),
+      ),
+    );
+    assert.deepEqual(
+      inverted.subsets.map((x) => [x.label, subsetShort(x.subset)]),
+      [
+        ["Robustness", "8 of 10"],
+        ["Privacy", "20 of 27"],
+      ],
     );
     const lift = rerankLift(
       run(sub("retrieval", "mrr", "rerank=off", 0.5, 53, 3), sub("retrieval", "mrr", "rerank=on", 0.6, 53, 3)),
