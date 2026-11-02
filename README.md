@@ -22,7 +22,7 @@ the same index and returns metrics, per-item records, plots, and a dashboard.
 |---|---|---|
 | **security** | Can someone who writes into your corpus corrupt your answers or hijack the model? Corpus poisoning and indirect prompt injection, measured with each defense on and off. | Gold labels today — needs only questions once [P0-C](docs/ROADMAP.md) lands |
 | **privacy** | Does a secret in your documents escape into an answer? Seeded PII canaries, split into *reached the prompt* vs *reached the answer*. | No |
-| **retrieval** | Is the right passage being found? recall@k, nDCG@k, MRR, and the lift a reranker actually buys. | Yes — gold labels |
+| **retrieval** | Is the right passage being found? recall@k, nDCG@k, MRR, and the lift a reranker actually buys. | Yes — gold labels. A partly labelled set is scored over its labelled questions, and says how many it left out |
 | **faithfulness** | Is the answer grounded in what was retrieved? Groundedness, hallucination rate, citation precision. | Partly |
 
 **Why the index matters.** Other tools do generate poisoning payloads — garak ships
@@ -365,6 +365,12 @@ placeholder that says so and counts the states (e.g. `nothing measured: unsuppor
 `rag-crucible eval` reuses `results/<spec name>/`. The report never deletes files: a
 plot for a suite the run did not include is left as it was.
 
+Every metric is defined in [docs/metrics.md](docs/metrics.md): what it counts, which
+units are eligible, and what it reports when nothing is. Each one carries `n`, the units
+its value was computed over, and `n_excluded`, the units it left out as ineligible, so
+a score over part of a set says so in `summary.md`, the CLI and the dashboard. A suite
+that failed or was skipped is shown as such, with its reason.
+
 Each run gets its own directory, so `rag-crucible submit --force` never overwrites an
 earlier report. Set `RAG_CRUCIBLE_RESULTS_DIR` to change the root; service containers keep
 it under the persistent `/data/artifacts` volume. A suite-level failure still exports
@@ -455,7 +461,7 @@ dashboard/     read-only Vite + React + TS SPA over the API
 specs/         RunSpec YAMLs (demo, fake smoke, scifact, qdrant)
 datasets/      seeded corpus + QA gold labels + committed judge cache (scripts/ regenerates)
 tests/         unit + integration; deterministic via the fake provider
-docs/          DESIGN.md, architecture.md, threat-model.md
+docs/          DESIGN.md, architecture.md, threat-model.md, metrics.md (generated)
 ```
 
 ## Threat model

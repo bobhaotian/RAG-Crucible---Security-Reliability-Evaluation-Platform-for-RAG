@@ -112,3 +112,29 @@ def test_aggregate_scores_answer_accuracy_over_gradable_items_only() -> None:
     metrics = {m.name: m.value for m in _aggregate(records)}
 
     assert metrics["answer_accuracy"] == 1.0
+
+
+def test_a_citation_with_no_claim_to_check_is_not_judged_unsupported() -> None:
+    """An answer with no claim gives its citations nothing to support, so they
+    are unjudged and left out of citation_precision, not counted as misses."""
+    from rag_crucible.eval.types import CitationJudgment
+
+    judged = FaithfulnessRecord(
+        qid="q1",
+        question="one",
+        answer="The X1 lasts 72 hours [1].",
+        claims=(ClaimJudgment(claim="c", supported=True, parse_ok=True, cached=False),),
+        citations_parsed=True,
+        citations=(CitationJudgment(chunk_id="a", supports_claim=True),),
+        answer_match=None,
+    )
+    unjudged = judged.model_copy(
+        update={
+            "qid": "q2",
+            "claims": (),
+            "citations": (CitationJudgment(chunk_id="b", supports_claim=None),),
+        }
+    )
+    precision = next(m for m in _aggregate([judged, unjudged]) if m.name == "citation_precision")
+    assert precision.value == 1.0
+    assert (precision.n, precision.n_excluded) == (1, 1)
