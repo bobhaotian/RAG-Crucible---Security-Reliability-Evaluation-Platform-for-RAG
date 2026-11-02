@@ -16,6 +16,12 @@ placeholder that says so and counts the states. It replaces whatever chart an
 earlier run left there, so the folder never holds a chart of numbers its
 summary says were not measured. A plot for a suite this run did not include is
 left untouched, as it always was: the report deletes nothing.
+
+A suite that failed is shown as failed, with its error, in place of its
+tables; a skipped one says so and lists its metrics' reasons. A measured
+metric computed over part of its scope (a partially labelled question set,
+say) is listed under "Scored over part of the set" with how many units it
+used and how many were not eligible, so it never reads as a full-set score.
 """
 
 from __future__ import annotations
@@ -25,6 +31,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
+from rag_crucible.eval.catalog import definition_for
 from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
 
 # A metric the run did not emit. Distinct from one it emitted without a value,
@@ -56,10 +63,13 @@ def describe_suite(suite: SuiteResult, limit: int = 4) -> str:
     rerank_on = any(m.variant == "rerank=on" and m.value is not None for m in suite.metrics)
     headline = ("", "rerank=on" if rerank_on else "rerank=off", "defense=none")
     explained: set[tuple[str, str]] = set()
-    parts: list[str] = []
+    parts: list[str] = ["skipped"] if suite.status == "skipped" else []
     for m in [m for m in suite.metrics if m.variant in headline][:limit]:
         if m.value is not None:
-            parts.append(f"{m.name}={m.value:.3f}")
+            part = f"{m.name}={m.value:.3f}"
+            if m.n is not None and m.n_excluded:  # never read as a full-set score
+                part += f" ({m.n} of {m.n + m.n_excluded})"
+            parts.append(part)
             continue
         key = (m.state, _one_line(m.reason))
         detail = m.state if key in explained else f"{m.state}: {key[1]}"
@@ -106,6 +116,48 @@ def _not_measured(metrics: Iterable[Metric]) -> list[str]:
     return lines
 
 
+def _partial(metrics: Iterable[Metric]) -> list[str]:
+    """Measured metrics computed over part of their scope, one line per distinct
+    (n, n_excluded) and eligibility rule, so a subset score is never read as a
+    full-set one. Empty when nothing was excluded, which leaves a report of a
+    fully eligible run unchanged."""
+    grouped: dict[tuple[int, int, str], list[str]] = {}
+    for m in metrics:
+        if m.value is not None and m.n is not None and m.n_excluded:
+            definition = definition_for(m.suite, m.name)
+            rule = definition.eligible if definition else "eligible units"
+            grouped.setdefault((m.n, m.n_excluded, rule), []).append(_label(m))
+    if not grouped:
+        return []
+    lines = ["Scored over part of the set:", ""]
+    lines += [
+        f"- {', '.join(labels)} — scored over {n} of {n + excluded}; {excluded} excluded "
+        f"(eligible: {_plain(rule)})"
+        for (n, excluded, rule), labels in grouped.items()
+    ]
+    lines.append("")
+    return lines
+
+
+_TITLES = {
+    "retrieval": "Retrieval",
+    "faithfulness": "Faithfulness",
+    "security": "Security",
+    "privacy": "Privacy",
+}
+
+
+def _suite_status(suite: SuiteResult) -> list[str]:
+    """A suite that did not run to completion, in place of its tables: failed
+    with its error, or skipped with its metrics' reasons."""
+    lines = [f"## {_TITLES.get(suite.suite, suite.suite)}", ""]
+    if suite.status == "failed":
+        lines += [f"**Failed:** {_plain(suite.error) or 'no error recorded'}", ""]
+        return lines
+    lines += ["_Skipped: nothing in this suite could be measured._", ""]
+    return lines + _not_measured(suite.metrics)
+
+
 def _lift(off: Metric | None, on: Metric | None) -> str:
     if off is None or on is None or off.value is None or on.value is None:
         return ABSENT  # a difference needs both sides measured
@@ -130,17 +182,18 @@ def render_summary(result: EvalRunResult) -> str:
         f"- started {result.started_at} · finished {result.finished_at}",
         "",
     ]
-    retrieval = _suite(result, "retrieval")
-    if retrieval is not None:
-        lines += _retrieval_table(retrieval)
-    faithfulness = _suite(result, "faithfulness")
-    if faithfulness is not None:
-        lines += _faithfulness_table(faithfulness)
-    security = _suite(result, "security")
-    if security is not None:
-        lines += _security_table(security)
+    for name, table in (
+        ("retrieval", _retrieval_table),
+        ("faithfulness", _faithfulness_table),
+        ("security", _security_table),
+    ):
+        suite = _suite(result, name)
+        if suite is not None:
+            lines += table(suite) if suite.status == "succeeded" else _suite_status(suite)
     privacy = _suite(result, "privacy")
-    if privacy is not None:
+    if privacy is not None and privacy.status != "succeeded":
+        lines += _suite_status(privacy)
+    elif privacy is not None:
         lines += _privacy_table(privacy, redacted_at_ingest=_canaries_redacted_at_ingest(result))
         lines += _privacy_ingest_notes(result, privacy)
     if result.stage_stats:
@@ -182,6 +235,7 @@ def _retrieval_table(suite: SuiteResult) -> list[str]:
         lines += [f"- {_label(m)}: {format_value(m)}" for m in other]
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite.metrics)
     return lines
 
 
@@ -201,6 +255,7 @@ def _faithfulness_table(suite: SuiteResult) -> list[str]:
     lines += [f"| {m.name} | {format_value(m)} |" for m in suite.metrics]
     lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite.metrics)
     return lines
 
 
@@ -235,6 +290,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
             lines.append(f"| {name} | {cells} |")
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite.metrics)
     return lines
 
 
@@ -275,6 +331,7 @@ def _privacy_table(suite: SuiteResult, *, redacted_at_ingest: bool = False) -> l
         )
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite.metrics)
     return lines
 
 

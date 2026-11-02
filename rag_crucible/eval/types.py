@@ -51,7 +51,8 @@ from rag_crucible.types import StrictModel
 #   4 — corpus and QA content digests preserved in the embedded spec
 #   5 — per-chunk clean-defense screening evidence
 #   6 — every metric carries a state (and a reason when it was not measured)
-#   7 — every metric carries n and n_excluded, its sample size and exclusions
+#   7 — every metric carries n and n_excluded, its sample size and exclusions;
+#       a citation can be unjudged (supports_claim None) when its answer made no claim
 RESULT_SCHEMA_VERSION = 7
 
 # One spelling, imported by both the eval layer and the result store. Spelled

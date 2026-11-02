@@ -655,3 +655,72 @@ def test_privacy_series_keep_their_own_colours(tmp_path: Path, figures: dict[str
         "generation leakage": to_hex("C1"),
     }
     assert _bar_colours(fig) == {to_hex("C0")}
+
+
+def test_a_failed_suite_shows_its_error_in_place_of_empty_tables(tmp_path: Path) -> None:
+    failed = SuiteResult(
+        suite="faithfulness",
+        status="failed",
+        error="JudgeCacheMissError: no cached verdict for *claim* 3",
+        metrics=(),
+        records=(),
+    )
+    summary = render_summary(_result(tmp_path, failed))
+
+    assert "## Faithfulness" in summary
+    assert r"**Failed:** JudgeCacheMissError: no cached verdict for \*claim\* 3" in summary
+    assert "answers judged" not in summary and "| metric | value |" not in summary
+
+
+def test_a_skipped_suite_says_so_and_lists_its_reasons_once(tmp_path: Path) -> None:
+    reason = "no question carries a retrieval label (a gold passage); 3 question(s) loaded"
+    metrics = [
+        Metric(
+            suite="retrieval",
+            name=name,
+            variant=variant,
+            value=None,
+            state="unsupported",
+            reason=reason,
+            n=0,
+            n_excluded=3,
+        )
+        for variant in ("rerank=off", "rerank=on")
+        for name in ("recall@1", "mrr")
+    ]
+    skipped = SuiteResult(suite="retrieval", status="skipped", metrics=tuple(metrics), records=())
+    summary = render_summary(_result(tmp_path, skipped))
+
+    assert "_Skipped: nothing in this suite could be measured._" in summary
+    assert summary.count("unsupported: no question carries a retrieval label") == 1
+    assert "| metric |" not in summary  # no table of nine em dashes
+    assert describe_suite(skipped).startswith("skipped · recall@1=— (unsupported: no question")
+
+
+def test_a_subset_score_is_never_read_as_a_full_set_score(tmp_path: Path) -> None:
+    partial = _suite(
+        "retrieval",
+        Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.8, n=53, n_excluded=3),
+        Metric(
+            suite="retrieval", name="recall@1", variant="rerank=off", value=0.7, n=53, n_excluded=3
+        ),
+    )
+    summary = render_summary(_result(tmp_path, partial))
+
+    assert "Scored over part of the set:" in summary
+    assert (
+        "- mrr [rerank=off], recall@1 [rerank=off] — scored over 53 of 56; 3 excluded "
+        "(eligible: questions with a retrieval label (a gold passage or a gold fact))"
+    ) in summary
+    assert describe_suite(partial) == "mrr=0.800 (53 of 56) · recall@1=0.700 (53 of 56)"
+
+
+def test_a_fully_eligible_or_unrecorded_metric_adds_no_partial_note(tmp_path: Path) -> None:
+    full = _suite(
+        "retrieval",
+        Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.8, n=56, n_excluded=0),
+        Metric(suite="retrieval", name="recall@1", variant="rerank=off", value=0.7),  # older
+    )
+    summary = render_summary(_result(tmp_path, full))
+    assert "part of the set" not in summary
+    assert describe_suite(full) == "mrr=0.800 · recall@1=0.700"
