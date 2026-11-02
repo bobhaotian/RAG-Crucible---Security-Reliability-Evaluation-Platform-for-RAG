@@ -38,11 +38,23 @@ export interface Metric {
   value: number | null; // null exactly when state is not "measured" — never a zero
   state: MetricState;
   reason: string | null; // set whenever state is not "measured"
+  /** Units the value was computed over: the denominator of a rate, or the
+   *  population a count examined. Null (or missing, from an older server) when
+   *  the run did not record it — never 0 for that. */
+  n?: number | null;
+  /** Units in the metric's scope left out of the denominator as not eligible
+   *  (a question with no retrieval label, an answer with no claim, a trial an
+   *  older version did not record). 0 when none were; null when not recorded. */
+  n_excluded?: number | null;
 }
+
+/** rag_crucible.eval.types.SuiteStatus. A skipped suite carries its reasons on
+ *  its metrics, not in `error`; a failed one carries its error and no metrics. */
+export type SuiteStatus = "succeeded" | "failed" | "skipped";
 
 export interface SuiteSummary {
   suite: string;
-  status: string;
+  status: SuiteStatus;
   error: string | null;
   metric_count: number;
   record_count: number;

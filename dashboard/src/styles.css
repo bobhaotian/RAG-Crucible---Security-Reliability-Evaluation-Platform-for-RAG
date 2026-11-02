@@ -121,6 +121,11 @@ body {
   color: var(--bad-text);
 }
 
+.status.skipped {
+  background: #e6a23c33;
+  color: var(--warn);
+}
+
 .status.running,
 .status.pending {
   background: #0984e333;
@@ -952,4 +957,111 @@ table.diff td.na {
   .bars li {
     grid-template-columns: 118px 1fr 42px 56px;
   }
+}
+
+/* ------------------------------------------- subsets, counts, suite status */
+
+/* "53 of 56" at the right end of a track: a value scored over part of its
+   scope must never pass for a full-set score. */
+.bar-subset,
+.db-subset {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  line-height: 14px;
+  font-size: 10px;
+  color: var(--warn);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.subset-note {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--neutral);
+  border-radius: 8px;
+  background: #ffffff08;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.subset-note h4 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.subset-note ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.subset-note li {
+  overflow-wrap: anywhere;
+}
+
+.hint.count b {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.suite-notices {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+  min-width: 0;
+}
+
+.suite-notice {
+  min-width: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 8px;
+  background: var(--panel);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.suite-notice.failed {
+  border-left-color: var(--bad);
+}
+
+.suite-notice h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.suite-notice ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.suite-notice li,
+.suite-error {
+  overflow-wrap: anywhere; /* a long error wraps inside its card, never widens the page */
+}
+
+.suite-error {
+  margin: 0;
+  color: var(--muted);
+}
+
+.suite-notice .state {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+table.diff td.ndiff {
+  color: var(--warn);
+}
+
+.ndiff-mark {
+  font-style: normal;
+  font-size: 10px;
 }

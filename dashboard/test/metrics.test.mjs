@@ -7,16 +7,26 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  PROBE_STYLE_HEADING,
   breakdown,
+  canariesRedactedAtIngest,
   contamination,
   defenseGroups,
   diffRows,
+  formatMetric,
   formatReading,
+  groupSubsets,
   groupUnmeasured,
+  isCount,
   judgeGap,
   kpis,
   read,
   rerankLift,
+  subsetLine,
+  subsetShort,
+  subsettedOf,
+  suiteNotices,
+  suitesLine,
   summaryMarkdown,
   tradeoffRadar,
   unmeasuredOf,
@@ -38,6 +48,19 @@ const nm = (suite, name, variant, state = "unsupported", reason = `why ${name}`)
   value: null,
   state,
   reason,
+});
+// A measured metric scored over `n` units with `excluded` left out.
+const sub = (suite, name, variant, value, n, excluded) => ({
+  ...m(suite, name, variant, value),
+  n,
+  n_excluded: excluded,
+});
+const suite = (name, status, error = null) => ({
+  suite: name,
+  status,
+  error,
+  metric_count: 0,
+  record_count: 0,
 });
 const run = (...metrics) => ({
   run: {
@@ -490,5 +513,253 @@ describe("not-measured lists and the markdown summary", () => {
       ),
       undefined,
     );
+  });
+});
+
+describe("values scored over a subset", () => {
+  test("a reading carries its subset only when a measured value excluded something", () => {
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, 53, 3)), {
+      measured: true,
+      value: 0.9,
+      subset: { n: 53, excluded: 3 },
+    });
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, 56, 0)), { measured: true, value: 0.9 });
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, null, null)), { measured: true, value: 0.9 });
+    assert.deepEqual(read(m("r", "mrr", "", 0.9)), { measured: true, value: 0.9 }); // older server
+    const empty = read({ ...nm("r", "mrr", "", "unsupported", "no labels"), n: 0, n_excluded: 56 });
+    assert.equal(empty.measured, false);
+    assert.equal("subset" in empty, false);
+  });
+
+  test("an excluded count with no recorded denominator says so; nonsense counts are ignored", () => {
+    const r = read(sub("r", "mrr", "", 0.9, null, 3));
+    assert.deepEqual(r.subset, { n: undefined, excluded: 3 });
+    assert.equal(subsetShort(r.subset), "3 excluded");
+    assert.equal(subsetShort({ n: 53, excluded: 3 }), "53 of 56");
+    assert.equal("subset" in read(sub("r", "mrr", "", 0.9, 53, -1)), false);
+    assert.equal("subset" in read(sub("r", "mrr", "", 0.9, 53, 1.5)), false);
+  });
+
+  test("a panel's subset footnote is one line per distinct denominator", () => {
+    const groups = groupSubsets(
+      subsettedOf([
+        sub("retrieval", "recall@1", "rerank=off", 0.5, 53, 3),
+        sub("retrieval", "mrr", "rerank=off", 0.6, 53, 3),
+        sub("retrieval", "mrr", "rerank=on", 0.7, 50, 6),
+        m("retrieval", "ndcg@10", "rerank=off", 0.8),
+      ]),
+    );
+    assert.deepEqual(
+      groups.map((g) => [g.labels, subsetLine(g)]),
+      [
+        [["recall@1 [rerank=off]", "mrr [rerank=off]"], "scored over 53; 3 excluded"],
+        [["mrr [rerank=on]"], "scored over 50; 6 excluded"],
+      ],
+    );
+    assert.match(subsetLine({ n: undefined, excluded: 2 }), /not recorded/);
+    // Same number excluded, different denominators: still two lines.
+    const sameExcluded = groupSubsets(
+      subsettedOf([sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 40, 3)]),
+    );
+    assert.equal(sameExcluded.length, 2);
+  });
+
+  test("the KPI card says a subset figure is one, and the worst case keeps its input's subset", () => {
+    const cards = kpis(
+      run(
+        sub("retrieval", "ndcg@10", "rerank=on", 0.8, 53, 3),
+        sub("security", "knowledge_corruption_rate", "defense=none", 0.4, 8, 2),
+        m("security", "injection_compliance_rate", "defense=none", 0.1),
+        sub("privacy", "leakage_rate", "defense=none", 0.2, 20, 7),
+      ),
+    );
+    const detail = Object.fromEntries(cards.map((k) => [k.key, k.detail]));
+    assert.equal(detail.retrieval, "nDCG@10, rerank on · 53 of 56");
+    assert.equal(detail.security, "poison vs injection, no defense · 8 of 10");
+    assert.equal(detail.privacy, "none arm · 20 of 27");
+    const worst = worstOf([
+      ["a", read(m("s", "a", "", 0.1))],
+      ["b", read(sub("s", "b", "", 0.3, 9, 1))],
+    ]);
+    assert.deepEqual(worst, { measured: true, value: 0.3, subset: { n: 9, excluded: 1 } });
+  });
+
+  test("radar, rerank lift and defense bars carry the subset to their panels", () => {
+    const radar = tradeoffRadar(
+      run(
+        sub("retrieval", "ndcg@10", "rerank=on", 0.8, 53, 3),
+        m("faithfulness", "groundedness", "", 0.7),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.2),
+        m("privacy", "leakage_rate", "defense=none", 0.1),
+      ),
+    );
+    assert.deepEqual(
+      radar.subsets.map((x) => x.label),
+      ["Retrieval"],
+    );
+    // An inverted axis is still scored over its input's subset.
+    const inverted = tradeoffRadar(
+      run(
+        m("retrieval", "ndcg@10", "rerank=on", 0.8),
+        m("faithfulness", "groundedness", "", 0.7),
+        sub("security", "knowledge_corruption_rate", "defense=none", 0.2, 8, 2),
+        sub("privacy", "leakage_rate", "defense=none", 0.1, 20, 7),
+      ),
+    );
+    assert.deepEqual(
+      inverted.subsets.map((x) => [x.label, subsetShort(x.subset)]),
+      [
+        ["Robustness", "8 of 10"],
+        ["Privacy", "20 of 27"],
+      ],
+    );
+    const lift = rerankLift(
+      run(sub("retrieval", "mrr", "rerank=off", 0.5, 53, 3), sub("retrieval", "mrr", "rerank=on", 0.6, 53, 3)),
+    );
+    assert.equal(lift.subsets.length, 2);
+    const [group] = defenseGroups(
+      run(sub("security", "knowledge_corruption_rate", "defense=none", 0.4, 8, 2)),
+      "security",
+    );
+    assert.deepEqual(group.bars[0].reading.subset, { n: 8, excluded: 2 });
+  });
+
+  test("the copied summary marks a subset score", () => {
+    const md = summaryMarkdown(run(sub("retrieval", "mrr", "rerank=on", 0.94339, 53, 3)));
+    assert.match(md, /\| retrieval \| mrr \| rerank=on \| 0\.9434 \(53 of 56\) \|/);
+    const full = summaryMarkdown(run(sub("retrieval", "mrr", "rerank=on", 0.9, 56, 0)));
+    assert.match(full, /\| 0\.9000 \|/);
+  });
+});
+
+describe("compare view denominators", () => {
+  test("a delta over different denominators is flagged; unknown or equal ones are not", () => {
+    const rows = diffRows(
+      run(
+        sub("s", "a", "", 0.5, 53, 3),
+        sub("s", "b", "", 0.5, 56, 0),
+        m("s", "c", "", 0.5),
+      ),
+      run(
+        sub("s", "a", "", 0.6, 56, 0),
+        sub("s", "b", "", 0.6, 56, 0),
+        sub("s", "c", "", 0.6, 40, 0),
+      ),
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.nDiffers, r.n]),
+      [
+        ["s · a", true, [53, 56]],
+        ["s · b", false, [56, 56]],
+        ["s · c", false, [undefined, 40]],
+      ],
+    );
+  });
+});
+
+describe("suite status", () => {
+  test("a failed suite is a notice with its error; a skipped one with its grouped reasons", () => {
+    const results = {
+      ...run(
+        ...["recall@1", "mrr"].flatMap((name) =>
+          ["rerank=off", "rerank=on"].map((v) => ({
+            ...nm("retrieval", name, v, "unsupported", "no question carries a retrieval label"),
+            n: 0,
+            n_excluded: 56,
+          })),
+        ),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.2),
+      ),
+      suites: [
+        suite("retrieval", "skipped"),
+        suite("faithfulness", "failed", "ValueError: judge returned nothing"),
+        suite("security", "succeeded"),
+        suite("privacy", "cancelled"),
+      ],
+    };
+    const notices = suiteNotices(results);
+    assert.deepEqual(
+      notices.map((n) => [n.suite, n.status, n.error, n.reasons.map((g) => [g.state, g.labels.length])]),
+      [
+        ["retrieval", "skipped", undefined, [["unsupported", 4]]],
+        ["faithfulness", "failed", "ValueError: judge returned nothing", []],
+      ],
+    );
+    assert.equal(
+      suitesLine(results.suites),
+      "retrieval (skipped) · faithfulness (failed) · security · privacy (cancelled)",
+    );
+    const md = summaryMarkdown(results);
+    assert.match(md, /- retrieval: skipped\n/);
+    assert.match(md, /- faithfulness: failed \(ValueError: judge returned nothing\)/);
+  });
+
+  test("a failed suite with a blank error is still a notice, with no error text", () => {
+    const [notice] = suiteNotices({ ...run(), suites: [suite("faithfulness", "failed", "  ")] });
+    assert.equal(notice.error, undefined);
+  });
+
+  test("a run whose suites all succeeded has no notices, and its header and summary are unchanged", () => {
+    const results = { ...run(m("s", "a", "", 0.5)), suites: [suite("security", "succeeded")] };
+    assert.deepEqual(suiteNotices(results), []);
+    assert.equal(suitesLine(results.suites), "security");
+    assert.doesNotMatch(summaryMarkdown(results), /- security:/);
+  });
+});
+
+describe("counts", () => {
+  const dropped = (value, variant = "") => m("privacy", "canary_docs_dropped_by_filter", variant, value);
+
+  test("a count is written as an integer, a rate with its digits", () => {
+    assert.equal(isCount("canary_docs_dropped_by_filter"), true);
+    assert.equal(formatMetric(dropped(2)), "2");
+    assert.equal(formatMetric(m("privacy", "leakage_rate", "defense=none", 0.25), 2), "0.25");
+    assert.equal(formatMetric(nm("privacy", "canary_docs_dropped_by_filter", "", "error")), "— (error)");
+    const md = summaryMarkdown(run(dropped(2)));
+    assert.match(md, /\| privacy \| canary_docs_dropped_by_filter \| — \| 2 \|/);
+  });
+
+  test("a count is never a bar, even with a defense variant or a probe-style name", () => {
+    const groups = defenseGroups(
+      run(dropped(3, "defense=none"), m("privacy", "leakage_rate", "defense=none", 0.2)),
+      "privacy",
+    );
+    assert.deepEqual(
+      groups.map((g) => g.metric),
+      ["leakage_rate"],
+    );
+    const rows = breakdown(
+      run(m("privacy", "canary_docs_dropped_by_filter@direct", "", 1)),
+      "privacy",
+      "canary_docs_dropped_by_filter",
+    );
+    assert.deepEqual(rows, []);
+    assert.equal(isCount("canary_docs_dropped_by_filter@direct"), true);
+    assert.equal(isCount("leakage_rate@direct"), false);
+  });
+
+  test("in the compare view a count's change is neither good nor bad", () => {
+    const [row] = diffRows(run(dropped(0)), run(dropped(2)));
+    assert.equal(row.count, true);
+    assert.equal(row.delta, 2);
+  });
+});
+
+describe("privacy labels name the arm, and the pii caveat is keyed on the run", () => {
+  test("the probe-style heading and the KPI no longer claim there was no redaction", () => {
+    assert.doesNotMatch(PROBE_STYLE_HEADING, /no redaction/);
+    assert.match(PROBE_STYLE_HEADING, /none arm/);
+    const [card] = kpis(run(m("privacy", "leakage_rate", "defense=none", 0.2)));
+    assert.equal(card.detail, "none arm");
+  });
+
+  test("the caveat needs this code's drop count and `pii` in the spec's ingest filters", () => {
+    const withCount = run(m("privacy", "canary_docs_dropped_by_filter", "", 0));
+    const pii = { ingest: { filters: ["dedup", "pii"] } };
+    assert.equal(canariesRedactedAtIngest(withCount, pii), true);
+    assert.equal(canariesRedactedAtIngest(withCount, { ingest: { filters: ["dedup"] } }), false);
+    assert.equal(canariesRedactedAtIngest(withCount, null), false);
+    // An older run whose spec lists `pii` but whose canaries skipped the filters.
+    assert.equal(canariesRedactedAtIngest(run(m("privacy", "leakage_rate", "defense=none", 0.5)), pii), false);
   });
 });
