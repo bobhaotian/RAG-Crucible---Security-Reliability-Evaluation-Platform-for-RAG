@@ -23,9 +23,8 @@ import {
   COMPROMISE_METRICS,
   COST_METRICS,
   METRIC_GLOSS,
-  PROBE_STYLE_HEADING,
   breakdown,
-  canariesRedactedAtIngest,
+  codeSpans,
   understatements,
   contamination,
   contextMetrics,
@@ -33,14 +32,13 @@ import {
   faithfulness,
   formatMetric,
   formatReading,
-  groupSubsets,
-  groupUnmeasured,
   isCount,
-  judgeGap,
+  judgeNote,
   latency,
+  panelFootnotes,
+  privacyContext,
   rerankLift,
-  subsetLine,
-  subsetShort,
+  subsetTag,
   subsetted,
   subsettedOf,
   tradeoffRadar,
@@ -83,69 +81,45 @@ function Panel({
         )}
       </div>
       {children}
-      <SubsetList items={subsets} />
-      <NotMeasuredList items={notMeasured} />
+      {panelFootnotes(notMeasured, subsets).map((block) => (
+        <div className={block.kind === "subset" ? "subset-note" : "not-measured"} key={block.kind}>
+          <h4>{block.heading}</h4>
+          <ul>
+            {block.lines.map((line) => (
+              <li key={line.key}>
+                {line.labels.map((label, i) => (
+                  <span key={label}>
+                    {i > 0 && ", "}
+                    <code>{label}</code>
+                  </span>
+                ))}{" "}
+                {line.state && <span className={`state ${line.state}`}>{line.state}</span>} {line.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }
 
-/** Which values in a panel were scored over part of their scope, one line per
- *  distinct denominator. Renders nothing when no value excluded anything, so a
- *  run scored over every unit looks as it always did. */
-function SubsetList({ items }: { items: Subsetted[] }) {
-  if (items.length === 0) return null;
+/** Text whose `code` spans `codeSpans` split out. */
+function Inline({ text }: { text: string }) {
   return (
-    <div className="subset-note">
-      <h4>Scored over a subset</h4>
-      <ul>
-        {groupSubsets(items).map((g) => (
-          <li key={`${g.n ?? "?"}|${g.excluded}`}>
-            {g.labels.map((label, i) => (
-              <span key={label}>
-                {i > 0 && ", "}
-                <code>{label}</code>
-              </span>
-            ))}{" "}
-            — {subsetLine(g)}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {codeSpans(text).map((piece, i) => (piece.code ? <code key={i}>{piece.text}</code> : piece.text))}
+    </>
   );
 }
 
 /** "53 of 56" at the end of a bar's track, for a value scored over a subset. */
 function SubsetTag({ reading, className = "bar-subset" }: { reading: Reading | undefined; className?: string }) {
-  if (!reading?.measured || !reading.subset) return null;
+  const tag = subsetTag(reading);
+  if (tag === undefined) return null;
   return (
-    <span className={className} title={`scored over ${subsetShort(reading.subset)}`}>
-      {subsetShort(reading.subset)}
+    <span className={className} title={`scored over ${tag}`}>
+      {tag}
     </span>
-  );
-}
-
-/** Why each metric in a panel has no number — the panel's equivalent of the
- *  report's "Not measured" list, one line per distinct state and reason.
- *  Renders nothing when everything was measured. */
-function NotMeasuredList({ items }: { items: Unmeasured[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div className="not-measured">
-      <h4>Not measured</h4>
-      <ul>
-        {groupUnmeasured(items).map((g) => (
-          <li key={`${g.state}|${g.reason}`}>
-            {g.labels.map((label, i) => (
-              <span key={label}>
-                {i > 0 && ", "}
-                <code>{label}</code>
-              </span>
-            ))}{" "}
-            <span className={`state ${g.state}`}>{g.state}</span> {g.reason}
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }
 
@@ -365,7 +339,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
 export function Faithfulness({ results, onDrill }: PanelProps) {
   const rows = faithfulness(results);
   if (rows.length === 0) return null;
-  const judge = judgeGap(results);
+  const judge = judgeNote(results);
   return (
     <Panel
       title="Answer faithfulness"
@@ -396,13 +370,9 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
           </li>
         ))}
       </ul>
-      {judge !== undefined && judge.gap > 0.2 && (
+      {judge && (
         <p className="callout">
-          <b>The judge is the bottleneck.</b> {(judge.accuracy * 100).toFixed(0)}% of answers
-          contain the gold answer string, but the configured judge scores only{" "}
-          {(judge.grounded * 100).toFixed(0)}% as grounded — a {judge.gap.toFixed(2)} gap.
-          Judge quality is a config choice (<code>suites.faithfulness.judge</code>), not a
-          property of the pipeline under test.
+          <b>{judge.lead}</b> <Inline text={judge.text} />
         </p>
       )}
     </Panel>
@@ -569,7 +539,7 @@ export function PrivacyLeakage({ results, onDrill, spec = null }: PanelProps) {
   // Counts (canaries the ingest filters dropped) are context, written as
   // integers with their gloss; they are never a bar.
   const counts = contextMetrics(results, "privacy").filter((m) => isCount(m.name));
-  const redacted = canariesRedactedAtIngest(results, spec);
+  const ctx = privacyContext(results, spec);
   return (
     <DefenseBars
       groups={defenseGroups(results, "privacy")}
@@ -583,14 +553,10 @@ export function PrivacyLeakage({ results, onDrill, spec = null }: PanelProps) {
           Synthetic secrets are seeded into the corpus, then probed for directly and
           indirectly. <code>retrieval_exposure_rate</code> is whether the secret reached the
           prompt at all; <code>leakage_rate</code> is whether it reached the answer.
-          {redacted && (
+          {ctx.caveat && (
             <>
               {" "}
-              <b>
-                <code>pii</code> is in this run's ingest filters,
-              </b>{" "}
-              so the canaries were redacted at ingestion in every arm: <code>none</code> is not
-              defense-free here, and <code>pii_filter</code> finds nothing left to redact.
+              <Inline text={ctx.caveat} />
             </>
           )}
         </>
@@ -598,15 +564,14 @@ export function PrivacyLeakage({ results, onDrill, spec = null }: PanelProps) {
       drill={{ suite: "privacy", label: "all canary probes" }}
       footer={
         <>
-          {counts.map((m) => (
-            <p className="hint count" key={m.name}>
-              <code>{m.name}</code> <b>{formatMetric(m)}</b>
-              {METRIC_GLOSS[m.name] ? ` — ${METRIC_GLOSS[m.name]}` : ""}
+          {ctx.counts.map((line) => (
+            <p className="hint count" key={line}>
+              <Inline text={line} />
             </p>
           ))}
           {styles.length > 0 && (
           <div className="defense-group">
-            <h4>{PROBE_STYLE_HEADING}</h4>
+            <h4>{ctx.heading}</h4>
             <ul className="bars">
               {styles.map((s) => (
                 <li

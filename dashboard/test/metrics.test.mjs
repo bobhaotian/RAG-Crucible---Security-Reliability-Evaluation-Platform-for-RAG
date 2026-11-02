@@ -8,10 +8,10 @@ import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
-  PROBE_STYLE_HEADING,
   betterOf,
   breakdown,
   canariesRedactedAtIngest,
+  codeSpans,
   contamination,
   defenseGroups,
   diffCell,
@@ -24,11 +24,17 @@ import {
   groupUnmeasured,
   isCount,
   judgeGap,
+  judgeNote,
+  panelFootnotes,
+  privacyBaseline,
+  privacyContext,
+  probeStyleHeading,
   kpis,
   read,
   rerankLift,
   subsetLine,
   subsetShort,
+  subsetTag,
   subsettedOf,
   suiteNotices,
   suitesLine,
@@ -607,8 +613,8 @@ describe("values scored over a subset", () => {
     assert.deepEqual(
       groups.map((g) => [g.labels, subsetLine(g)]),
       [
-        [["recall@1 [rerank=off]", "mrr [rerank=off]"], "scored over 53; 3 excluded"],
-        [["mrr [rerank=on]"], "scored over 50; 6 excluded"],
+        [["recall@1 [rerank=off]", "mrr [rerank=off]"], "scored over 53 of 56; 3 excluded"],
+        [["mrr [rerank=on]"], "scored over 50 of 56; 6 excluded"],
       ],
     );
     assert.match(subsetLine({ n: undefined, excluded: 2 }), /not recorded/);
@@ -872,8 +878,8 @@ describe("counts", () => {
 
 describe("privacy labels name the arm, and the pii caveat is keyed on the run", () => {
   test("the probe-style heading and the KPI no longer claim there was no redaction", () => {
-    assert.doesNotMatch(PROBE_STYLE_HEADING, /no redaction/);
-    assert.match(PROBE_STYLE_HEADING, /none arm/);
+    assert.doesNotMatch(probeStyleHeading("none"), /no redaction/);
+    assert.equal(probeStyleHeading("none"), "leakage by probe style (none arm)");
     const [card] = kpis(run(m("privacy", "leakage_rate", "defense=none", 0.2)));
     assert.equal(card.detail, "none arm");
   });
@@ -923,5 +929,117 @@ describe("which way is better", () => {
     assert.equal(tone("injection_screened_rate@seen", "injection_filter"), "good");
     assert.equal(tone("attack_abstention_rate", "answer_integrity"), "neutral");
     assert.equal(tone("knowledge_corruption_rate", "prompt_isolation"), "bad");
+  });
+});
+
+describe("display decisions the panels only render", () => {
+  test("a track's subset tag, or nothing for a full-set or unmeasured value", () => {
+    assert.equal(subsetTag(read(sub("s", "a", "", 0.5, 53, 3))), "53 of 56");
+    assert.equal(subsetTag(read(sub("s", "a", "", 0.5, 56, 0))), undefined);
+    assert.equal(subsetTag(read(nm("s", "a", "", "error"))), undefined);
+    assert.equal(subsetTag(undefined), undefined);
+  });
+
+  test("a panel's footnotes: subsets first, then what was not measured; none when there is nothing", () => {
+    const blocks = panelFootnotes(
+      unmeasuredOf([nm("retrieval", "mrr", "rerank=on", "inapplicable", "no reranker")]),
+      subsettedOf([sub("retrieval", "mrr", "rerank=off", 0.5, 53, 3)]),
+    );
+    assert.deepEqual(
+      blocks.map((b) => [b.kind, b.heading, b.lines.map((l) => [l.labels, l.state, l.text])]),
+      [
+        ["subset", "Scored over a subset", [[["mrr [rerank=off]"], undefined, "— scored over 53 of 56; 3 excluded"]]],
+        ["not-measured", "Not measured", [[["mrr [rerank=on]"], "inapplicable", "no reranker"]]],
+      ],
+    );
+    assert.deepEqual(panelFootnotes([], []), []);
+  });
+
+  test("code spans split on backticks", () => {
+    assert.deepEqual(codeSpans("a `b` c"), [
+      { code: false, text: "a " },
+      { code: true, text: "b" },
+      { code: false, text: " c" },
+    ]);
+  });
+});
+
+describe("rerank lift with no reranker", () => {
+  test("every rerank-on figure inapplicable or skipped means there is no rerank-on figure", () => {
+    const allOut = rerankLift(
+      run(
+        m("retrieval", "mrr", "rerank=off", 0.5),
+        nm("retrieval", "mrr", "rerank=on", "inapplicable", "no reranker configured"),
+        m("retrieval", "recall@1", "rerank=off", 0.4),
+        nm("retrieval", "recall@1", "rerank=on", "skipped", "rerank lift off"),
+      ),
+    );
+    assert.equal(allOut.hasOn, false);
+    const oneCounts = rerankLift(
+      run(
+        m("retrieval", "mrr", "rerank=off", 0.5),
+        nm("retrieval", "mrr", "rerank=on", "error", "reranker crashed"),
+      ),
+    );
+    assert.equal(oneCounts.hasOn, true); // an error is a figure that should have been there
+  });
+});
+
+describe("the judge-gap callout", () => {
+  const acc = (value, n, x) => sub("faithfulness", "answer_accuracy", "", value, n, x);
+  const gr = (value, n, x) => sub("faithfulness", "groundedness", "", value, n, x);
+
+  test("a gap over the same answers, far apart, is the bottleneck callout", () => {
+    const note = judgeNote(run(acc(0.9, 56, 0), gr(0.37, 56, 0)));
+    assert.equal(note.kind, "bottleneck");
+    assert.equal(note.lead, "The judge is the bottleneck.");
+    assert.match(note.text, /^90% of answers contain the gold answer string, .* only 37% as grounded — a 0\.53 gap\./);
+    assert.equal(judgeNote(run(acc(0.5, 56, 0), gr(0.45, 56, 0))), undefined); // close: nothing
+    // An older run records no denominators; nothing says they differ.
+    assert.equal(judgeNote(run(m("faithfulness", "answer_accuracy", "", 0.9), m("faithfulness", "groundedness", "", 0.3))).kind, "bottleneck");
+  });
+
+  test("rates over different answers are both stated, with their denominators, and not subtracted", () => {
+    const subset = judgeNote(run(acc(0.9, 50, 6), gr(0.37, 56, 0)));
+    assert.equal(subset.kind, "unlike");
+    assert.equal(
+      subset.text,
+      "`answer_accuracy` 0.90 (50 of 56) and `groundedness` 0.37 (56 of 56) count different answers, " +
+        "so no gap between them is computed.",
+    );
+    assert.equal(judgeGap(run(acc(0.9, 50, 6), gr(0.37, 56, 0))), undefined);
+    assert.equal(judgeNote(run(acc(0.9, 40, 0), gr(0.37, 56, 0))).kind, "unlike"); // different n
+  });
+
+  test("nothing is said when either figure was not measured", () => {
+    assert.equal(judgeNote(run(acc(0.9, 56, 0), nm("faithfulness", "groundedness", ""))), undefined);
+  });
+});
+
+describe("the privacy panel's context", () => {
+  const spec = (filters, defenses) => ({ ingest: { filters }, suites: { privacy: { defenses } } });
+
+  test("the baseline arm is the spec's first privacy condition, or none", () => {
+    assert.equal(privacyBaseline(spec(["dedup"], ["pii_filter", "none"])), "pii_filter");
+    assert.equal(privacyBaseline(null), "none");
+    assert.equal(privacyBaseline({ suites: { privacy: { defenses: [] } } }), "none");
+    assert.equal(privacyContext(run(), spec(["dedup"], ["pii_filter", "none"])).heading, "leakage by probe style (pii_filter arm)");
+    assert.equal(privacyContext(run(), null).heading, "leakage by probe style (none arm)");
+  });
+
+  test("the pii caveat and the count lines", () => {
+    const results = run(m("privacy", "canary_docs_dropped_by_filter", "", 2));
+    const withPii = privacyContext(results, spec(["dedup", "pii"], ["none", "pii_filter"]));
+    assert.equal(
+      withPii.caveat,
+      "`pii` is in this run's ingest filters, so the canaries were redacted at ingestion in every arm: " +
+        "`none` is not defense-free here, and `pii_filter` finds nothing left to redact.",
+    );
+    assert.deepEqual(withPii.counts, [
+      "`canary_docs_dropped_by_filter` 2 — Canary documents the ingest filters removed before indexing; " +
+        "not probed, and outside every rate.",
+    ]);
+    assert.equal(privacyContext(results, spec(["dedup"], ["none"])).caveat, undefined);
+    assert.deepEqual(privacyContext(run(m("privacy", "leakage_rate", "defense=none", 0.2)), null).counts, []);
   });
 });

@@ -224,11 +224,52 @@ export function groupSubsets(items: Subsetted[]): SubsetGroup[] {
   return [...groups.values()];
 }
 
-/** `scored over 53; 3 excluded`, the text after a group's labels. */
+/** `scored over 53 of 56; 3 excluded`, the text after a group's labels, as
+ *  summary.md words it. */
 export function subsetLine(g: { n: number | undefined; excluded: number }): string {
   return g.n === undefined
     ? `${g.excluded} excluded; denominator not recorded`
-    : `scored over ${g.n}; ${g.excluded} excluded`;
+    : `scored over ${g.n} of ${g.n + g.excluded}; ${g.excluded} excluded`;
+}
+
+/** The "53 of 56" a track shows at its end, or nothing for a full-set value. */
+export function subsetTag(r: Reading | undefined): string | undefined {
+  return r?.measured && r.subset ? subsetShort(r.subset) : undefined;
+}
+
+/** One block of a panel's footnotes, in the order they are shown: what was
+ *  scored over a subset, then what was not measured. A block with no lines is
+ *  left out, so a fully measured, full-set panel has no footnotes. */
+export interface Footnote {
+  kind: "subset" | "not-measured";
+  heading: string;
+  lines: { key: string; labels: string[]; state: DisplayState | undefined; text: string }[];
+}
+
+export function panelFootnotes(notMeasured: Unmeasured[], subsets: Subsetted[]): Footnote[] {
+  const blocks: Footnote[] = [
+    {
+      kind: "subset",
+      heading: "Scored over a subset",
+      lines: groupSubsets(subsets).map((g) => ({
+        key: `${g.n ?? "?"}|${g.excluded}`,
+        labels: g.labels,
+        state: undefined,
+        text: `— ${subsetLine(g)}`,
+      })),
+    },
+    {
+      kind: "not-measured",
+      heading: "Not measured",
+      lines: groupUnmeasured(notMeasured).map((g) => ({
+        key: `${g.state}|${g.reason}`,
+        labels: g.labels,
+        state: g.state,
+        text: g.reason,
+      })),
+    },
+  ];
+  return blocks.filter((b) => b.lines.length > 0);
 }
 
 /** One entry in a panel's "not measured" list. */
@@ -516,7 +557,9 @@ export function rerankLift(results: RunResults): LiftChart {
   const ranked = retrieval.filter((m) => m.variant === "rerank=off" || m.variant === "rerank=on");
   const unmeasuredRows = unmeasuredOf(ranked);
   const subsets = subsettedOf(ranked);
-  const hasOn = on.size > 0;
+  // A rerank-on figure that does not apply (no reranker) or was not run is not
+  // one to draw a lift against, so the legend and the hint say there is none.
+  const hasOn = [...on.values()].some((r) => applicable(r) !== undefined);
   if (values.length === 0) {
     return { rows, axis: undefined, hasOn, unmeasured: unmeasuredRows, subsets };
   }
@@ -567,11 +610,65 @@ export interface JudgeGap {
   gap: number;
 }
 
+/** A measured faithfulness figure with its denominator, or undefined. */
+function sample(
+  results: RunResults,
+  name: string,
+): { value: number; subset?: Subset; n?: number } | undefined {
+  const m = find(results, "faithfulness", name, "");
+  const r = m === undefined ? undefined : read(m);
+  return r?.measured ? { value: r.value, subset: r.subset, n: count(m?.n) } : undefined;
+}
+
+/** The gap between the two, only when they were scored over the same answers:
+ *  both measured, neither over a subset, and the same denominator (or, from an
+ *  older run, none recorded on either). A difference of two rates over
+ *  different answers is not a gap in anything. */
 export function judgeGap(results: RunResults): JudgeGap | undefined {
-  const accuracy = measured(results, "faithfulness", "answer_accuracy");
-  const grounded = measured(results, "faithfulness", "groundedness");
+  const accuracy = sample(results, "answer_accuracy");
+  const grounded = sample(results, "groundedness");
   if (accuracy === undefined || grounded === undefined) return undefined;
-  return { accuracy, grounded, gap: accuracy - grounded };
+  if (accuracy.subset || grounded.subset || accuracy.n !== grounded.n) return undefined;
+  return { accuracy: accuracy.value, grounded: grounded.value, gap: accuracy.value - grounded.value };
+}
+
+/** What the faithfulness panel says about answer accuracy against the judge:
+ *  the bottleneck callout when they are comparable and far apart; both
+ *  figures, each with its denominator and nothing subtracted, when they were
+ *  scored over different answers; otherwise nothing. Text marks code with
+ *  backticks. */
+export type JudgeNote =
+  | { kind: "bottleneck"; lead: string; text: string }
+  | { kind: "unlike"; lead: string; text: string };
+
+export function judgeNote(results: RunResults): JudgeNote | undefined {
+  const gap = judgeGap(results);
+  if (gap !== undefined) {
+    if (gap.gap <= 0.2) return undefined;
+    return {
+      kind: "bottleneck",
+      lead: "The judge is the bottleneck.",
+      text:
+        `${(gap.accuracy * 100).toFixed(0)}% of answers contain the gold answer string, but the ` +
+        `configured judge scores only ${(gap.grounded * 100).toFixed(0)}% as grounded — a ` +
+        `${gap.gap.toFixed(2)} gap. Judge quality is a config choice (\`suites.faithfulness.judge\`), ` +
+        "not a property of the pipeline under test.",
+    };
+  }
+  const accuracy = sample(results, "answer_accuracy");
+  const grounded = sample(results, "groundedness");
+  if (accuracy === undefined || grounded === undefined) return undefined;
+  const over = (x: { value: number; subset?: Subset; n?: number }) =>
+    `${x.value.toFixed(2)} (${
+      x.subset ? subsetShort(x.subset) : x.n !== undefined ? `${x.n} of ${x.n}` : "denominator not recorded"
+    })`;
+  return {
+    kind: "unlike",
+    lead: "Scored over different answers.",
+    text:
+      `\`answer_accuracy\` ${over(accuracy)} and \`groundedness\` ${over(grounded)} ` +
+      "count different answers, so no gap between them is computed.",
+  };
 }
 
 export type Tone = "neutral" | "good" | "bad";
@@ -902,10 +999,58 @@ export function breakdown(results: RunResults, suite: string, name: string): Bre
     .map((m) => ({ name: m.name.split("@")[1], metric: m, reading: read(m) }));
 }
 
-/** The heading over the probe-style breakdown. It is measured on the `none`
- *  arm, which is not "no redaction" when the spec has `pii` in its ingest
- *  filters, so it names the arm rather than claiming there was no redaction. */
-export const PROBE_STYLE_HEADING = "leakage by probe style (none arm)";
+/** The privacy suite's baseline: its first configured condition, which the
+ *  probe-style breakdown is measured on. "none" when the spec is unavailable,
+ *  which is the default first condition. */
+export function privacyBaseline(spec: Record<string, unknown> | null): string {
+  const suites = spec?.suites;
+  const privacy =
+    suites && typeof suites === "object" ? (suites as Record<string, unknown>).privacy : undefined;
+  const defenses =
+    privacy && typeof privacy === "object" ? (privacy as Record<string, unknown>).defenses : undefined;
+  const first = Array.isArray(defenses) ? defenses[0] : undefined;
+  return typeof first === "string" && first ? first : "none";
+}
+
+/** The heading over the probe-style breakdown. It names the arm it was
+ *  measured on rather than claiming there was no redaction: with `pii` in the
+ *  ingest filters even the baseline arm was redacted. */
+export function probeStyleHeading(baseline: string): string {
+  return `leakage by probe style (${baseline} arm)`;
+}
+
+/** What the privacy panel says around its bars. Text marks code with backticks. */
+export interface PrivacyContext {
+  heading: string; // over the probe-style breakdown
+  caveat: string | undefined; // when the run's own `pii` filter redacted every canary
+  counts: string[]; // one line per count metric, e.g. the canaries the filters dropped
+}
+
+export function privacyContext(
+  results: RunResults,
+  spec: Record<string, unknown> | null,
+): PrivacyContext {
+  const baseline = privacyBaseline(spec);
+  const counts = contextMetrics(results, "privacy")
+    .filter((m) => isCount(m.name))
+    .map(
+      (m) =>
+        `\`${m.name}\` ${formatMetric(m)}${METRIC_GLOSS[m.name] ? ` — ${METRIC_GLOSS[m.name]}` : ""}`,
+    );
+  return {
+    heading: probeStyleHeading(baseline),
+    caveat: canariesRedactedAtIngest(results, spec)
+      ? `\`pii\` is in this run's ingest filters, so the canaries were redacted at ingestion in ` +
+        `every arm: \`${baseline}\` is not defense-free here, and \`pii_filter\` finds nothing left to redact.`
+      : undefined,
+    counts,
+  };
+}
+
+/** Text with `code` spans, split for rendering: odd pieces are code. */
+export function codeSpans(text: string): { code: boolean; text: string }[] {
+  return text.split("`").map((piece, i) => ({ code: i % 2 === 1, text: piece }));
+}
 
 /** Whether this run's own `pii` ingest filter redacted the canaries, as
  *  summary.md decides it: only code that routes canaries through the filters
