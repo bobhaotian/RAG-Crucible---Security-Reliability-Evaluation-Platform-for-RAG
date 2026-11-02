@@ -46,13 +46,14 @@ from rag_crucible.attacks import (
 )
 from rag_crucible.config import DefenseName, DefensesConfig, RunSpec, SecuritySuiteConfig
 from rag_crucible.eval.concurrent import bounded_gather
-from rag_crucible.eval.metrics import mean
+from rag_crucible.eval.measure import not_measured, rate
 from rag_crucible.eval.types import (
     AttackRecord,
     CleanDefenseRecord,
     CleanScreenRecord,
     MarkerRef,
     Metric,
+    NotMeasuredState,
     SuiteResult,
 )
 from rag_crucible.index import VectorIndex
@@ -278,54 +279,81 @@ def _aggregate(
         d for d in config.defenses if d != "injection_filter"
     ] or list(config.defenses)
 
-    for attack_type, retrieval_name, success_name, compromise_name in (
+    for attack_type, enabled, retrieval_name, success_name, compromise_name in (
         (
             "poison",
+            config.poisoning.enabled,
             "poison_retrieval_rate",
             "knowledge_corruption_rate",
             "poison_compromise_rate",
         ),
         (
             "injection",
+            config.injection.enabled,
             "injection_retrieval_rate",
             "injection_compliance_rate",
             "injection_compromise_rate",
         ),
     ):
         of_type = [r for r in records if r.attack_type == attack_type]
-        if not of_type:
-            continue
-        retrieval_sample = [r for r in of_type if r.defense in retrieval_conditions]
+        # An attack the spec turned off is skipped, and one that ran no trial
+        # (no question to target) cannot be estimated: neither is a zero.
+        empty: tuple[NotMeasuredState, str] = (
+            ("not_estimable", f"no {attack_type} trial ran: no question was available to target")
+            if enabled
+            else ("skipped", f"{attack_type} attacks are disabled in this spec")
+        )
         metrics.append(
-            Metric(
-                suite=SUITE,
-                name=retrieval_name,
-                value=round(mean([float(r.retrieved) for r in retrieval_sample]), 4),
+            rate(
+                SUITE,
+                retrieval_name,
+                [float(r.retrieved) for r in of_type if r.defense in retrieval_conditions],
+                empty=empty,
             )
         )
         for condition in config.defenses:
+            variant = f"defense={condition}"
             at_condition = [r for r in of_type if r.defense == condition]
-            # Same denominator for both, so `compromise - success` is exactly
-            # the share of trials this attack type's rate fails to account for.
-            # That subtraction is only meaningful while the denominators match,
-            # so the compromise rate is emitted only when *every* trial in the
-            # condition recorded its marker scan — computing it over the subset
+            metrics.append(
+                rate(
+                    SUITE,
+                    success_name,
+                    [float(r.succeeded) for r in at_condition],
+                    variant=variant,
+                    empty=empty,
+                )
+            )
+            # Same denominator as the success rate, so `compromise - success`
+            # is exactly the share of trials this attack type's rate fails to
+            # account for. That subtraction only holds while the denominators
+            # match, so the compromise rate needs *every* trial in the condition
+            # to have recorded its marker scan; computing it over the subset
             # that did would silently break the relationship the pair exists to
             # express. A live run records all of them; an older result may not.
-            pairs: list[tuple[str, list[float]]] = [
-                (success_name, [float(r.succeeded) for r in at_condition])
-            ]
-            if at_condition and all(r.compromised is not None for r in at_condition):
-                pairs.append((compromise_name, [float(bool(r.compromised)) for r in at_condition]))
-            for name, values in pairs:
-                if not values:
-                    continue
+            unscanned = sum(r.compromised is None for r in at_condition)
+            if at_condition and unscanned:
                 metrics.append(
-                    Metric(
-                        suite=SUITE,
-                        name=name,
-                        variant=f"defense={condition}",
-                        value=round(mean(values), 4),
+                    not_measured(
+                        SUITE,
+                        compromise_name,
+                        state="unsupported",
+                        reason=(
+                            f"{unscanned} of {len(at_condition)} trials carry no marker scan "
+                            "(written by an older version); this rate needs every one"
+                        ),
+                        variant=variant,
+                        n=len(at_condition) - unscanned,
+                        excluded=unscanned,
+                    )
+                )
+            else:
+                metrics.append(
+                    rate(
+                        SUITE,
+                        compromise_name,
+                        [float(bool(r.compromised)) for r in at_condition],
+                        variant=variant,
+                        empty=empty,
                     )
                 )
 
@@ -336,11 +364,12 @@ def _aggregate(
             for family in sorted({r.attack_family for r in at_condition if r.attack_family}):
                 of_family = [r for r in at_condition if r.attack_family == family]
                 metrics.append(
-                    Metric(
-                        suite=SUITE,
-                        name=f"{success_name}@{family}",
-                        variant=f"defense={condition}",
-                        value=round(mean([float(r.succeeded) for r in of_family]), 4),
+                    rate(
+                        SUITE,
+                        f"{success_name}@{family}",
+                        [float(r.succeeded) for r in of_family],
+                        variant=variant,
+                        empty=empty,
                     )
                 )
                 # A chunk screener's own effectiveness: did it keep the attack
@@ -349,11 +378,12 @@ def _aggregate(
                 # the screen worked or not, so the defense looks perfect for a
                 # reason that has nothing to do with the defense.
                 metrics.append(
-                    Metric(
-                        suite=SUITE,
-                        name=f"{attack_type}_screened_rate@{family}",
-                        variant=f"defense={condition}",
-                        value=round(mean([float(not r.retrieved) for r in of_family]), 4),
+                    rate(
+                        SUITE,
+                        f"{attack_type}_screened_rate@{family}",
+                        [float(not r.retrieved) for r in of_family],
+                        variant=variant,
+                        empty=empty,
                     )
                 )
 
@@ -362,75 +392,83 @@ def _aggregate(
     # question is expected when target sets overlap; one from another question
     # is not, and means attack documents are escaping their target.
     for condition in config.defenses:
+        variant = f"defense={condition}"
         at_condition = [r for r in records if r.defense == condition]
-        if not at_condition:
-            continue
         # Only records that actually carry the evidence enter the denominator.
         # `bool(None)` is False, so folding an unrecorded field in would report
         # "no competing marker" about a trial that was never scanned — a zero
         # nobody measured. Every live run records all three, so these
         # denominators only shrink when reading a migrated older result.
-        for name, values in (
-            (
-                "attack_abstention_rate",
-                [float(r.abstained) for r in at_condition if r.abstained is not None],
-            ),
+        for name, recorded in (
+            ("attack_abstention_rate", [r.abstained for r in at_condition]),
             (
                 "attack_competition_rate",
                 [
-                    float(bool(r.competing_markers))
-                    for r in at_condition
-                    if r.competing_markers is not None
+                    None if m is None else bool(m)
+                    for m in (r.competing_markers for r in at_condition)
                 ],
             ),
             (
                 "cross_question_contamination_rate",
                 [
-                    float(bool(r.cross_question_markers))
-                    for r in at_condition
-                    if r.cross_question_markers is not None
+                    None if m is None else bool(m)
+                    for m in (r.cross_question_markers for r in at_condition)
                 ],
             ),
         ):
-            if not values:  # nothing recorded: omit rather than report 0.0
-                continue
+            values = [float(v) for v in recorded if v is not None]
             metrics.append(
-                Metric(
-                    suite=SUITE,
-                    name=name,
-                    variant=f"defense={condition}",
-                    value=round(mean(values), 4),
+                rate(
+                    SUITE,
+                    name,
+                    values,
+                    variant=variant,
+                    excluded=len(recorded) - len(values),
+                    empty=(
+                        ("unsupported", "no trial in this condition recorded it (an older version)")
+                        if at_condition
+                        else ("not_estimable", "no attack trial ran under this condition")
+                    ),
                 )
             )
 
+        no_control: tuple[NotMeasuredState, str] = (
+            "not_estimable",
+            "no clean control question was sampled",
+        )
         clean = [r for r in clean_records if r.defense == condition]
-        if clean:
-            metrics.append(
-                Metric(
-                    suite=SUITE,
-                    name="clean_abstention_rate",
-                    variant=f"defense={condition}",
-                    value=round(mean([float(r.abstained) for r in clean]), 4),
-                )
+        metrics.append(
+            rate(
+                SUITE,
+                "clean_abstention_rate",
+                [float(r.abstained) for r in clean],
+                variant=variant,
+                empty=no_control,
             )
+        )
         gradable = [r for r in clean if r.answer_match is not None]
-        if gradable:
-            metrics.append(
-                Metric(
-                    suite=SUITE,
-                    name="clean_answer_accuracy",
-                    variant=f"defense={condition}",
-                    value=round(mean([float(bool(r.answer_match)) for r in gradable]), 4),
-                )
+        metrics.append(
+            rate(
+                SUITE,
+                "clean_answer_accuracy",
+                [float(bool(r.answer_match)) for r in gradable],
+                variant=variant,
+                excluded=len(clean) - len(gradable),
+                empty=(
+                    ("unsupported", "no clean control question carries a gold answer")
+                    if clean
+                    else no_control
+                ),
             )
+        )
         screened = [r for r in clean_screen_records if r.defense == condition]
-        if screened:
-            metrics.append(
-                Metric(
-                    suite=SUITE,
-                    name="defense_clean_screen_rate",
-                    variant=f"defense={condition}",
-                    value=round(mean([float(r.screened) for r in screened]), 4),
-                )
+        metrics.append(
+            rate(
+                SUITE,
+                "defense_clean_screen_rate",
+                [float(r.screened) for r in screened],
+                variant=variant,
+                empty=("not_estimable", "no clean chunk was sampled for the screening control"),
             )
+        )
     return metrics

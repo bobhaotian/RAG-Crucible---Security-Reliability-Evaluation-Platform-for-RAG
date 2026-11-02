@@ -373,7 +373,8 @@ def test_the_store_accepts_every_metric_state(tmp_path: Path) -> None:
         value, reason = ("0.5", "NULL") if state == "measured" else ("NULL", "'why'")
         _write(
             path,
-            f"INSERT INTO metrics {COLUMNS} VALUES ('r', 's', 'm{i}', '', {value}, '{state}', {reason})",
+            f"INSERT INTO metrics {COLUMNS} "
+            f"VALUES ('r', 's', 'm{i}', '', {value}, '{state}', {reason})",
         )
 
 

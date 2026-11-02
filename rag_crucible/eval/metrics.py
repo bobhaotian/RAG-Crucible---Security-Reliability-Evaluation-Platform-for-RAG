@@ -43,4 +43,9 @@ def reciprocal_rank(rank: int | None) -> float:
 
 
 def mean(values: Sequence[float]) -> float:
-    return sum(values) / len(values) if values else 0.0
+    """The arithmetic mean. An empty sample has none: averaging it is a
+    caller's bug, so it raises instead of returning a 0.0 that reads as a
+    measurement. ``rag_crucible.eval.measure.rate`` handles the empty case."""
+    if not values:
+        raise ValueError("the mean of an empty sample is undefined")
+    return sum(values) / len(values)

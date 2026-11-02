@@ -46,7 +46,7 @@ def test_aggregate_uses_the_intended_denominators() -> None:
     assert metrics[("citation_precision", "")] == 1.0
 
 
-def test_aggregate_omits_precision_without_citations() -> None:
+def test_precision_without_citations_is_not_estimable_rather_than_omitted() -> None:
     record = FaithfulnessRecord(
         qid="q1",
         question="one",
@@ -57,10 +57,12 @@ def test_aggregate_omits_precision_without_citations() -> None:
         answer_match=False,
     )
 
-    assert "citation_precision" not in {metric.name for metric in _aggregate([record])}
+    precision = next(m for m in _aggregate([record]) if m.name == "citation_precision")
+    assert precision.value is None and precision.state == "not_estimable"
+    assert precision.n == 0
 
 
-def test_aggregate_omits_answer_accuracy_when_no_item_carries_a_gold_answer() -> None:
+def test_answer_accuracy_is_unsupported_when_no_item_carries_a_gold_answer() -> None:
     """A doc-id-labeled corpus (BEIR `gold_docs`) has no answer strings.
 
     Scoring those items as misses would publish `answer_accuracy 0.0000` as if it
@@ -78,10 +80,12 @@ def test_aggregate_omits_answer_accuracy_when_no_item_carries_a_gold_answer() ->
         )
         for qid in ("q1", "q2")
     ]
-    names = {metric.name for metric in _aggregate(records)}
+    metrics = {metric.name: metric for metric in _aggregate(records)}
 
-    assert "answer_accuracy" not in names
-    assert "groundedness" in names  # the rest of the suite still reports
+    accuracy = metrics["answer_accuracy"]
+    assert accuracy.value is None and accuracy.state == "unsupported"
+    assert (accuracy.n, accuracy.n_excluded) == (0, 2)
+    assert metrics["groundedness"].value == 1.0  # the rest of the suite still reports
 
 
 def test_aggregate_scores_answer_accuracy_over_gradable_items_only() -> None:

@@ -8,15 +8,19 @@ cached judgments maximally reusable. Definitions:
                         that made at least one claim;
 - hallucination_rate  = share of claim-making answers with ≥1 unsupported claim;
 - answer_accuracy     = share of answers containing the gold answer string
-                        (deterministic, judge-free);
+                        (deterministic, judge-free), over questions that have
+                        one; ``unsupported`` when none does;
 - citation_parse_rate = share of answers whose [n] markers parsed (small local
                         generators often cite nothing — measured, not hidden);
-- citation_precision  = of parsed citations, share whose chunk supports at
-                        least one claim (omitted when nothing parsed).
+- citation_precision  = of parsed citations judged against a claim, share whose
+                        chunk supports at least one; ``not_estimable`` when
+                        nothing parsed.
 
 Answers with no extractable claims (e.g. "I don't know.") are recorded but
 excluded from groundedness/hallucination denominators — refusing to answer is
-not hallucinating.
+not hallucinating — and their citations are not judged, since there is no
+claim to check them against. Every metric records what it left out
+(``n_excluded``).
 """
 
 from __future__ import annotations
@@ -27,12 +31,13 @@ import re
 from rag_crucible.config import FaithfulnessSuiteConfig
 from rag_crucible.eval.concurrent import bounded_gather
 from rag_crucible.eval.judge import EntailmentJudge
-from rag_crucible.eval.metrics import mean
+from rag_crucible.eval.measure import rate
 from rag_crucible.eval.types import (
     CitationJudgment,
     ClaimJudgment,
     FaithfulnessRecord,
     Metric,
+    NotMeasuredState,
     SuiteResult,
 )
 from rag_crucible.obs.aggregate import TimingCollector
@@ -104,7 +109,7 @@ async def _judge_answer(item: QAItem, answer: Answer, judge: EntailmentJudge) ->
     citation_judgments = []
     for citation in parsed_citations:
         chunk = chunks_by_id[citation.chunk_id]
-        supports = False
+        supports: bool | None = None if not claims else False
         for claim in claims[:_MAX_CLAIMS_PER_CITATION]:
             if (await judge.supports(claim, chunk.text)).supported:
                 supports = True
@@ -125,45 +130,45 @@ async def _judge_answer(item: QAItem, answer: Answer, judge: EntailmentJudge) ->
 
 
 def _aggregate(records: list[FaithfulnessRecord]) -> list[Metric]:
+    # Claim-level metrics are over answers that yielded at least one claim; an
+    # answer with none (an abstention, say) has nothing to be grounded in.
     with_claims = [r for r in records if r.claims]
+    no_claims = len(records) - len(with_claims)
     groundedness = [sum(c.supported for c in r.claims) / len(r.claims) for r in with_claims]
-    hallucinated = [any(not c.supported for c in r.claims) for r in with_claims]
-
-    metrics = [
-        Metric(suite=SUITE, name="groundedness", value=round(mean(groundedness), 4)),
-        Metric(
-            suite=SUITE,
-            name="hallucination_rate",
-            value=round(mean([float(h) for h in hallucinated]), 4),
+    hallucinated = [float(any(not c.supported for c in r.claims)) for r in with_claims]
+    no_claim: tuple[NotMeasuredState, str] = (
+        "not_estimable",
+        "no answer yielded a claim to judge",
+    )
+    # Only items carrying a gold answer string can be scored. A doc-id-labeled
+    # corpus has none: the metric is unsupported there, not a confident 0.0.
+    gradable = [r for r in records if r.answer_match is not None]
+    citations = [c for r in records for c in r.citations]
+    judged = [c for c in citations if c.supports_claim is not None]
+    return [
+        rate(SUITE, "groundedness", groundedness, excluded=no_claims, empty=no_claim),
+        rate(SUITE, "hallucination_rate", hallucinated, excluded=no_claims, empty=no_claim),
+        rate(
+            SUITE,
+            "citation_parse_rate",
+            [float(r.citations_parsed) for r in records],
+            empty=("not_estimable", "no answer was generated"),
         ),
-        Metric(
-            suite=SUITE,
-            name="citation_parse_rate",
-            value=round(mean([float(r.citations_parsed) for r in records]), 4),
+        rate(
+            SUITE,
+            "answer_accuracy",
+            [float(bool(r.answer_match)) for r in gradable],
+            excluded=len(records) - len(gradable),
+            empty=("unsupported", "no question carries a gold answer"),
+        ),
+        rate(
+            SUITE,
+            "citation_precision",
+            [float(bool(c.supports_claim)) for c in judged],
+            excluded=len(citations) - len(judged),
+            empty=("not_estimable", "no answer carried a parsed citation with a claim to check"),
         ),
     ]
-    # Only items carrying a gold answer string can be scored. A doc-id-labeled
-    # corpus has none, and averaging unscorable items in would publish a
-    # confident 0.0 for a metric that was never measured.
-    gradable = [r for r in records if r.answer_match is not None]
-    if gradable:
-        metrics.append(
-            Metric(
-                suite=SUITE,
-                name="answer_accuracy",
-                value=round(mean([float(bool(r.answer_match)) for r in gradable]), 4),
-            )
-        )
-    all_citations = [c for r in records for c in r.citations]
-    if all_citations:
-        metrics.append(
-            Metric(
-                suite=SUITE,
-                name="citation_precision",
-                value=round(mean([float(c.supports_claim) for c in all_citations]), 4),
-            )
-        )
-    return metrics
 
 
 def _timings_dict(answer: Answer) -> dict[str, float]:

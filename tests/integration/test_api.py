@@ -102,6 +102,8 @@ def test_a_not_measured_metric_reaches_the_api_as_null_with_its_state(
             value=None,
             state="unsupported",
             reason=reason,
+            n=0,
+            n_excluded=3,
         ),
     )
     record = RetrievalRecord(
@@ -135,6 +137,8 @@ def test_a_not_measured_metric_reaches_the_api_as_null_with_its_state(
         "value": None,
         "state": "unsupported",
         "reason": reason,
+        "n": 0,
+        "n_excluded": 3,
     }
     assert by_name["mrr"]["value"] == 0.0
     assert by_name["mrr"]["state"] == "measured"

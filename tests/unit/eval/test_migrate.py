@@ -22,7 +22,13 @@ from rag_crucible.eval.migrate import (
     migrate_raw,
     supported_versions,
 )
-from rag_crucible.eval.types import RESULT_SCHEMA_VERSION, AttackRecord, EvalRunResult, SuiteResult
+from rag_crucible.eval.types import (
+    RESULT_SCHEMA_VERSION,
+    AttackRecord,
+    EvalRunResult,
+    Metric,
+    SuiteResult,
+)
 from rag_crucible.runner.models import SuiteSummary
 
 # Anchored to the file, not the working directory: a CWD-relative glob that
@@ -160,7 +166,7 @@ def test_compromised_is_unavailable_when_the_scan_was_not_recorded() -> None:
     assert record.compromised is None
 
 
-def test_compromise_rate_is_omitted_not_zeroed_for_unrecorded_trials() -> None:
+def test_compromise_rate_is_unsupported_not_zeroed_for_unrecorded_trials() -> None:
     """The metric that would otherwise report a fabricated 0.0.
 
     It also must not be computed over just the subset that recorded the scan:
@@ -184,15 +190,23 @@ def test_compromise_rate_is_omitted_not_zeroed_for_unrecorded_trials() -> None:
 
     config = SecuritySuiteConfig(defenses=("none",))
 
-    unrecorded = [rec(qid="q1"), rec(qid="q2")]  # compromised defaults to None
-    names = {m.name for m in _aggregate(unrecorded, config)}
-    assert "knowledge_corruption_rate" in names, "success is still measurable"
-    assert "poison_compromise_rate" not in names, "must not report a 0.0 nobody measured"
+    def compromise(records: list[AttackRecord]) -> Metric:
+        return next(m for m in _aggregate(records, config) if m.name == "poison_compromise_rate")
 
-    # Mixed: one trial recorded the scan, one did not -> still omitted, because
-    # a partial denominator breaks the pair's stated relationship.
+    unrecorded = [rec(qid="q1"), rec(qid="q2")]  # compromised defaults to None
+    success = next(
+        m for m in _aggregate(unrecorded, config) if m.name == "knowledge_corruption_rate"
+    )
+    assert success.value == 0.0, "success is still measurable"
+    unscanned = compromise(unrecorded)
+    assert unscanned.value is None and unscanned.state == "unsupported", "no 0.0 nobody measured"
+    assert (unscanned.n, unscanned.n_excluded) == (0, 2)
+
+    # Mixed: one trial recorded the scan, one did not -> still not measured,
+    # because a partial denominator breaks the pair's stated relationship.
     mixed = [rec(qid="q1", compromised=True, matched_markers=()), rec(qid="q2")]
-    assert "poison_compromise_rate" not in {m.name for m in _aggregate(mixed, config)}
+    assert compromise(mixed).state == "unsupported"
+    assert (compromise(mixed).n, compromise(mixed).n_excluded) == (1, 1)
 
     # Fully recorded -> reported, on the same denominator as success.
     full = [

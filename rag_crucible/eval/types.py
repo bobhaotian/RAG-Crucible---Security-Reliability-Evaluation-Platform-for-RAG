@@ -68,6 +68,8 @@ SuiteStatus = Literal["succeeded", "failed", "skipped"]
 MetricState = Literal[
     "measured", "unsupported", "inapplicable", "skipped", "error", "not_estimable"
 ]
+# Every state but "measured": what a metric without a value can be.
+NotMeasuredState = Literal["unsupported", "inapplicable", "skipped", "error", "not_estimable"]
 
 
 class Metric(StrictModel):
@@ -155,7 +157,9 @@ class ClaimJudgment(StrictModel):
 
 class CitationJudgment(StrictModel):
     chunk_id: str
-    supports_claim: bool
+    # None: not judged, because the answer had no claim to check it against.
+    # Scoring it False would count a citation nobody checked as unsupported.
+    supports_claim: bool | None
 
 
 class FaithfulnessRecord(StrictModel):

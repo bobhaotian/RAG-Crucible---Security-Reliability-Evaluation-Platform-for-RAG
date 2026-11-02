@@ -32,8 +32,8 @@ from dataclasses import replace
 from rag_crucible.attacks import Canary, generate_canaries
 from rag_crucible.config import PrivacyDefense, PrivacySuiteConfig, RunSpec
 from rag_crucible.eval.concurrent import bounded_gather
-from rag_crucible.eval.metrics import mean
-from rag_crucible.eval.types import Metric, PrivacyRecord, SuiteResult
+from rag_crucible.eval.measure import rate
+from rag_crucible.eval.types import Metric, NotMeasuredState, PrivacyRecord, SuiteResult
 from rag_crucible.index import VectorIndex
 from rag_crucible.ingest import (
     apply_filters,
@@ -140,7 +140,7 @@ async def run_privacy_suite(
     dropped = len(generated) - len(canaries)
     return SuiteResult(
         suite=SUITE,
-        metrics=tuple(_aggregate(records, config, dropped=dropped)),
+        metrics=tuple(_aggregate(records, config, dropped=dropped, planted=len(generated))),
         records=tuple(records),
     )
 
@@ -166,25 +166,25 @@ async def _build_canary_index(
 
 
 def _aggregate(
-    records: list[PrivacyRecord], config: PrivacySuiteConfig, *, dropped: int
+    records: list[PrivacyRecord], config: PrivacySuiteConfig, *, dropped: int, planted: int
 ) -> list[Metric]:
+    # The suite refuses to run with no canary left, so every arm has probes;
+    # an empty one is a bug in this module, not a measurement.
+    empty: tuple[NotMeasuredState, str] = ("not_estimable", "no canary was probed")
     metrics: list[Metric] = []
     for condition in config.defenses:
         at = [r for r in records if r.defense == condition]
+        variant = f"defense={condition}"
         metrics.append(
-            Metric(
-                suite=SUITE,
-                name="leakage_rate",
-                variant=f"defense={condition}",
-                value=round(mean([float(r.leaked) for r in at]), 4),
-            )
+            rate(SUITE, "leakage_rate", [float(r.leaked) for r in at], variant=variant, empty=empty)
         )
         metrics.append(
-            Metric(
-                suite=SUITE,
-                name="retrieval_exposure_rate",
-                variant=f"defense={condition}",
-                value=round(mean([float(r.retrieved) for r in at]), 4),
+            rate(
+                SUITE,
+                "retrieval_exposure_rate",
+                [float(r.retrieved) for r in at],
+                variant=variant,
+                empty=empty,
             )
         )
     # Which probe style extracts most, measured on the first condition (`none`
@@ -193,13 +193,17 @@ def _aggregate(
     for style in config.probes:
         sample = [r for r in records if r.defense == baseline and r.probe_style == style]
         metrics.append(
-            Metric(
-                suite=SUITE,
-                name=f"leakage_rate@{style}",
-                value=round(mean([float(r.leaked) for r in sample]), 4),
-            )
+            rate(SUITE, f"leakage_rate@{style}", [float(r.leaked) for r in sample], empty=empty)
         )
     # A count, not a rate: canary documents the ingest filters removed before
-    # indexing, kept out of every denominator above.
-    metrics.append(Metric(suite=SUITE, name="canary_docs_dropped_by_filter", value=float(dropped)))
+    # indexing, kept out of every denominator above. n is the canaries planted.
+    metrics.append(
+        Metric(
+            suite=SUITE,
+            name="canary_docs_dropped_by_filter",
+            value=float(dropped),
+            n=planted,
+            n_excluded=0,
+        )
+    )
     return metrics
