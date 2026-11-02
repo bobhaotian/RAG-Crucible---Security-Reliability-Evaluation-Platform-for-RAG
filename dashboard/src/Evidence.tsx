@@ -6,6 +6,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Evidence as Record_, RunResults } from "./api";
 import { getEvidence } from "./api";
+import {
+  evidenceCountLine,
+  excludedItemLine,
+  foreignMarkers as foreign,
+  isFlagged as flagged,
+  matchedMarkers as matched,
+  selectEvidence,
+} from "./metrics";
 
 export interface Drill {
   suite: string;
@@ -15,96 +23,12 @@ export interface Drill {
   filter?: Record<string, string>;
 }
 
-/** Which records a suite metric was computed over. */
-const METRIC_FILTERS: Record<string, Record<string, string>> = {
-  knowledge_corruption_rate: { attack_type: "poison" },
-  poison_retrieval_rate: { attack_type: "poison" },
-  injection_compliance_rate: { attack_type: "injection" },
-  injection_retrieval_rate: { attack_type: "injection" },
-  poison_compromise_rate: { attack_type: "poison" },
-  injection_compromise_rate: { attack_type: "injection" },
-  // The clean-traffic control is a different record kind entirely.
-  clean_abstention_rate: { kind: "clean_defense" },
-  clean_answer_accuracy: { kind: "clean_defense" },
-  attack_abstention_rate: { kind: "attack" },
-  // These span both attack types, so they add no attack_type constraint.
-  attack_competition_rate: { _competing: "true" },
-  cross_question_contamination_rate: { _crossQuestion: "true" },
-};
-
-/** Payload fields are compared by string equality; keys starting with "_" are
- *  predicates over the record instead. */
-function matches(r: Record_, key: string, value: string): boolean {
-  if (key === "_competing") return String(competing(r).length > 0) === value;
-  if (key === "_crossQuestion") return String(crossQuestion(r).length > 0) === value;
-  return String(r[key]) === value;
-}
-
-/** An attacker-planted string with the attack that planted it. */
-interface Marker {
-  marker: string;
-  attack_type: string;
-  qid: string;
-}
-
-/** Every planted marker found in this answer, whoever planted it.
- *
- *  `null` means the run never scanned — which is not the same as scanning and
- *  finding nothing. Collapsing the two here would re-manufacture, one layer
- *  up, exactly the measurement the Python model was changed to stop inventing. */
-function matched(r: Record_): Marker[] | null {
-  const raw = r["matched_markers"];
-  return Array.isArray(raw) ? (raw as Marker[]) : null;
-}
-
-/** Markers from an attack other than the one this trial was testing. */
-function foreign(r: Record_): Marker[] | null {
-  const all = matched(r);
-  if (all === null) return null;
-  const own = str(r, "own_marker") ?? "";
-  return all.filter((m) => m.marker !== own);
-}
-
-/** Foreign markers from the other attack on this same question.
- *
- *  An unrecorded scan yields none. That is the right behaviour *here*: these
- *  drive the "show me the trials behind this rate" filters, and the Python
- *  side already drops unrecorded trials from those rates, so a null belongs in
- *  neither bucket. It is not a claim that the trial was clean — the card's own
- *  badge says "not recorded". */
-function competing(r: Record_): Marker[] {
-  return (foreign(r) ?? []).filter((m) => m.qid === str(r, "qid"));
-}
-
-/** Foreign markers planted on a different question — real bleed-through. */
-function crossQuestion(r: Record_): Marker[] {
-  return (foreign(r) ?? []).filter((m) => m.qid !== str(r, "qid"));
-}
-
-function expand(filter: Record<string, string> | undefined): Record<string, string> {
-  if (!filter) return {};
-  const { metric, ...fields } = filter;
-  return { ...fields, ...(metric ? (METRIC_FILTERS[metric] ?? {}) : {}) };
-}
-
 const str = (r: Record_, k: string): string | undefined =>
   typeof r[k] === "string" ? (r[k] as string) : undefined;
 const bool = (r: Record_, k: string): boolean | undefined =>
   typeof r[k] === "boolean" ? (r[k] as boolean) : undefined;
 const num = (r: Record_, k: string): number | undefined =>
   typeof r[k] === "number" ? (r[k] as number) : undefined;
-
-/** True when a record is the interesting kind — a successful attack, a leaked
- *  canary, an unsupported claim. These sort to the top. */
-function flagged(r: Record_): boolean {
-  return (
-    bool(r, "succeeded") === true ||
-    bool(r, "compromised") === true ||
-    bool(r, "leaked") === true ||
-    bool(r, "answer_match") === false ||
-    (num(r, "first_hit_rank_reranked") ?? 1) > 1
-  );
-}
 
 export function EvidenceDrawer({
   runId,
@@ -135,20 +59,11 @@ export function EvidenceDrawer({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const fields = useMemo(() => expand(drill.filter), [drill.filter]);
-
-  const shown = useMemo(() => {
-    if (!records) return [];
-    const needle = q.trim().toLowerCase();
-    return records
-      .filter((r) => Object.entries(fields).every(([k, v]) => matches(r, k, v)))
-      .filter((r) => !needle || JSON.stringify(r).toLowerCase().includes(needle))
-      .sort(
-        (a, b) =>
-          Number((foreign(b) ?? []).length > 0) - Number((foreign(a) ?? []).length > 0) ||
-          Number(flagged(b)) - Number(flagged(a)),
-      );
-  }, [records, fields, q]);
+  const view = useMemo(
+    () => (records ? selectEvidence(records, drill.filter, q) : { trials: [], excluded: [] }),
+    [records, drill.filter, q],
+  );
+  const shown = view.trials;
 
   const suiteSummary = results.suites.find((s) => s.suite === drill.suite);
 
@@ -176,12 +91,12 @@ export function EvidenceDrawer({
             onChange={(e) => setQ(e.target.value)}
           />
           <span className="hint">
-            {records ? `${shown.length} shown` : "loading…"}
+            {records ? evidenceCountLine(view) : "loading…"}
           </span>
         </div>
 
         {error && <p className="error">{error}</p>}
-        {records && shown.length === 0 && !error && (
+        {records && shown.length === 0 && view.excluded.length === 0 && !error && (
           <p className="placeholder">No records match.</p>
         )}
 
@@ -190,6 +105,17 @@ export function EvidenceDrawer({
             <RecordCard key={num(r, "_id")} r={r} />
           ))}
         </ul>
+
+        {view.excluded.length > 0 && (
+          <div className="excluded-items">
+            <h4>Excluded from every rate</h4>
+            <ul>
+              {view.excluded.map((r) => (
+                <li key={num(r, "_id")}>{excludedItemLine(r)}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </aside>
     </>
   );

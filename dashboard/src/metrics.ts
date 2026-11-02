@@ -21,7 +21,15 @@
 // subset on the reading, so every surface that shows the number can say "53 of
 // 56" beside it: a subset score must never pass for a full-set one.
 
-import type { Metric, MetricState, RunResults, RunRow, StageStat, SuiteSummary } from "./api";
+import type {
+  Evidence,
+  Metric,
+  MetricState,
+  RunResults,
+  RunRow,
+  StageStat,
+  SuiteSummary,
+} from "./api";
 
 const NOT_MEASURED_STATES: readonly string[] = [
   "unsupported",
@@ -1173,6 +1181,141 @@ export function pipelineChips(spec: Record<string, unknown> | null): [string, st
     ["seed", str(at("seed"))],
   ];
   return chips.flatMap(([k, v]) => (v ? [[k, v] as [string, string]] : []));
+}
+
+// ------------------------------------------------------------------ evidence
+//
+// The receipts behind a number: which records a drill shows. Kept here, beside
+// the metrics, so the rules are tested rather than buried in a component.
+
+/** An attacker-planted string with the attack that planted it. */
+export interface Marker {
+  marker: string;
+  attack_type: string;
+  qid: string;
+}
+
+const field = (r: Evidence, k: string): string | undefined =>
+  typeof r[k] === "string" ? (r[k] as string) : undefined;
+
+/** Every planted marker found in this answer, whoever planted it. `null` means
+ *  the run never scanned, which is not the same as scanning and finding
+ *  nothing. */
+export function matchedMarkers(r: Evidence): Marker[] | null {
+  const raw = r["matched_markers"];
+  return Array.isArray(raw) ? (raw as Marker[]) : null;
+}
+
+/** Markers from an attack other than the one this trial was testing. */
+export function foreignMarkers(r: Evidence): Marker[] | null {
+  const all = matchedMarkers(r);
+  if (all === null) return null;
+  const own = field(r, "own_marker") ?? "";
+  return all.filter((m) => m.marker !== own);
+}
+
+/** Foreign markers from the other attack on this same question. An unrecorded
+ *  scan yields none: the Python side drops unrecorded trials from these rates,
+ *  so a null belongs in neither bucket. */
+export function competingMarkers(r: Evidence): Marker[] {
+  return (foreignMarkers(r) ?? []).filter((m) => m.qid === field(r, "qid"));
+}
+
+/** Foreign markers planted on a different question: real bleed-through. */
+export function crossQuestionMarkers(r: Evidence): Marker[] {
+  return (foreignMarkers(r) ?? []).filter((m) => m.qid !== field(r, "qid"));
+}
+
+/** Which records a suite metric was computed over. */
+const METRIC_FILTERS: Record<string, Record<string, string>> = {
+  knowledge_corruption_rate: { attack_type: "poison" },
+  poison_retrieval_rate: { attack_type: "poison" },
+  injection_compliance_rate: { attack_type: "injection" },
+  injection_retrieval_rate: { attack_type: "injection" },
+  poison_compromise_rate: { attack_type: "poison" },
+  injection_compromise_rate: { attack_type: "injection" },
+  // The clean-traffic control is a different record kind entirely.
+  clean_abstention_rate: { kind: "clean_defense" },
+  clean_answer_accuracy: { kind: "clean_defense" },
+  attack_abstention_rate: { kind: "attack" },
+  // These span both attack types, so they add no attack_type constraint.
+  attack_competition_rate: { _competing: "true" },
+  cross_question_contamination_rate: { _crossQuestion: "true" },
+};
+
+/** A drill's filter with its virtual `metric` field resolved to payload fields. */
+export function expandDrillFilter(filter: Record<string, string> | undefined): Record<string, string> {
+  if (!filter) return {};
+  const { metric, ...fields } = filter;
+  return { ...fields, ...(metric ? (METRIC_FILTERS[metric] ?? {}) : {}) };
+}
+
+/** Payload fields compare by string equality; keys starting with "_" are
+ *  predicates over the record instead. */
+function matchesField(r: Evidence, key: string, value: string): boolean {
+  if (key === "_competing") return String(competingMarkers(r).length > 0) === value;
+  if (key === "_crossQuestion") return String(crossQuestionMarkers(r).length > 0) === value;
+  return String(r[key]) === value;
+}
+
+/** True for the interesting kind of trial: a successful attack, a leaked
+ *  canary, a wrong answer, a gold passage the reranker demoted. */
+export function isFlagged(r: Evidence): boolean {
+  const bool = (k: string) => (typeof r[k] === "boolean" ? (r[k] as boolean) : undefined);
+  const rank = typeof r["first_hit_rank_reranked"] === "number" ? (r["first_hit_rank_reranked"] as number) : 1;
+  return (
+    bool("succeeded") === true ||
+    bool("compromised") === true ||
+    bool("leaked") === true ||
+    bool("answer_match") === false ||
+    rank > 1
+  );
+}
+
+/** A unit left out of every rate before scoring: a question with no
+ *  retrieval label, a canary an ingest filter dropped. Never a trial. */
+export function isExcludedItem(r: Evidence): boolean {
+  return r["kind"] === "excluded_item";
+}
+
+/** "Excluded — q001: no retrieval label". */
+export function excludedItemLine(r: Evidence): string {
+  const id = field(r, "item_id") ?? "(unnamed)";
+  const reason = field(r, "reason") ?? "no reason recorded";
+  return `Excluded — ${id}: ${reason}`;
+}
+
+export interface EvidenceView {
+  trials: Evidence[]; // the scored records the drill matches, most telling first
+  excluded: Evidence[]; // excluded items: never matched by a trial filter, never counted as trials
+}
+
+/** The records a drill shows. Excluded items are set apart before any trial
+ *  filter runs, so a filter that assumes a scored trial never matches one and
+ *  they are never counted as trials; the text filter applies to both. */
+export function selectEvidence(
+  records: Evidence[],
+  filter: Record<string, string> | undefined,
+  text: string,
+): EvidenceView {
+  const fields = expandDrillFilter(filter);
+  const needle = text.trim().toLowerCase();
+  const byText = (r: Evidence) => !needle || JSON.stringify(r).toLowerCase().includes(needle);
+  const trials = records
+    .filter((r) => !isExcludedItem(r))
+    .filter((r) => Object.entries(fields).every(([k, v]) => matchesField(r, k, v)))
+    .filter(byText)
+    .sort(
+      (a, b) =>
+        Number((foreignMarkers(b) ?? []).length > 0) - Number((foreignMarkers(a) ?? []).length > 0) ||
+        Number(isFlagged(b)) - Number(isFlagged(a)),
+    );
+  return { trials, excluded: records.filter(isExcludedItem).filter(byText) };
+}
+
+/** "12 shown", or "12 shown · 3 excluded". */
+export function evidenceCountLine(view: EvidenceView): string {
+  return `${view.trials.length} shown${view.excluded.length > 0 ? ` · ${view.excluded.length} excluded` : ""}`;
 }
 
 // ------------------------------------------------------------------ markdown

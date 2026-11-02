@@ -18,6 +18,10 @@ import {
   diffDelta,
   diffFootnote,
   diffRows,
+  evidenceCountLine,
+  excludedItemLine,
+  isExcludedItem,
+  selectEvidence,
   formatMetric,
   formatReading,
   groupSubsets,
@@ -1041,5 +1045,62 @@ describe("the privacy panel's context", () => {
     ]);
     assert.equal(privacyContext(results, spec(["dedup"], ["none"])).caveat, undefined);
     assert.deepEqual(privacyContext(run(m("privacy", "leakage_rate", "defense=none", 0.2)), null).counts, []);
+  });
+});
+
+describe("evidence and excluded items", () => {
+  const rec = (id, payload) => ({ ...payload, _id: id });
+  const trial = (id, extra = {}) =>
+    rec(id, { kind: "canary_probe", canary_id: `c${id}`, probe_style: "direct", defense: "none", retrieved: true, leaked: false, answer: "x", ...extra });
+  const excluded = (id, item, reason, unit = "canary") =>
+    rec(id, { kind: "excluded_item", unit, item_id: item, reason });
+
+  test("an excluded item reads as such", () => {
+    assert.equal(
+      excludedItemLine(excluded(1, "q001", "no retrieval label", "question")),
+      "Excluded — q001: no retrieval label",
+    );
+    assert.equal(excludedItemLine(rec(2, { kind: "excluded_item" })), "Excluded — (unnamed): no reason recorded");
+    assert.equal(isExcludedItem(trial(3)), false);
+  });
+
+  test("excluded items are never trials, whatever the drill filters on", () => {
+    const records = [
+      trial(1),
+      trial(2, { leaked: true }),
+      excluded(3, "email-00", "dropped by dedup (duplicate_content)"),
+    ];
+    const all = selectEvidence(records, undefined, "");
+    assert.deepEqual(all.trials.map((r) => r._id), [2, 1]); // the leak sorts first
+    assert.deepEqual(all.excluded.map((r) => r._id), [3]);
+    assert.equal(evidenceCountLine(all), "2 shown · 1 excluded");
+    // A filter that assumes a scored trial: the excluded item is not one of them.
+    const byStyle = selectEvidence(records, { probe_style: "direct", defense: "none" }, "");
+    assert.deepEqual(byStyle.trials.map((r) => r._id), [2, 1]);
+    assert.deepEqual(byStyle.excluded.map((r) => r._id), [3]);
+    const byKind = selectEvidence(records, { kind: "excluded_item" }, "");
+    assert.deepEqual(byKind.trials, []);
+  });
+
+  test("the text filter applies to excluded items too, and counts stay honest", () => {
+    const records = [trial(1), excluded(2, "email-00", "dropped by dedup"), excluded(3, "phone-02", "dropped by language")];
+    const view = selectEvidence(records, undefined, "dedup");
+    assert.deepEqual(view.trials, []);
+    assert.deepEqual(view.excluded.map((r) => r._id), [2]);
+    assert.equal(evidenceCountLine(view), "0 shown · 1 excluded");
+    assert.equal(evidenceCountLine(selectEvidence([trial(1)], undefined, "")), "1 shown");
+  });
+
+  test("metric drills still resolve to the records the metric was computed over", () => {
+    const attacks = [
+      rec(1, { kind: "attack", attack_type: "poison", qid: "q1", succeeded: true, own_marker: "P1", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      rec(2, { kind: "attack", attack_type: "injection", qid: "q1", succeeded: false, own_marker: "I1", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      rec(3, { kind: "attack", attack_type: "injection", qid: "q2", succeeded: false, own_marker: "I2", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      excluded(4, "q9", "no retrieval label", "question"),
+    ];
+    const ids = (filter) => selectEvidence(attacks, filter, "").trials.map((r) => r._id).sort();
+    assert.deepEqual(ids({ metric: "knowledge_corruption_rate" }), [1]);
+    assert.deepEqual(ids({ metric: "attack_competition_rate" }), [2]);
+    assert.deepEqual(ids({ metric: "cross_question_contamination_rate" }), [3]);
   });
 });
