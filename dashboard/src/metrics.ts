@@ -908,8 +908,10 @@ export function canariesRedactedAtIngest(
 export interface SuiteNotice {
   suite: string;
   status: "failed" | "skipped";
-  error: string | undefined; // a failed suite's error, when it recorded one
+  error: string | undefined; // the suite's recorded error, when there is one
   reasons: UnmeasuredGroup[]; // why its metrics have no value, grouped
+  /** The text the notice shows besides its grouped reasons, if any. */
+  message: string | undefined;
 }
 
 /** The suites a reader has to be told about before reading any panel: one that
@@ -921,8 +923,23 @@ export function suiteNotices(results: RunResults): SuiteNotice[] {
     if (s.status !== "failed" && s.status !== "skipped") return [];
     const reasons = groupUnmeasured(unmeasuredOf(results.metrics.filter((m) => m.suite === s.suite)));
     const error = s.error?.trim() ? s.error : undefined;
-    return [{ suite: s.suite, status: s.status, error, reasons }];
+    return [{ suite: s.suite, status: s.status, error, reasons, message: noticeMessage(s.status, error, reasons) }];
   });
+}
+
+function noticeMessage(
+  status: "failed" | "skipped",
+  error: string | undefined,
+  reasons: UnmeasuredGroup[],
+): string | undefined {
+  if (status === "failed") {
+    return `${error ?? "The run recorded no error message."} Its panels are empty because the suite produced no results.`;
+  }
+  // A skipped suite gives its reasons on its metrics. One written by an older
+  // version has none, and put its reason in `error` instead
+  // ("unsupported: retrieval labels missing for q001, …").
+  if (reasons.length > 0) return undefined;
+  return error ?? "No reason was recorded.";
 }
 
 /** The run header's suite list: a suite that did not succeed says so. */

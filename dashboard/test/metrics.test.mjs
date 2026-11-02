@@ -791,6 +791,13 @@ describe("suite status", () => {
         ["faithfulness", "failed", "ValueError: judge returned nothing", []],
       ],
     );
+    // The skipped suite's reasons are on its metrics, so it needs no message;
+    // the failed one says why its panels are empty.
+    assert.equal(notices[0].message, undefined);
+    assert.equal(
+      notices[1].message,
+      "ValueError: judge returned nothing Its panels are empty because the suite produced no results.",
+    );
     assert.equal(
       suitesLine(results.suites),
       "retrieval (skipped) · faithfulness (failed) · security · privacy (cancelled)",
@@ -803,6 +810,16 @@ describe("suite status", () => {
   test("a failed suite with a blank error is still a notice, with no error text", () => {
     const [notice] = suiteNotices({ ...run(), suites: [suite("faithfulness", "failed", "  ")] });
     assert.equal(notice.error, undefined);
+    assert.match(notice.message, /^The run recorded no error message\./);
+  });
+
+  test("a skipped suite from an older version gives the reason it put in `error`", () => {
+    const old = "unsupported: retrieval labels missing for q001, q002, q003";
+    const [notice] = suiteNotices({ ...run(), suites: [suite("retrieval", "skipped", old)] });
+    assert.deepEqual(notice.reasons, []);
+    assert.equal(notice.message, old);
+    const [silent] = suiteNotices({ ...run(), suites: [suite("retrieval", "skipped")] });
+    assert.equal(silent.message, "No reason was recorded.");
   });
 
   test("a run whose suites all succeeded has no notices, and its header and summary are unchanged", () => {
