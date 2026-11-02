@@ -179,7 +179,7 @@ function signed(v: number, digits = 3): string {
 // ------------------------------------------------------------------ trade-off
 
 export function TradeoffRadar({ results, onDrill }: PanelProps) {
-  const { data, unmeasured: missing, subsets } = tradeoffRadar(results);
+  const { data, unmeasured: missing, subsets, notes } = tradeoffRadar(results);
   if (data.length < 3 && missing.length === 0) return null;
   const values = (
     <ul className="axis-values">
@@ -206,6 +206,11 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
           too few to draw the trade-off. An axis that was not measured is never drawn at 0.
         </p>
         {data.length > 0 && values}
+        {notes.map((n) => (
+          <p className="hint" key={n}>
+            {n}.
+          </p>
+        ))}
       </Panel>
     );
   }
@@ -231,6 +236,11 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
         (1 − attack success, 1 − leakage); the cards above show them undirected.
         {missing.length > 0 && " An axis that was not measured is left off, not drawn at 0."}
       </p>
+      {notes.map((n) => (
+        <p className="hint" key={n}>
+          {n}.
+        </p>
+      ))}
     </Panel>
   );
 }

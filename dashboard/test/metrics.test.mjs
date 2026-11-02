@@ -177,17 +177,30 @@ describe("trade-off radar", () => {
     );
   });
 
-  test("robustness is unknown when either attack rate was not measured", () => {
-    const { data } = tradeoffRadar(
+  test("robustness is unknown when an attack rate that counts was not measured", () => {
+    for (const state of ["error", "unsupported", "not_estimable"]) {
+      const { data } = tradeoffRadar(
+        run(...base.slice(0, 3), nm("security", "injection_compliance_rate", "defense=none", state)),
+      );
+      assert.equal(
+        data.find((d) => d.name === "Robustness"),
+        undefined,
+        state,
+      );
+    }
+  });
+
+  test("a skipped attack carries no weight: robustness is the other one, and says so", () => {
+    const { data, notes } = tradeoffRadar(
       run(
-        ...base.slice(0, 3),
-        nm("security", "injection_compliance_rate", "defense=none", "skipped"),
+        ...base.slice(0, 2),
+        m("security", "knowledge_corruption_rate", "defense=none", 1.0),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection disabled"),
       ),
     );
-    assert.equal(
-      data.find((d) => d.name === "Robustness"),
-      undefined,
-    );
+    assert.equal(data.find((d) => d.name === "Robustness").value, 0);
+    assert.deepEqual(notes, ["Robustness: poison only; injection skipped"]);
+    assert.deepEqual(tradeoffRadar(run(...base)).notes, []);
   });
 
   test("an inapplicable rerank-off nDCG gives way to a measured MRR", () => {
@@ -271,6 +284,43 @@ describe("KPI cards", () => {
     );
     assert.equal(card.reading.measured, false);
     assert.equal(card.reading.reason, "injection_compliance_rate: generator failed");
+  });
+
+  test("a skipped attack carries no weight, and the card names what it set aside", () => {
+    const [card] = kpis(
+      run(
+        m("security", "knowledge_corruption_rate", "defense=none", 1.0),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection disabled"),
+      ),
+    );
+    assert.deepEqual(card.reading, { measured: true, value: 1.0 });
+    assert.equal(card.detail, "poison only, no defense; injection skipped");
+    const both = kpis(
+      run(
+        m("security", "knowledge_corruption_rate", "defense=none", 0.3),
+        m("security", "injection_compliance_rate", "defense=none", 0.1),
+      ),
+    );
+    assert.equal(both[0].detail, "poison vs injection, no defense");
+  });
+
+  test("set-aside inputs of different states keep both in the reason", () => {
+    const worst = worstOf([
+      ["a", read(nm("s", "a", "", "skipped", "disabled"))],
+      ["b", read(nm("s", "b", "", "inapplicable", "no reranker"))],
+    ]);
+    assert.deepEqual(worst, {
+      measured: false,
+      state: "skipped",
+      reason: "a: skipped, disabled; b: inapplicable, no reranker",
+    });
+    const skippedOnly = kpis(
+      run(
+        nm("security", "knowledge_corruption_rate", "defense=none", "skipped", "poison off"),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection off"),
+      ),
+    );
+    assert.equal(skippedOnly[0].reading.state, "skipped");
   });
 
   test("an inapplicable attack carries no weight in the worst case", () => {

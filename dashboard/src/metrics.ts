@@ -8,11 +8,14 @@
 // delta, a worst case, an inverted radar axis) exists only when every input
 // was measured.
 //
-// `inapplicable` follows Lighthouse: it carries no weight. Where a figure is
-// derived from several metrics, or one stands in for another, an inapplicable
-// metric gives way to one that applies (see `firstApplicable`, `worstOf`). When
-// every input is inapplicable, the figure is shown as inapplicable, with its
-// reason, rather than vanishing.
+// `inapplicable` and `skipped` follow Lighthouse: they carry no weight. A metric
+// that does not apply to this configuration, or that the spec deliberately did
+// not run (injection attacks disabled), is set aside where a figure is derived
+// from several metrics or one stands in for another (see `firstApplicable`,
+// `worstOf`), and the figure names what it set aside. When every input is set
+// aside, the figure is shown in that state, with its reason, rather than
+// vanishing. Any other unmeasured input (`error`, `unsupported`,
+// `not_estimable`) leaves the figure unmeasured: it was supposed to count.
 //
 // A measured value scored over part of its scope (`n_excluded > 0`) carries its
 // subset on the reading, so every surface that shows the number can say "53 of
@@ -89,15 +92,24 @@ export function read(m: Metric): Reading {
   };
 }
 
-/** `undefined` for a metric that is absent or inapplicable: neither may stand
- *  in for another metric or take part in a worst case. */
+/** States that carry no weight in a derived figure: the metric does not apply
+ *  to this configuration, or the spec chose not to run it. */
+const NO_WEIGHT: readonly string[] = ["inapplicable", "skipped"];
+
+/** Whether a reading is set aside, rather than counted, in a derived figure. */
+export function carriesNoWeight(r: Reading | undefined): boolean {
+  return r !== undefined && !r.measured && NO_WEIGHT.includes(r.state);
+}
+
+/** `undefined` for a metric that is absent, inapplicable or skipped: none of
+ *  them may stand in for another metric or take part in a worst case. */
 export function applicable(r: Reading | undefined): Reading | undefined {
-  return r !== undefined && !r.measured && r.state === "inapplicable" ? undefined : r;
+  return carriesNoWeight(r) ? undefined : r;
 }
 
 /** A fallback chain: the first candidate that applies, or, when none does, the
- *  first that exists, so a figure whose every input is inapplicable is shown as
- *  inapplicable instead of disappearing. */
+ *  first that exists, so a figure whose every input is set aside is shown in
+ *  that state instead of disappearing. */
 export function firstApplicable(...candidates: (Reading | undefined)[]): Reading | undefined {
   return (
     candidates.find((r) => applicable(r) !== undefined) ?? candidates.find((r) => r !== undefined)
@@ -258,15 +270,20 @@ export function unmeasuredOf(metrics: Metric[]): Unmeasured[] {
 
 /** The larger of several rates, defined only when all of them were measured:
  *  a worst case over a set with an unknown member is itself unknown. Inputs
- *  the run did not emit, or that are inapplicable, are left out; when every
- *  input present is inapplicable, so is the worst case. */
+ *  the run did not emit, or that carry no weight (inapplicable, skipped), are
+ *  left out; when every input present carries none, the worst case takes the
+ *  first one's state, and its reason names each. */
 export function worstOf(parts: [string, Reading | undefined][]): Reading | undefined {
   const emitted = parts.filter((p): p is [string, Reading] => p[1] !== undefined);
   if (emitted.length === 0) return undefined;
   const present = emitted.filter(([, r]) => applicable(r) !== undefined);
   if (present.length === 0) {
-    const reasons = emitted.map(([name, r]) => `${name}: ${(r as NotMeasured).reason}`);
-    return { measured: false, state: "inapplicable", reason: reasons.join("; ") };
+    const aside = emitted.map(([name, r]) => [name, r as NotMeasured] as const);
+    const oneState = aside.every(([, r]) => r.state === aside[0][1].state);
+    const reasons = aside.map(([name, r]) =>
+      oneState ? `${name}: ${r.reason}` : `${name}: ${r.state}, ${r.reason}`,
+    );
+    return { measured: false, state: aside[0][1].state, reason: reasons.join("; ") };
   }
   // The worst case is one of its inputs, so it keeps that input's subset.
   let worst: Extract<Reading, { measured: true }> | undefined;
@@ -275,6 +292,33 @@ export function worstOf(parts: [string, Reading | undefined][]): Reading | undef
     if (worst === undefined || r.value > worst.value) worst = r;
   }
   return worst as Reading;
+}
+
+/** The inputs a derived figure set aside, by name and state. */
+export function setAside(parts: [string, Reading | undefined][]): [string, DisplayState][] {
+  return parts.flatMap(([name, r]) =>
+    r !== undefined && !r.measured && carriesNoWeight(r) ? [[name, r.state] as [string, DisplayState]] : [],
+  );
+}
+
+/** The two attack rates a worst case is taken over, by their short names. */
+function attackParts(results: RunResults): [string, Reading | undefined][] {
+  return [
+    ["poison", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
+    ["injection", reading(results, "security", "injection_compliance_rate", "defense=none")],
+  ];
+}
+
+/** What a worst case was taken over: "poison vs injection", or, when inputs
+ *  were set aside or absent, the ones that counted and then what was set
+ *  aside, e.g. "poison only; injection skipped". `qualifier` follows the
+ *  counted part ("poison only, no defense; injection skipped"). */
+export function worstCaseScope(parts: [string, Reading | undefined][], qualifier = ""): string {
+  const counted = parts.filter(([, r]) => r !== undefined && applicable(r) !== undefined);
+  const names = (ps: [string, unknown][]) => ps.map(([name]) => name).join(" vs ");
+  if (counted.length === parts.length || counted.length === 0) return `${names(parts)}${qualifier}`;
+  const aside = setAside(parts).map(([name, state]) => `${name} ${state}`);
+  return `${names(counted)} only${qualifier}${aside.length > 0 ? `; ${aside.join(", ")}` : ""}`;
 }
 
 function invert(r: Reading | undefined): Reading | undefined {
@@ -308,10 +352,8 @@ export function kpis(results: RunResults): Kpi[] {
   const on = reading(results, "retrieval", "ndcg@10", "rerank=on");
   const off = reading(results, "retrieval", "ndcg@10", "rerank=off");
   const retrieval = firstApplicable(on, off);
-  const attack = worstOf([
-    ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
-    ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
-  ]);
+  const parts = attackParts(results);
+  const attack = worstOf(parts.map(([name, r]) => [ATTACK_RATE[name], r]));
 
   const cards: (Omit<Kpi, "reading"> & { reading: Reading | undefined })[] = [
     {
@@ -336,7 +378,10 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "security",
       label: "Worst-case attack",
-      detail: withSubset("poison vs injection, no defense", attack),
+      detail: withSubset(
+        attack?.measured ? worstCaseScope(parts, ", no defense") : "poison vs injection, no defense",
+        attack,
+      ),
       reading: attack,
       direction: "down",
       suite: "security",
@@ -356,6 +401,12 @@ export function kpis(results: RunResults): Kpi[] {
   return cards.flatMap((k) => (k.reading === undefined ? [] : [{ ...k, reading: k.reading }]));
 }
 
+/** The metric behind each attack's short name. */
+const ATTACK_RATE: Record<string, string> = {
+  poison: "knowledge_corruption_rate",
+  injection: "injection_compliance_rate",
+};
+
 function withSubset(detail: string, r: Reading | undefined): string {
   return r?.measured && r.subset ? `${detail} · ${subsetShort(r.subset)}` : detail;
 }
@@ -370,6 +421,7 @@ export interface Radar {
   data: NamedSeries[];
   unmeasured: Unmeasured[];
   subsets: Subsetted[];
+  notes: string[]; // what a measured axis set aside, e.g. "Robustness: poison only; injection skipped"
 }
 
 export function tradeoffRadar(results: RunResults): Radar {
@@ -379,12 +431,8 @@ export function tradeoffRadar(results: RunResults): Radar {
     reading(results, "retrieval", "mrr", "rerank=off"),
   );
   const faithfulness = reading(results, "faithfulness", "groundedness");
-  const robustness = invert(
-    worstOf([
-      ["knowledge_corruption_rate", reading(results, "security", "knowledge_corruption_rate", "defense=none")],
-      ["injection_compliance_rate", reading(results, "security", "injection_compliance_rate", "defense=none")],
-    ]),
-  );
+  const parts = attackParts(results);
+  const robustness = invert(worstOf(parts.map(([name, r]) => [ATTACK_RATE[name], r])));
   const privacy = invert(reading(results, "privacy", "leakage_rate", "defense=none"));
 
   const axes: [string, Reading | undefined][] = [
@@ -399,6 +447,10 @@ export function tradeoffRadar(results: RunResults): Radar {
     ),
     unmeasured: axes.flatMap(([name, r]) => unmeasured(name, r)),
     subsets: axes.flatMap(([name, r]) => subsetted(name, r)),
+    notes:
+      robustness?.measured && setAside(parts).length > 0
+        ? [`Robustness: ${worstCaseScope(parts)}`]
+        : [],
   };
 }
 
