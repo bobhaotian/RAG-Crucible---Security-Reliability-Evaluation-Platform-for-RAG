@@ -60,7 +60,7 @@ from rag_crucible.index import VectorIndex
 from rag_crucible.ingest import apply_filters, chunk_documents, embed_into_index, load_corpus
 from rag_crucible.obs.aggregate import TimingCollector
 from rag_crucible.pipeline import Answer, RagPipeline
-from rag_crucible.pipeline.defenses import clean_chunk_screening_reason
+from rag_crucible.pipeline.defenses import CHUNK_REMOVING_DEFENSES, clean_chunk_screening_reason
 from rag_crucible.qa import QAItem, answer_matches
 from rag_crucible.types import Chunk, Document
 
@@ -273,11 +273,21 @@ def _aggregate(
     clean_records = clean_records or []
     clean_screen_records = clean_screen_records or []
     metrics: list[Metric] = []
-    # Retrieval is measured where context is not stripped (injection_filter
-    # removes flagged chunks post-retrieval, which is the defense, not retrieval).
+    # Retrieval is measured where no chunk is removed after retrieval:
+    # injection_filter and answer_integrity drop chunks before the prompt, which
+    # is the defense, not the retriever. Pooled over the remaining arms, n counts
+    # trial x arm; B2's n_clusters will count targets.
     retrieval_conditions: list[DefenseName] = [
-        d for d in config.defenses if d != "injection_filter"
+        d for d in config.defenses if d not in CHUNK_REMOVING_DEFENSES
     ] or list(config.defenses)
+    # The competition diagnostic needs a question both attacks targeted: one a
+    # trial ran on, or one whose planted marker turned up in an answer.
+    targets: dict[str, set[str]] = {"poison": set(), "injection": set()}
+    for r in records:
+        targets[r.attack_type].add(r.qid)
+        for marker in r.matched_markers or ():
+            targets[marker.attack_type].add(marker.qid)
+    targeted_by_both = targets["poison"] & targets["injection"]
 
     for attack_type, enabled, retrieval_name, success_name, compromise_name in (
         (
@@ -296,10 +306,16 @@ def _aggregate(
         ),
     ):
         of_type = [r for r in records if r.attack_type == attack_type]
-        # An attack the spec turned off is skipped, and one that ran no trial
-        # (no question to target) cannot be estimated: neither is a zero.
+        # An attack the spec turned off is skipped; one left with no question to
+        # target (disjoint_targets after the other took the pool) is unsupported
+        # by this question set. Neither is a zero.
+        no_target = f"the question set left no target for {attack_type}" + (
+            " once poisoning took its targets (disjoint_targets)"
+            if attack_type == "injection" and config.disjoint_targets
+            else ""
+        )
         empty: tuple[NotMeasuredState, str] = (
-            ("not_estimable", f"no {attack_type} trial ran: no question was available to target")
+            ("unsupported", no_target)
             if enabled
             else ("skipped", f"{attack_type} attacks are disabled in this spec")
         )
@@ -342,8 +358,6 @@ def _aggregate(
                             "(written by an older version); this rate needs every one"
                         ),
                         variant=variant,
-                        n=len(at_condition) - unscanned,
-                        excluded=unscanned,
                     )
                 )
             else:
@@ -399,6 +413,19 @@ def _aggregate(
         # "no competing marker" about a trial that was never scanned — a zero
         # nobody measured. Every live run records all three, so these
         # denominators only shrink when reading a migrated older result.
+        if at_condition and not targeted_by_both:
+            competition_inapplicable: Metric | None = not_measured(
+                SUITE,
+                "attack_competition_rate",
+                state="inapplicable",
+                reason=(
+                    "no question was targeted by both attacks (one is disabled, or "
+                    "disjoint_targets), so no answer can carry a competing attack's marker"
+                ),
+                variant=variant,
+            )
+        else:
+            competition_inapplicable = None
         for name, recorded in (
             ("attack_abstention_rate", [r.abstained for r in at_condition]),
             (
@@ -416,6 +443,9 @@ def _aggregate(
                 ],
             ),
         ):
+            if name == "attack_competition_rate" and competition_inapplicable is not None:
+                metrics.append(competition_inapplicable)
+                continue
             values = [float(v) for v in recorded if v is not None]
             metrics.append(
                 rate(
@@ -462,6 +492,19 @@ def _aggregate(
             )
         )
         screened = [r for r in clean_screen_records if r.defense == condition]
+        if condition not in CHUNK_REMOVING_DEFENSES:
+            # No chunk screen exists in this arm, so its 0.0 would be by
+            # construction, not a measurement.
+            metrics.append(
+                not_measured(
+                    SUITE,
+                    "defense_clean_screen_rate",
+                    state="inapplicable",
+                    reason=f"{condition} removes no chunks, so it has no screen to measure",
+                    variant=variant,
+                )
+            )
+            continue
         metrics.append(
             rate(
                 SUITE,

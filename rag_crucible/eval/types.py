@@ -52,7 +52,9 @@ from rag_crucible.types import StrictModel
 #   5 — per-chunk clean-defense screening evidence
 #   6 — every metric carries a state (and a reason when it was not measured)
 #   7 — every metric carries n and n_excluded, its sample size and exclusions;
-#       a citation can be unjudged (supports_claim None) when its answer made no claim
+#       a citation can be unjudged (supports_claim None) when its answer made no
+#       claim; excluded_item records name each unit left out (an unlabelled
+#       question, a dropped canary)
 RESULT_SCHEMA_VERSION = 7
 
 # One spelling, imported by both the eval layer and the result store. Spelled
@@ -80,8 +82,11 @@ class Metric(StrictModel):
     value: float | None  # None exactly when state is not "measured"
     state: MetricState = "measured"
     reason: str | None = None  # required, non-empty, whenever state is not "measured"
-    # Units in the denominator, and units in scope left out as ineligible. None
-    # means "not recorded" (a result written before schema 7), never zero.
+    # n: the units scored. n_excluded: units in the metric's scope left out
+    # because they were not eligible by its definition (an unlabelled question,
+    # a dropped canary, a field an older version did not record), never errors,
+    # which B2 will count apart. None means "not recorded" or "not computed",
+    # never zero. rag_crucible.eval.catalog says what each metric's n counts.
     n: int | None = None
     n_excluded: int | None = None
 
@@ -282,13 +287,26 @@ class CleanScreenRecord(StrictModel):
     reason: str | None = None
 
 
+class ExcludedItemRecord(StrictModel):
+    """A unit a suite left out of its denominators, and why: a question with no
+    retrieval label, a canary document the ingest filters dropped. The count is
+    on the metrics (``n_excluded``); this names each one, so a partial score can
+    be audited for what it does not cover. It is not a trial."""
+
+    kind: Literal["excluded_item"] = "excluded_item"
+    unit: Literal["question", "canary"]
+    item_id: str
+    reason: str
+
+
 EvalRecord = Annotated[
     RetrievalRecord
     | FaithfulnessRecord
     | AttackRecord
     | PrivacyRecord
     | CleanDefenseRecord
-    | CleanScreenRecord,
+    | CleanScreenRecord
+    | ExcludedItemRecord,
     Field(discriminator="kind"),
 ]
 

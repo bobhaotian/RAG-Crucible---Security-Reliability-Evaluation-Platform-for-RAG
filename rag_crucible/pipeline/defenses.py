@@ -76,6 +76,13 @@ def looks_like_injection(text: str) -> bool:
 MINIMUM_TRUST = 0.5
 
 
+# The defenses that remove retrieved chunks before the prompt. Only these have
+# a chunk screen to measure on clean traffic, and their arms are left out of the
+# security suite's retrieval rates, where a removed chunk would read as one the
+# retriever never found. clean_chunk_screening_reason screens for these alone.
+CHUNK_REMOVING_DEFENSES = frozenset({"injection_filter", "answer_integrity"})
+
+
 def clean_chunk_screening_reason(chunk: Chunk, defense: str) -> str | None:
     """Return why a defense would delete a clean chunk, or None if kept."""
     if defense == "injection_filter" and looks_like_injection(chunk.text):

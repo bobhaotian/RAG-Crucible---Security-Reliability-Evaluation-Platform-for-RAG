@@ -33,7 +33,13 @@ from rag_crucible.attacks import Canary, generate_canaries
 from rag_crucible.config import PrivacyDefense, PrivacySuiteConfig, RunSpec
 from rag_crucible.eval.concurrent import bounded_gather
 from rag_crucible.eval.measure import rate
-from rag_crucible.eval.types import Metric, NotMeasuredState, PrivacyRecord, SuiteResult
+from rag_crucible.eval.types import (
+    ExcludedItemRecord,
+    Metric,
+    NotMeasuredState,
+    PrivacyRecord,
+    SuiteResult,
+)
 from rag_crucible.index import VectorIndex
 from rag_crucible.ingest import (
     apply_filters,
@@ -95,13 +101,20 @@ async def run_privacy_suite(
         for c in generated
         if c.document.doc_id in surviving
     ]
-    if not canaries:
-        ids = {c.document.doc_id: c.canary_id for c in generated}
-        why = "; ".join(
-            f"{ids[d.doc_id]} by {stat.name} ({d.reason})"
-            for stat in planted_stats
-            for d in stat.dropped_documents
+    ids = {c.document.doc_id: c.canary_id for c in generated}
+    # One record per canary a filter dropped, naming the filter and its reason,
+    # so a partial drop is auditable and not just a count.
+    excluded = [
+        ExcludedItemRecord(
+            unit="canary",
+            item_id=ids[d.doc_id],
+            reason=f"dropped by {stat.name} ({d.reason})",
         )
+        for stat in planted_stats
+        for d in stat.dropped_documents
+    ]
+    if not canaries:
+        why = "; ".join(f"{r.item_id} {r.reason.removeprefix('dropped ')}" for r in excluded)
         raise ValueError(
             f"ingest.filters {list(spec.ingest.filters)} dropped all {len(generated)} "
             f"canary documents, so the privacy suite has nothing to probe: {why}"
@@ -141,7 +154,7 @@ async def run_privacy_suite(
     return SuiteResult(
         suite=SUITE,
         metrics=tuple(_aggregate(records, config, dropped=dropped, planted=len(generated))),
-        records=tuple(records),
+        records=(*records, *excluded),
     )
 
 
@@ -172,11 +185,20 @@ def _aggregate(
     # an empty one is a bug in this module, not a measurement.
     empty: tuple[NotMeasuredState, str] = ("not_estimable", "no canary was probed")
     metrics: list[Metric] = []
+    # A dropped canary's probes are in scope but not eligible: count them.
+    per_arm = dropped * len(config.probes)
     for condition in config.defenses:
         at = [r for r in records if r.defense == condition]
         variant = f"defense={condition}"
         metrics.append(
-            rate(SUITE, "leakage_rate", [float(r.leaked) for r in at], variant=variant, empty=empty)
+            rate(
+                SUITE,
+                "leakage_rate",
+                [float(r.leaked) for r in at],
+                variant=variant,
+                excluded=per_arm,
+                empty=empty,
+            )
         )
         metrics.append(
             rate(
@@ -184,6 +206,7 @@ def _aggregate(
                 "retrieval_exposure_rate",
                 [float(r.retrieved) for r in at],
                 variant=variant,
+                excluded=per_arm,
                 empty=empty,
             )
         )
@@ -193,7 +216,13 @@ def _aggregate(
     for style in config.probes:
         sample = [r for r in records if r.defense == baseline and r.probe_style == style]
         metrics.append(
-            rate(SUITE, f"leakage_rate@{style}", [float(r.leaked) for r in sample], empty=empty)
+            rate(
+                SUITE,
+                f"leakage_rate@{style}",
+                [float(r.leaked) for r in sample],
+                excluded=dropped,
+                empty=empty,
+            )
         )
     # A count, not a rate: canary documents the ingest filters removed before
     # indexing, kept out of every denominator above. n is the canaries planted.

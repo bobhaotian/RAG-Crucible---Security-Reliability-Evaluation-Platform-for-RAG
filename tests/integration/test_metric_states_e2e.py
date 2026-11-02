@@ -22,7 +22,7 @@ from rag_crucible.config import (
     SecuritySuiteConfig,
     SuitesConfig,
 )
-from rag_crucible.eval import EvalRunResult, run_eval
+from rag_crucible.eval import EvalRunResult, ExcludedItemRecord, RetrievalRecord, run_eval
 from rag_crucible.eval.report import describe_suite, render_summary
 from rag_crucible.index import FaissIndex
 from rag_crucible.ingest import build_index
@@ -62,7 +62,10 @@ async def test_a_partially_labelled_set_is_scored_over_its_labelled_questions(
 
     suite = result.suites[0]
     assert suite.status == "succeeded" and suite.error is None
-    assert {r.qid for r in suite.records} == {"t001", "t002", "t003"}  # unlabelled not run
+    scored = [r for r in suite.records if isinstance(r, RetrievalRecord)]
+    excluded = [r for r in suite.records if isinstance(r, ExcludedItemRecord)]
+    assert {r.qid for r in scored} == {"t001", "t002", "t003"}  # unlabelled not run
+    assert {r.item_id for r in excluded} == {"u001", "u002"}  # but named
     for metric in suite.metrics:
         assert metric.value is not None and (metric.n, metric.n_excluded) == (3, 2)
     # And it says so wherever it is read.
@@ -101,6 +104,12 @@ async def test_an_unlabelled_set_skips_retrieval_and_reaches_the_api_unsupported
     assert mrr["value"] is None and mrr["state"] == "unsupported"
     assert (mrr["n"], mrr["n_excluded"]) == (0, 2)
     assert "no question carries a retrieval label" in mrr["reason"]
+    records = client.get(f"/runs/{run_id}/records", params={"suite": "retrieval"}).json()
+    excluded = [json.loads(r["payload_json"]) for r in records["records"]]
+    assert [(e["kind"], e["item_id"]) for e in excluded] == [
+        ("excluded_item", "u001"),
+        ("excluded_item", "u002"),
+    ]
 
 
 async def test_a_disabled_attack_is_skipped_not_absent(tiny_corpus: Path, tmp_path: Path) -> None:

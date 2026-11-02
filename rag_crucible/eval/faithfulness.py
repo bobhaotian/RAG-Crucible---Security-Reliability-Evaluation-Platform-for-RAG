@@ -14,7 +14,7 @@ cached judgments maximally reusable. Definitions:
                         generators often cite nothing — measured, not hidden);
 - citation_precision  = of parsed citations judged against a claim, share whose
                         chunk supports at least one; ``not_estimable`` when
-                        nothing parsed.
+                        nothing parsed or no parsed citation could be judged.
 
 Answers with no extractable claims (e.g. "I don't know.") are recorded but
 excluded from groundedness/hallucination denominators — refusing to answer is

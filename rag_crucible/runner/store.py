@@ -44,10 +44,11 @@ from rag_crucible.runner.models import (
 # is SQLite's infinity; NaN is stored as NULL), and a non-blank reason whenever
 # the state is not "measured". "Blank" here is ASCII whitespace; Python's
 # str.strip also strips rarer Unicode spaces, which is the one place the two
-# can disagree. The counts n and n_excluded are never negative, and a measured
-# row is never computed over zero units. Adding a MetricState changes this DDL,
-# so it needs a store migration (a metrics rebuild), and an older build then
-# refuses the store instead of failing on a state it cannot read.
+# can disagree. A value is a number, the counts n and n_excluded are
+# non-negative integers, and a measured row is never computed over zero units.
+# Adding a MetricState changes this DDL, so it needs a store migration (a
+# metrics rebuild), and an older build then refuses the store instead of
+# failing on a state it cannot read.
 _STATES_SQL = ", ".join(f"'{state}'" for state in get_args(MetricState))
 _BLANK_SQL = "char(32, 9, 10, 11, 12, 13)"
 # The latest schema, one statement per entry: ``_migrate`` runs them inside a
@@ -96,8 +97,9 @@ _SCHEMA: tuple[str, ...] = (
       CHECK ((value IS NULL) = (state != 'measured')),
       CHECK (value IS NULL OR abs(value) < 9e999),
       CHECK (state = 'measured' OR coalesce(length(trim(reason, {_BLANK_SQL})), 0) > 0),
-      CHECK (n IS NULL OR n >= 0),
-      CHECK (n_excluded IS NULL OR n_excluded >= 0),
+      CHECK (value IS NULL OR typeof(value) IN ('real', 'integer')),
+      CHECK (n IS NULL OR (typeof(n) = 'integer' AND n >= 0)),
+      CHECK (n_excluded IS NULL OR (typeof(n_excluded) = 'integer' AND n_excluded >= 0)),
       CHECK (state != 'measured' OR n IS NULL OR n >= 1)
     )
     """,
@@ -133,13 +135,14 @@ _SCHEMA: tuple[str, ...] = (
 # test_a_migrated_store_has_the_shape_of_a_fresh_one checks.
 #
 # A nullable, unconstrained column is added in place with ``ALTER TABLE ...
-# ADD COLUMN``. That covers the rest of the per-metric statistics planned for
-# B2 (n_clusters, ci_low, ci_high, method), so they are one more step of plain
-# ADD COLUMNs. What SQLite cannot alter in place rebuilds the table instead:
-# create the new shape, copy every row, drop the old table, rename the new one
-# into place. Dropping a NOT NULL is one such change; so is a column with a
-# CHECK, since one added in place would sit after the table's constraints and
-# give a migrated store a different shape from a fresh one.
+# ADD COLUMN``. The rest of the per-metric statistics planned for B2
+# (n_clusters, ci_low, ci_high, method) can be one more step of plain ADD
+# COLUMNs only if they stay unconstrained; with CHECKs they are a third rebuild.
+# What SQLite cannot alter in place rebuilds the table instead: create the new
+# shape, copy every row, drop the old table, rename the new one into place.
+# Dropping a NOT NULL is one such change; so is a column with a CHECK, since one
+# added in place would sit after the table's constraints and give a migrated
+# store a different shape from a fresh one.
 _MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # 0 -> 1. Written out literally, not from MetricState: a step is history,
     # and must not change when the literal does.
@@ -195,8 +198,9 @@ _MIGRATIONS: tuple[tuple[str, ...], ...] = (
           CHECK (value IS NULL OR abs(value) < 9e999),
           CHECK (state = 'measured'
                  OR coalesce(length(trim(reason, char(32, 9, 10, 11, 12, 13))), 0) > 0),
-          CHECK (n IS NULL OR n >= 0),
-          CHECK (n_excluded IS NULL OR n_excluded >= 0),
+          CHECK (value IS NULL OR typeof(value) IN ('real', 'integer')),
+          CHECK (n IS NULL OR (typeof(n) = 'integer' AND n >= 0)),
+          CHECK (n_excluded IS NULL OR (typeof(n_excluded) = 'integer' AND n_excluded >= 0)),
           CHECK (state != 'measured' OR n IS NULL OR n >= 1)
         )
         """,

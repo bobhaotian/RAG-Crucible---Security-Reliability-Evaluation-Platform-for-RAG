@@ -138,3 +138,61 @@ def test_a_citation_with_no_claim_to_check_is_not_judged_unsupported() -> None:
     precision = next(m for m in _aggregate([judged, unjudged]) if m.name == "citation_precision")
     assert precision.value == 1.0
     assert (precision.n, precision.n_excluded) == (1, 1)
+
+
+async def test_the_judge_leaves_a_citation_unjudged_when_its_answer_made_no_claim() -> None:
+    """The producer side: an answer too terse to yield a claim still cites a
+    chunk, and that citation is recorded as not judged rather than unsupported."""
+    from rag_crucible.eval.faithfulness import _judge_answer
+    from rag_crucible.eval.judge import HeuristicJudge
+    from rag_crucible.pipeline.types import (
+        Answer,
+        Candidate,
+        Citation,
+        RankedContext,
+        StageTimings,
+    )
+    from rag_crucible.providers.base import Usage
+    from rag_crucible.qa import QAItem
+    from rag_crucible.types import Chunk
+
+    chunk = Chunk(
+        chunk_id="c1",
+        doc_id="d1",
+        source="kb/x1.md",
+        text="The X1 lasts 72 hours.",
+        start=0,
+        end=22,
+    )
+    answer = Answer(
+        text="72 hours [1]",  # no sentence ending in . ! or ?, so no claim
+        citations=[Citation(chunk_id="c1", marker=1, parsed=True)],
+        context=RankedContext(
+            candidates=[Candidate(chunk=chunk, score=1.0, rank=0)], rerank_applied=False
+        ),
+        usage=Usage(),
+        timings=StageTimings(
+            embed_query_ms=0, retrieve_ms=0, rerank_ms=None, generate_ms=0, total_ms=0
+        ),
+    )
+    record = await _judge_answer(QAItem(qid="q1", question="How long?"), answer, HeuristicJudge())
+
+    assert record.claims == ()
+    assert [c.supports_claim for c in record.citations] == [None]
+
+
+def test_claim_metrics_count_the_answers_that_made_no_claim() -> None:
+    with_claim = FaithfulnessRecord(
+        qid="q1",
+        question="one",
+        answer="a",
+        citations_parsed=False,
+        citations=(),
+        claims=(ClaimJudgment(claim="c", supported=False, parse_ok=True, cached=False),),
+        answer_match=None,
+    )
+    terse = with_claim.model_copy(update={"qid": "q2", "claims": ()})
+    metrics = {m.name: m for m in _aggregate([with_claim, terse])}
+    for name in ("groundedness", "hallucination_rate"):
+        assert (metrics[name].n, metrics[name].n_excluded) == (1, 1), name
+    assert (metrics["citation_parse_rate"].n, metrics["citation_parse_rate"].n_excluded) == (2, 0)

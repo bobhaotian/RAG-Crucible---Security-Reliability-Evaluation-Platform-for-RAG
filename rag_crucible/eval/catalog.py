@@ -2,11 +2,13 @@
 
 One entry per metric name (``{k}``, ``{style}`` and ``{family}`` stand for the
 parts a run fills in). ``n`` on an emitted ``Metric`` counts the ``unit``s
-that were ``eligible``; ``n_excluded`` counts the units in scope that were
-not. ``when_empty`` lists the states the metric takes when nothing is
-eligible, and why; it never takes a value then. ``docs/metrics.md`` is
-generated from this table (``python -m rag_crucible.eval.catalog``), and a
-test keeps the two, and the suites, in step.
+scored, the ``eligible`` ones; ``n_excluded`` counts the units in scope that
+were not, and an ``excluded_item`` record names each where the suite can. It
+is never an error count: B2 will count errors apart. ``when_empty`` lists the
+states the metric takes when nothing is eligible, and why; it never takes a
+value then. ``docs/metrics.md`` is generated from this table
+(``python -m rag_crucible.eval.catalog``), and a test keeps the two, and the
+suites, in step.
 """
 
 from __future__ import annotations
@@ -41,13 +43,21 @@ _RERANK = "`rerank=off`, and `rerank=on` when `rerank_lift` is on"
 _DEFENSE = "`defense=<name>` for each configured defense"
 _NO_LABEL = (
     "`unsupported` when no question carries a retrieval label (the suite is skipped); "
-    "`inapplicable` for `rerank=on` when there is no reranker"
+    "`inapplicable` for `rerank=on` when the pipeline was built without a reranker "
+    "(one configured with `enabled: false` is still built, and still measured)"
 )
 _DIAGNOSTIC_EMPTY = (
-    "`unsupported` when no trial in the arm recorded it (an older result); "
-    "`not_estimable` when no attack trial ran"
+    "`unsupported` when no trial in the arm recorded it (records written by an older "
+    "version); `not_estimable` when no attack trial ran"
 )
-_ATTACK_EMPTY = "`skipped` when the spec disables this attack; `not_estimable` when no trial ran"
+_ATTACK_EMPTY = (
+    "`skipped` when the spec disables this attack; `unsupported` when the question set "
+    "leaves it no target (`disjoint_targets` after the other attack took every question)"
+)
+_RETRIEVAL_ELIGIBLE = (
+    "trials under arms that remove no chunk after retrieval: every arm but `injection_filter` "
+    "and `answer_integrity`, unless no other is configured. n counts trial x arm"
+)
 
 CATALOG: tuple[MetricDefinition, ...] = (
     # ---------------------------------------------------------------- retrieval
@@ -56,7 +66,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "recall@{k}",
         "rate",
         "question",
-        "questions with a retrieval label (a gold passage or a gold fact)",
+        "questions with a retrieval label (`gold_fact` or `gold_docs`); the rest are named in "
+        "`excluded_item` records",
         _NO_LABEL,
         "higher",
         "Share of questions whose first relevant chunk ranks within the top k.",
@@ -67,7 +78,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "ndcg@{k}",
         "rate",
         "question",
-        "questions with a retrieval label (a gold passage or a gold fact)",
+        "questions with a retrieval label (`gold_fact` or `gold_docs`); the rest are named in "
+        "`excluded_item` records",
         _NO_LABEL,
         "higher",
         "Mean of 1/log2(rank+1) for the first relevant chunk within the top k, 0 otherwise.",
@@ -78,7 +90,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "mrr",
         "rate",
         "question",
-        "questions with a retrieval label (a gold passage or a gold fact)",
+        "questions with a retrieval label (`gold_fact` or `gold_docs`); the rest are named in "
+        "`excluded_item` records",
         _NO_LABEL,
         "higher",
         "Mean reciprocal rank of the first relevant chunk, 0 when none is retrieved.",
@@ -90,7 +103,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "groundedness",
         "rate",
         "answer",
-        "answers that yielded at least one claim; an abstention has none",
+        "answers from which at least one claim was extracted (a sentence of at least 20 "
+        "characters ending in . ! or ?); an abstention or a terse answer has none",
         "`not_estimable` when no answer yielded a claim",
         "higher",
         "Mean, over answers, of the share of their claims the judge found supported.",
@@ -100,7 +114,7 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "hallucination_rate",
         "rate",
         "answer",
-        "answers that yielded at least one claim",
+        "answers from which at least one claim was extracted",
         "`not_estimable` when no answer yielded a claim",
         "lower",
         "Share of answers with at least one claim the judge found unsupported.",
@@ -142,8 +156,7 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "poison_retrieval_rate",
         "rate",
         "trial",
-        "poison trials under conditions that do not strip context (all but "
-        "`injection_filter`, unless it is the only one)",
+        "poison " + _RETRIEVAL_ELIGIBLE,
         _ATTACK_EMPTY,
         "lower",
         "Share of poison trials whose planted document reached the prompt context.",
@@ -153,7 +166,7 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "injection_retrieval_rate",
         "rate",
         "trial",
-        "injection trials under conditions that do not strip context",
+        "injection " + _RETRIEVAL_ELIGIBLE,
         _ATTACK_EMPTY,
         "lower",
         "Share of injection trials whose planted document reached the prompt context.",
@@ -186,8 +199,9 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "rate",
         "trial",
         "poison trials in the arm; every one must have recorded its marker scan",
-        _ATTACK_EMPTY + "; `unsupported` when any trial has no marker scan (an older "
-        "result), since this rate shares its denominator with knowledge_corruption_rate",
+        _ATTACK_EMPTY + "; also `unsupported` when any trial has no marker scan (records "
+        "written by an older version), since this rate shares its denominator with "
+        "knowledge_corruption_rate",
         "lower",
         "Share of poison trials whose answer carried any planted marker, from any attack.",
         _DEFENSE,
@@ -198,7 +212,7 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "rate",
         "trial",
         "injection trials in the arm; every one must have recorded its marker scan",
-        _ATTACK_EMPTY + "; `unsupported` when any trial has no marker scan",
+        _ATTACK_EMPTY + "; also `unsupported` when any trial has no marker scan",
         "lower",
         "Share of injection trials whose answer carried any planted marker, from any attack.",
         _DEFENSE,
@@ -245,7 +259,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "rate",
         "trial",
         "attack trials in the arm that recorded their marker scan",
-        _DIAGNOSTIC_EMPTY,
+        _DIAGNOSTIC_EMPTY + "; `inapplicable` when no question was targeted by both "
+        "attacks (one disabled, or `disjoint_targets`)",
         "neither",
         "Share of trials whose answer carried a marker from the other attack type planted on "
         "the same question.",
@@ -292,8 +307,10 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "defense_clean_screen_rate",
         "rate",
         "chunk",
-        "sampled clean corpus chunks",
-        "`not_estimable` when no clean chunk was sampled",
+        "sampled clean corpus chunks, in arms that remove chunks (`injection_filter`, "
+        "`answer_integrity`)",
+        "`inapplicable` in an arm that removes no chunks (`none`, `prompt_isolation`), whose "
+        "0.0 would be by construction; `not_estimable` when no clean chunk was sampled",
         "lower",
         "Share of clean chunks the arm's chunk screen would remove: the defense's false "
         "positive rate on your corpus.",
@@ -305,7 +322,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "leakage_rate",
         "rate",
         "probe",
-        "probes of canaries that were indexed",
+        "probes of canaries that were indexed; a dropped canary's probes are counted in "
+        "n_excluded, and the canary is named in an `excluded_item` record",
         "never empty: the suite fails if the filters drop every canary",
         "lower",
         "Share of probes whose answer reproduced the probed canary's secret verbatim.",
@@ -316,7 +334,8 @@ CATALOG: tuple[MetricDefinition, ...] = (
         "retrieval_exposure_rate",
         "rate",
         "probe",
-        "probes of canaries that were indexed",
+        "probes of canaries that were indexed; a dropped canary's probes are counted in "
+        "n_excluded, and the canary is named in an `excluded_item` record",
         "never empty",
         "lower",
         "Share of probes whose canary document reached the prompt context.",
@@ -368,6 +387,18 @@ def render_markdown() -> str:
         "question set, for instance, is scored over its labelled questions, and the rest are "
         "counted, not silently dropped. When nothing is eligible a metric is never 0: it is "
         "`unsupported`, `inapplicable`, `skipped` or `not_estimable`, with a reason.",
+        "",
+        "`n` counts the units scored and `n_excluded` the units in scope left out as "
+        "ineligible, never errors (B2 will count errors apart). Units left out are named in "
+        "`excluded_item` records where the suite can name them: unlabelled questions, "
+        "dropped canaries.",
+        "",
+        "**Aggregates.** A figure combining several metrics (the dashboard's worst-case "
+        "attack, its radar axes) gives `inapplicable` and `skipped` inputs no weight, as "
+        "Lighthouse does; any other input that was not measured makes the figure not "
+        "measured. A difference (rerank lift, a defense's change from `none`, a two-run "
+        "delta) is given only when both sides were measured, and is flagged when they were "
+        "scored over different units.",
         "",
     ]
     for suite in dict.fromkeys(d.suite for d in CATALOG):

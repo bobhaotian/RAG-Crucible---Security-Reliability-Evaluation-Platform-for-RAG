@@ -38,7 +38,11 @@ async def test_unlabelled_retrieval_is_typed_as_unsupported_not_zero() -> None:
     # and no non-error smuggled into SuiteResult.error.
     assert result.status == "skipped"
     assert result.error is None
-    assert result.records == ()
+    # Each left-out question is named, with why; nothing was scored.
+    assert [(r.kind, r.item_id, r.reason) for r in result.records] == [  # type: ignore[union-attr]
+        ("excluded_item", "q1", "no retrieval label"),
+        ("excluded_item", "q2", "no retrieval label"),
+    ]
     names = ["recall@1", "ndcg@1", "recall@5", "ndcg@5", "mrr"]
     assert [(m.name, m.variant) for m in result.metrics] == [
         (name, variant) for variant in ("rerank=off", "rerank=on") for name in names
@@ -49,3 +53,26 @@ async def test_unlabelled_retrieval_is_typed_as_unsupported_not_zero() -> None:
         assert (
             metric.reason is not None and "no question carries a retrieval label" in metric.reason
         )
+
+
+class _NoReranker:
+    """A pipeline built without a reranker, whose retriever finds nothing."""
+
+    has_reranker = False
+
+    async def retrieve(self, question: str, *, timer: object) -> list[object]:
+        return []
+
+
+async def test_rerank_lift_without_a_reranker_is_inapplicable_not_omitted() -> None:
+    result = await run_retrieval_suite(
+        _NoReranker(),  # type: ignore[arg-type]
+        [QAItem(qid="q1", question="?", gold_fact="The X1 lasts 72 hours.")],
+        RetrievalSuiteConfig(k_values=(1,)),
+        TimingCollector(),
+    )
+    off = [m for m in result.metrics if m.variant == "rerank=off"]
+    on = [m for m in result.metrics if m.variant == "rerank=on"]
+    assert [m.value for m in off] == [0.0, 0.0, 0.0]  # measured: nothing found
+    assert [m.state for m in on] == ["inapplicable"] * 3
+    assert all("built without a reranker" in (m.reason or "") for m in on)

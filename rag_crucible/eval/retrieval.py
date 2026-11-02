@@ -5,13 +5,15 @@ list is also reordered by the reranker (full list, not top_n) and every metric
 is emitted under two variants, ``rerank=off`` and ``rerank=on``. The lift is
 the per-metric delta; the report layer renders it explicitly.
 
-Only questions with a retrieval label (a gold passage) can be scored. A
-partially labelled set is scored over its labelled questions, and every metric
-records how many were left out (``n_excluded``). With none labelled, the suite
-is skipped, and each metric it would have produced is emitted as
-``unsupported`` with the reason, rather than left out. When ``rerank_lift`` is
-on but the pipeline has no reranker, the rerank-on variant is emitted as
-``inapplicable``.
+Only questions with a retrieval label (``gold_fact`` or ``gold_docs``) can be
+scored. A partially labelled set is scored over its labelled questions: every
+metric records how many were left out (``n_excluded``), and an
+``excluded_item`` record names each one. With none labelled, the suite is
+skipped, and each metric it would have produced is emitted as ``unsupported``
+with the reason, rather than left out. When ``rerank_lift`` is on but the
+pipeline was built without a reranker, the rerank-on variant is emitted as
+``inapplicable``. (A reranker configured with ``enabled: false`` is still built
+and still measured here: ``enabled`` governs serving, not the lift.)
 """
 
 from __future__ import annotations
@@ -25,7 +27,13 @@ from rag_crucible.eval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
-from rag_crucible.eval.types import Metric, NotMeasuredState, RetrievalRecord, SuiteResult
+from rag_crucible.eval.types import (
+    ExcludedItemRecord,
+    Metric,
+    NotMeasuredState,
+    RetrievalRecord,
+    SuiteResult,
+)
 from rag_crucible.obs import StageTimer
 from rag_crucible.obs.aggregate import TimingCollector
 from rag_crucible.pipeline import RagPipeline
@@ -44,12 +52,17 @@ async def run_retrieval_suite(
 ) -> SuiteResult:
     labelled = [item for item in qa_items if item.scores_retrieval]
     excluded = len(qa_items) - len(labelled)
+    unlabelled = [
+        ExcludedItemRecord(unit="question", item_id=item.qid, reason="no retrieval label")
+        for item in qa_items
+        if not item.scores_retrieval
+    ]
     rerank = config.rerank_lift and pipeline.has_reranker
     # Asked for, but there is no rerank-on ranking to score: say so per metric.
     no_reranker = config.rerank_lift and not pipeline.has_reranker
     if not labelled:
         reason = (
-            f"no question carries a retrieval label (a gold passage); "
+            f"no question carries a retrieval label (gold_fact or gold_docs); "
             f"{len(qa_items)} question(s) loaded"
         )
         variants = ["rerank=off", "rerank=on"] if rerank else ["rerank=off"]
@@ -70,7 +83,7 @@ async def run_retrieval_suite(
             suite=SUITE,
             status="skipped",
             metrics=tuple(unsupported + (_no_rerank_on(config) if no_reranker else [])),
-            records=(),
+            records=tuple(unlabelled),
         )
 
     async def evaluate_item(item: QAItem) -> RetrievalRecord:
@@ -112,7 +125,7 @@ async def run_retrieval_suite(
         )
     elif no_reranker:
         metrics += _no_rerank_on(config)
-    return SuiteResult(suite=SUITE, metrics=tuple(metrics), records=tuple(records))
+    return SuiteResult(suite=SUITE, metrics=tuple(metrics), records=(*records, *unlabelled))
 
 
 def _no_rerank_on(config: RetrievalSuiteConfig) -> list[Metric]:
@@ -121,7 +134,7 @@ def _no_rerank_on(config: RetrievalSuiteConfig) -> list[Metric]:
             SUITE,
             name,
             state="inapplicable",
-            reason="rerank_lift is on, but the pipeline has no reranker enabled",
+            reason="rerank_lift is on, but the pipeline was built without a reranker",
             variant="rerank=on",
         )
         for name in _names(config)

@@ -1,7 +1,8 @@
 """Turn a sample into a ``Metric`` without inventing a value for an empty one.
 
-Every suite aggregates through these two functions, and neither averages an
-empty sample: ``rate`` takes the state and reason an empty sample gets from
+Every rate a suite emits goes through these two functions (a count, such as
+the privacy suite's dropped-canary tally, is built directly), and neither
+averages an empty sample: ``rate`` takes the state and reason an empty sample gets from
 its caller, which knows why it is empty (no labels, nothing configured,
 nothing recorded), and records the sample size and the units set aside with
 the value. ``rag_crucible.eval.catalog`` documents each metric's eligibility

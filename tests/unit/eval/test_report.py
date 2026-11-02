@@ -710,7 +710,9 @@ def test_a_subset_score_is_never_read_as_a_full_set_score(tmp_path: Path) -> Non
     assert "Scored over part of the set:" in summary
     assert (
         "- mrr [rerank=off], recall@1 [rerank=off] — scored over 53 of 56; 3 excluded "
-        "(eligible: questions with a retrieval label (a gold passage or a gold fact))"
+        "(eligible: questions with a retrieval label (`gold_fact` or `gold_docs`); the rest "
+        "are named in `excluded_item` records). Not comparable with a run scored over a "
+        "different set."
     ) in summary
     assert describe_suite(partial) == "mrr=0.800 (53 of 56) · recall@1=0.700 (53 of 56)"
 
@@ -724,3 +726,83 @@ def test_a_fully_eligible_or_unrecorded_metric_adds_no_partial_note(tmp_path: Pa
     summary = render_summary(_result(tmp_path, full))
     assert "part of the set" not in summary
     assert describe_suite(full) == "mrr=0.800 · recall@1=0.700"
+
+
+def test_a_metric_that_was_not_measured_is_not_listed_as_a_subset_score(tmp_path: Path) -> None:
+    suite = _suite(
+        "retrieval",
+        Metric(
+            suite="retrieval",
+            name="mrr",
+            variant="rerank=off",
+            value=None,
+            state="unsupported",
+            reason="no labels",
+            n=0,
+            n_excluded=3,
+        ),
+    )
+    assert "part of the set" not in render_summary(_result(tmp_path, suite))
+
+
+def test_a_failed_privacy_suite_shows_its_error_not_its_tables(tmp_path: Path) -> None:
+    failed = SuiteResult(
+        suite="privacy", status="failed", error="ValueError: dropped all 9", metrics=(), records=()
+    )
+    summary = render_summary(_result(tmp_path, failed))
+    assert "**Failed:** ValueError: dropped all 9" in summary
+    assert "| condition |" not in summary and "Canary documents dropped" not in summary
+
+
+def test_a_skipped_suite_from_an_older_version_keeps_its_stored_reason(tmp_path: Path) -> None:
+    old = SuiteResult(
+        suite="retrieval",
+        status="skipped",
+        error="unsupported: retrieval labels missing for q001",
+        metrics=(),
+        records=(),
+    )
+    summary = render_summary(_result(tmp_path, old))
+    assert "Reason: unsupported: retrieval labels missing for q001" in summary
+    assert describe_suite(old) == "skipped · unsupported: retrieval labels missing for q001"
+
+
+def test_left_out_items_are_named_under_the_subset_note(tmp_path: Path) -> None:
+    from rag_crucible.eval.types import ExcludedItemRecord
+
+    suite = SuiteResult(
+        suite="retrieval",
+        metrics=(
+            Metric(
+                suite="retrieval", name="mrr", variant="rerank=off", value=0.8, n=2, n_excluded=12
+            ),
+        ),
+        records=tuple(
+            ExcludedItemRecord(unit="question", item_id=f"q{i:02d}", reason="no retrieval label")
+            for i in range(12)
+        ),
+    )
+    summary = render_summary(_result(tmp_path, suite))
+    assert "- Left out: q00 (no retrieval label); q01" in summary
+    assert "q09 (no retrieval label); and 2 more" in summary
+
+
+def test_a_plot_of_subset_scores_says_so_in_its_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from matplotlib.axes import Axes
+
+    titles: list[str] = []
+    original = Axes.set_title
+
+    def recording(self: Axes, label: str, *args: Any, **kwargs: Any) -> Any:
+        titles.append(label)
+        return original(self, label, *args, **kwargs)
+
+    monkeypatch.setattr(Axes, "set_title", recording)
+    partial = _suite(
+        "retrieval",
+        Metric(suite="retrieval", name="mrr", variant="rerank=off", value=0.8, n=53, n_excluded=3),
+    )
+    write_report(_result(tmp_path, partial), tmp_path / "out")
+    assert any("(scored over 53 of 56; see summary.md)" in t for t in titles), titles

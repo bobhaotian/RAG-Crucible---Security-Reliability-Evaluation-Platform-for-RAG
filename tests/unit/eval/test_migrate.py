@@ -200,13 +200,13 @@ def test_compromise_rate_is_unsupported_not_zeroed_for_unrecorded_trials() -> No
     assert success.value == 0.0, "success is still measurable"
     unscanned = compromise(unrecorded)
     assert unscanned.value is None and unscanned.state == "unsupported", "no 0.0 nobody measured"
-    assert (unscanned.n, unscanned.n_excluded) == (0, 2)
+    assert (unscanned.n, unscanned.n_excluded) == (None, None)  # not computed
 
     # Mixed: one trial recorded the scan, one did not -> still not measured,
     # because a partial denominator breaks the pair's stated relationship.
     mixed = [rec(qid="q1", compromised=True, matched_markers=()), rec(qid="q2")]
     assert compromise(mixed).state == "unsupported"
-    assert (compromise(mixed).n, compromise(mixed).n_excluded) == (1, 1)
+    assert "1 of 2 trials carry no marker scan" in (compromise(mixed).reason or "")
 
     # Fully recorded -> reported, on the same denominator as success.
     full = [
@@ -462,3 +462,14 @@ def test_committed_metrics_load_as_measured_with_their_values(path: Path) -> Non
     assert on_disk, f"{path} carries no metrics, so this check proves nothing"
     assert [(m.suite, m.name, m.variant, m.value) for m in loaded] == on_disk
     assert all(m.state == "measured" and m.reason is None for m in loaded)
+
+
+def test_a_schema_6_metric_migrates_with_its_counts_unrecorded_not_zero() -> None:
+    from rag_crucible.eval.migrate import migrate_raw
+
+    raw = {
+        "schema_version": 6,
+        "suites": [{"metrics": [{"name": "mrr", "value": 0.5, "state": "measured"}]}],
+    }
+    metric = migrate_raw(raw)["suites"][0]["metrics"][0]
+    assert metric["n"] is None and metric["n_excluded"] is None

@@ -18,7 +18,14 @@ from rag_crucible.config import (
     SuitesConfig,
     load_spec,
 )
-from rag_crucible.eval import Metric, faithfulness, run_eval, security
+from rag_crucible.eval import (
+    AttackRecord,
+    CleanDefenseRecord,
+    Metric,
+    faithfulness,
+    run_eval,
+    security,
+)
 from rag_crucible.eval.catalog import CATALOG, definition_for, render_markdown
 from rag_crucible.eval.retrieval import run_retrieval_suite
 from rag_crucible.index import FaissIndex
@@ -40,7 +47,9 @@ async def _emitted(tmp_path: Path) -> list[Metric]:
     index, _ = FaissIndex.load(tmp_path / "index")
     metrics = [m for s in (await run_eval(spec, index)).suites for m in s.metrics]
 
-    # No reranker: the rerank-on variant is inapplicable.
+    # A reranker configured with `enabled: false` is still built, so rerank-on
+    # is still measured; the inapplicable branch is reached below by a pipeline
+    # built without one.
     assert spec.suites is not None
     no_rerank = spec.model_copy(
         update={
@@ -66,6 +75,23 @@ async def _emitted(tmp_path: Path) -> list[Metric]:
     metrics += faithfulness._aggregate([])
     metrics += security._aggregate(
         [], SecuritySuiteConfig(poisoning=AttackKindConfig(enabled=False), defenses=("none",))
+    )
+    # Records an older version wrote (no marker scan, no abstention flag), a
+    # control with no gold answer, and a disjoint set the other attack exhausted.
+    old = AttackRecord(
+        attack_type="poison",
+        qid="q1",
+        question="?",
+        defense="none",
+        retrieved=True,
+        succeeded=False,
+        answer="",
+    )
+    clean = CleanDefenseRecord(
+        qid="c1", question="?", defense="none", abstained=False, answer_match=None, answer=""
+    )
+    metrics += security._aggregate(
+        [old], SecuritySuiteConfig(defenses=("none",), disjoint_targets=True), [clean]
     )
     return metrics
 

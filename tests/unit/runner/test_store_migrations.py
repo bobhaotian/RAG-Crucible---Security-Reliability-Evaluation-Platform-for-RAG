@@ -490,8 +490,13 @@ def test_an_upgrade_that_cannot_get_the_lock_says_to_retry(
 
 UNREADABLE_COUNTS = {
     "negative n": "(0.5, 'measured', NULL, -1, 0)",
+    "negative n, not measured": "(NULL, 'unsupported', 'why', -1, 0)",
     "negative n_excluded": "(0.5, 'measured', NULL, 3, -1)",
     "measured over no units": "(0.0, 'measured', NULL, 0, 3)",
+    "fractional n": "(0.5, 'measured', NULL, 2.5, 0)",
+    "text n": "(0.5, 'measured', NULL, 'abc', 0)",
+    "fractional n_excluded": "(0.5, 'measured', NULL, 3, 0.5)",
+    "text value": "('abc', 'measured', NULL, 3, 0)",
 }
 
 
