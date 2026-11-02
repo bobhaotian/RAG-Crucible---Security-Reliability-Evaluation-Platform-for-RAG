@@ -128,6 +128,21 @@ def _migrate_5_to_6(raw: dict[str, Any]) -> dict[str, Any]:
     return raw
 
 
+def _migrate_6_to_7(raw: dict[str, Any]) -> dict[str, Any]:
+    """Schema 6 → 7: every metric gains ``n`` and ``n_excluded``, unrecorded.
+
+    No older writer recorded a sample size or what it left out, and neither
+    can be recovered from the metric, so both read as ``None``: unavailable,
+    not zero. A count already present is kept.
+    """
+    for suite in raw.get("suites") or []:
+        for metric in suite.get("metrics") or []:
+            if isinstance(metric, dict):
+                metric.setdefault("n", None)
+                metric.setdefault("n_excluded", None)
+    return raw
+
+
 # version -> migration producing version+1. Every consecutive step from
 # _UNVERSIONED to RESULT_SCHEMA_VERSION must be present.
 _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
@@ -136,6 +151,7 @@ _MIGRATIONS: dict[int, Callable[[dict[str, Any]], dict[str, Any]]] = {
     3: _migrate_3_to_4,
     4: _migrate_4_to_5,
     5: _migrate_5_to_6,
+    6: _migrate_6_to_7,
 }
 
 

@@ -13,7 +13,7 @@ import pytest
 
 import rag_crucible.eval.privacy as privacy
 from rag_crucible.config import PrivacySuiteConfig, RunSpec, SuitesConfig, load_spec
-from rag_crucible.eval import EvalRunResult, PrivacyRecord, run_eval
+from rag_crucible.eval import EvalRunResult, ExcludedItemRecord, PrivacyRecord, run_eval
 from rag_crucible.eval.report import render_summary, write_report
 from rag_crucible.index import FaissIndex
 from rag_crucible.ingest import build_index
@@ -192,6 +192,8 @@ async def test_default_chain_privacy_numbers_match_the_committed_run(
     for metric in expected:
         assert result.metric("privacy", metric["name"], metric["variant"]) == metric["value"]
     assert result.metric("privacy", "canary_docs_dropped_by_filter") == 0.0
+    count = result.metric_entry("privacy", "canary_docs_dropped_by_filter")
+    assert count is not None and count.n == 9  # the canaries planted
     assert "defense-free" not in render_summary(result)
 
 
@@ -246,6 +248,16 @@ async def test_a_canary_duplicating_a_corpus_file_loses_to_it_whatever_its_path(
 
     assert result.metric("privacy", "canary_docs_dropped_by_filter") == 1.0
     assert "email-00" not in {record.canary_id for record in _records(result)}
+    # The drop is counted where it bites, and named with its filter and reason.
+    leakage = result.metric_entry("privacy", "leakage_rate", "defense=none")
+    assert leakage is not None and (leakage.n, leakage.n_excluded) == (10, 2)  # 5 x 2 probes
+    style = result.metric_entry("privacy", "leakage_rate@direct")
+    assert style is not None and (style.n, style.n_excluded) == (5, 1)
+    suite = next(s for s in result.suites if s.suite == "privacy")
+    named = [r for r in suite.records if isinstance(r, ExcludedItemRecord)]
+    assert [(r.unit, r.item_id, r.reason) for r in named] == [
+        ("canary", "email-00", "dropped by dedup (duplicate_content)")
+    ]
     sources = {chunk.source for chunk in indexed[0]}
     assert "handbook/returns.txt" in sources  # the corpus copy is the one indexed
     assert all(chunk.doc_id != copied[0] for chunk in indexed[0])

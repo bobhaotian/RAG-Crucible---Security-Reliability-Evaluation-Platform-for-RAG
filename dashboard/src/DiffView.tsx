@@ -7,7 +7,7 @@ import type { RunResults, RunRow } from "./api";
 import { getResults } from "./api";
 import { PanelBoundary } from "./Boundary";
 import type { Reading } from "./metrics";
-import { diffRows, formatReading } from "./metrics";
+import { diffCell, diffDelta, diffFootnote, diffRows } from "./metrics";
 
 export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | null }) {
   const [otherId, setOtherId] = useState<string | null>(null);
@@ -50,42 +50,46 @@ export function DiffView({ runs, baseId }: { runs: RunRow[]; baseId: string | nu
 }
 
 function DiffTable({ base, other }: { base: RunResults; other: RunResults }) {
-
+  const rows = diffRows(base, other);
+  const footnote = diffFootnote(rows);
   return (
-    <table className="diff">
-      <thead>
-        <tr>
-          <th>metric</th>
-          <th>{base.run.name}</th>
-          <th>{other.run.name}</th>
-          <th>Δ</th>
-        </tr>
-      </thead>
-      <tbody>
-        {diffRows(base, other).map(({ key, a, b, delta }) => {
-          // `delta` exists only when both runs measured the metric.
-          return (
-            <tr key={key}>
-              <td>{key}</td>
-              <Cell r={a} />
-              <Cell r={b} />
-              <td className={delta === undefined ? "" : delta >= 0 ? "pos" : "neg"}>
-                {delta === undefined ? "—" : (delta >= 0 ? "+" : "") + delta.toFixed(4)}
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <>
+      <table className="diff">
+        <thead>
+          <tr>
+            <th>metric</th>
+            <th>{base.run.name}</th>
+            <th>{other.run.name}</th>
+            <th>Δ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const d = diffDelta(row);
+            return (
+              <tr key={row.key}>
+                <td>{row.key}</td>
+                <Cell r={row.a} text={diffCell(row.a, row.count)} />
+                <Cell r={row.b} text={diffCell(row.b, row.count)} />
+                <td className={`${d.tone}${d.mark ? " ndiff" : ""}`.trim() || undefined} title={d.title}>
+                  {d.text}
+                  {d.mark && <i className="ndiff-mark"> {d.mark}</i>}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {footnote && <p className="hint">{footnote}</p>}
+    </>
   );
 }
 
-/** A measured value, `— (<state>)` with the reason on hover, or `—` when the
- *  run did not emit the metric. */
-function Cell({ r }: { r: Reading | undefined }) {
+/** A cell whose text `diffCell` decided; the reason on hover when not measured. */
+function Cell({ r, text }: { r: Reading | undefined; text: string }) {
   return (
     <td className={r && !r.measured ? "na" : undefined} title={r && !r.measured ? r.reason : undefined}>
-      {formatReading(r, 4)}
+      {text}
     </td>
   );
 }

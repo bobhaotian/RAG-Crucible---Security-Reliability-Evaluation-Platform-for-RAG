@@ -16,6 +16,12 @@ placeholder that says so and counts the states. It replaces whatever chart an
 earlier run left there, so the folder never holds a chart of numbers its
 summary says were not measured. A plot for a suite this run did not include is
 left untouched, as it always was: the report deletes nothing.
+
+A suite that failed is shown as failed, with its error, in place of its
+tables; a skipped one says so and lists its metrics' reasons. A measured
+metric computed over part of its scope (a partially labelled question set,
+say) is listed under "Scored over part of the set" with how many units it
+used and how many were not eligible, so it never reads as a full-set score.
 """
 
 from __future__ import annotations
@@ -25,7 +31,8 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any
 
-from rag_crucible.eval.types import EvalRunResult, Metric, SuiteResult
+from rag_crucible.eval.catalog import definition_for
+from rag_crucible.eval.types import EvalRunResult, ExcludedItemRecord, Metric, SuiteResult
 
 # A metric the run did not emit. Distinct from one it emitted without a value,
 # which carries its state, and from a measured zero, which is a number.
@@ -56,10 +63,15 @@ def describe_suite(suite: SuiteResult, limit: int = 4) -> str:
     rerank_on = any(m.variant == "rerank=on" and m.value is not None for m in suite.metrics)
     headline = ("", "rerank=on" if rerank_on else "rerank=off", "defense=none")
     explained: set[tuple[str, str]] = set()
-    parts: list[str] = []
+    parts: list[str] = ["skipped"] if suite.status == "skipped" else []
+    if suite.status == "skipped" and not suite.metrics and suite.error:
+        parts.append(_one_line(suite.error))  # written before metric states existed
     for m in [m for m in suite.metrics if m.variant in headline][:limit]:
         if m.value is not None:
-            parts.append(f"{m.name}={m.value:.3f}")
+            part = f"{m.name}={m.value:.3f}"
+            if m.n is not None and m.n_excluded:  # never read as a full-set score
+                part += f" ({m.n} of {m.n + m.n_excluded})"
+            parts.append(part)
             continue
         key = (m.state, _one_line(m.reason))
         detail = m.state if key in explained else f"{m.state}: {key[1]}"
@@ -106,6 +118,69 @@ def _not_measured(metrics: Iterable[Metric]) -> list[str]:
     return lines
 
 
+# How many excluded items summary.md names before summarising the rest.
+_NAMED_EXCLUSIONS = 10
+
+
+def _partial(suite: SuiteResult) -> list[str]:
+    """Measured metrics computed over part of their scope, one line per distinct
+    (n, n_excluded), so a subset score is never read as a full-set one; then
+    the excluded items the suite named, with why. Empty when nothing was
+    excluded, which leaves a report of a fully eligible run unchanged."""
+    grouped: dict[tuple[int, int], list[Metric]] = {}
+    for m in suite.metrics:
+        if m.value is not None and m.n is not None and m.n_excluded:
+            grouped.setdefault((m.n, m.n_excluded), []).append(m)
+    if not grouped:
+        return []
+    lines = ["Scored over part of the set:", ""]
+    for (n, excluded), metrics in grouped.items():
+        rules = list(
+            dict.fromkeys(
+                d.eligible for m in metrics if (d := definition_for(m.suite, m.name)) is not None
+            )
+        )
+        eligible = f" (eligible: {'; '.join(rules)})" if len(rules) == 1 else ""
+        labels = ", ".join(_label(m) for m in metrics)
+        lines.append(
+            f"- {labels} — scored over {n} of {n + excluded}; {excluded} excluded{eligible}. "
+            "Not comparable with a run scored over a different set."
+        )
+    named = [r for r in suite.records if isinstance(r, ExcludedItemRecord)]
+    if named:
+        shown = "; ".join(f"{r.item_id} ({_plain(r.reason)})" for r in named[:_NAMED_EXCLUSIONS])
+        more = (
+            f"; and {len(named) - _NAMED_EXCLUSIONS} more" if len(named) > _NAMED_EXCLUSIONS else ""
+        )
+        lines.append(f"- Left out: {shown}{more}")
+    lines.append("")
+    return lines
+
+
+_TITLES = {
+    "retrieval": "Retrieval",
+    "faithfulness": "Faithfulness",
+    "security": "Security",
+    "privacy": "Privacy",
+}
+
+
+def _suite_status(suite: SuiteResult) -> list[str]:
+    """A suite that did not run to completion, in place of its tables: failed
+    with its error, or skipped with its metrics' reasons."""
+    lines = [f"## {_TITLES.get(suite.suite, suite.suite)}", ""]
+    if suite.status == "failed":
+        lines += [f"**Failed:** {_plain(suite.error) or 'no error recorded'}", ""]
+        return lines
+    lines += ["_Skipped: nothing in this suite could be measured._", ""]
+    reasons = _not_measured(suite.metrics)
+    # A skipped suite written before metric states existed keeps its reason in
+    # `error` and has no metrics: show that rather than nothing.
+    if not reasons and suite.error:
+        reasons = [f"Reason: {_plain(suite.error)}", ""]
+    return lines + reasons
+
+
 def _lift(off: Metric | None, on: Metric | None) -> str:
     if off is None or on is None or off.value is None or on.value is None:
         return ABSENT  # a difference needs both sides measured
@@ -130,17 +205,18 @@ def render_summary(result: EvalRunResult) -> str:
         f"- started {result.started_at} · finished {result.finished_at}",
         "",
     ]
-    retrieval = _suite(result, "retrieval")
-    if retrieval is not None:
-        lines += _retrieval_table(retrieval)
-    faithfulness = _suite(result, "faithfulness")
-    if faithfulness is not None:
-        lines += _faithfulness_table(faithfulness)
-    security = _suite(result, "security")
-    if security is not None:
-        lines += _security_table(security)
+    for name, table in (
+        ("retrieval", _retrieval_table),
+        ("faithfulness", _faithfulness_table),
+        ("security", _security_table),
+    ):
+        suite = _suite(result, name)
+        if suite is not None:
+            lines += table(suite) if suite.status == "succeeded" else _suite_status(suite)
     privacy = _suite(result, "privacy")
-    if privacy is not None:
+    if privacy is not None and privacy.status != "succeeded":
+        lines += _suite_status(privacy)
+    elif privacy is not None:
         lines += _privacy_table(privacy, redacted_at_ingest=_canaries_redacted_at_ingest(result))
         lines += _privacy_ingest_notes(result, privacy)
     if result.stage_stats:
@@ -182,6 +258,7 @@ def _retrieval_table(suite: SuiteResult) -> list[str]:
         lines += [f"- {_label(m)}: {format_value(m)}" for m in other]
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite)
     return lines
 
 
@@ -201,6 +278,7 @@ def _faithfulness_table(suite: SuiteResult) -> list[str]:
     lines += [f"| {m.name} | {format_value(m)} |" for m in suite.metrics]
     lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite)
     return lines
 
 
@@ -235,6 +313,7 @@ def _security_table(suite: SuiteResult) -> list[str]:
             lines.append(f"| {name} | {cells} |")
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite)
     return lines
 
 
@@ -264,17 +343,21 @@ def _privacy_table(suite: SuiteResult, *, redacted_at_ingest: bool = False) -> l
         lines.append("")
     if by_probe:
         # Measured on the first condition, which `pii` in the chain has redacted too.
-        arm = (
-            "`none` arm, canaries redacted by `ingest.filters`"
-            if redacted_at_ingest
-            else "no redaction"
-        )
+        # The breakdown is over the first configured condition, whatever it is.
+        baseline = next(iter(by_defense), "none")
+        if redacted_at_ingest:
+            arm = f"`{baseline}` arm, canaries redacted by `ingest.filters`"
+        elif baseline == "none":
+            arm = "no redaction"
+        else:
+            arm = f"`{baseline}` arm"
         lines.append(
             f"Leakage by probe style ({arm}): "
             + " · ".join(f"{style} {format_value(m, 2)}" for style, m in by_probe.items())
         )
         lines.append("")
     lines += _not_measured(suite.metrics)
+    lines += _partial(suite)
     return lines
 
 
@@ -397,6 +480,22 @@ def _placeholder(
     plt.close(fig)
 
 
+def _subset_note(metrics: Iterable[Metric | None]) -> str:
+    """A plot title's mark that some bars are subset scores; empty otherwise, so a
+    fully eligible run's plots are unchanged."""
+    partial = {
+        (m.n, m.n_excluded)
+        for m in metrics
+        if m is not None and m.value is not None and m.n is not None and m.n_excluded
+    }
+    if not partial:
+        return ""
+    if len(partial) == 1:
+        n, excluded = next(iter(partial))
+        return f"\n(scored over {n} of {n + excluded}; see summary.md)"
+    return "\n(some bars scored over part of the set; see summary.md)"
+
+
 def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
     import matplotlib
 
@@ -412,7 +511,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
         off_bars = [off[n] for n in names]
         on_bars: list[Metric | None] = [on.get(n) for n in names] if on else []
         path = out_dir / "retrieval.png"
-        title = f"Retrieval quality — {result.name}"
+        title = f"Retrieval quality — {result.name}{_subset_note(retrieval.metrics)}"
         if _any_measured(off_bars + on_bars):
             _retrieval_plot(plt, path, title, names, off_bars, on_bars if on else None)
         else:
@@ -450,7 +549,10 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             ax.set_xticks(list(x), names, rotation=20, ha="right")
             ax.set_ylim(0, 1.05)
             ax.set_ylabel("attack success rate")
-            ax.set_title(f"Attack success by defense — {result.name}")
+            ax.set_title(
+                f"Attack success by defense — {result.name}"
+                f"{_subset_note([m for m in success.values() if m is not None])}"
+            )
             ax.legend()
             fig.tight_layout()
             fig.savefig(path, dpi=120)
@@ -496,7 +598,7 @@ def _write_plots(result: EvalRunResult, out_dir: Path) -> list[Path]:
             ax.set_xticks(list(x), conditions)
             ax.set_ylim(0, 1.05)
             ax.set_ylabel("rate")
-            ax.set_title(f"Canary leakage by condition — {result.name}")
+            ax.set_title(f"Canary leakage by condition — {result.name}{_subset_note(shown)}")
             ax.legend()
             fig.tight_layout()
             fig.savefig(path, dpi=120)

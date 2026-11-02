@@ -4,19 +4,44 @@
 // a null is never drawn as 0, never inverted to 1, and never feeds a delta.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import {
+  betterOf,
   breakdown,
+  canariesRedactedAtIngest,
+  codeSpans,
   contamination,
   defenseGroups,
+  diffCell,
+  diffDelta,
+  diffFootnote,
   diffRows,
+  evidenceCountLine,
+  excludedItemLine,
+  isExcludedItem,
+  selectEvidence,
+  formatMetric,
   formatReading,
+  groupSubsets,
   groupUnmeasured,
+  isCount,
   judgeGap,
+  judgeNote,
+  panelFootnotes,
+  privacyBaseline,
+  privacyContext,
+  probeStyleHeading,
   kpis,
   read,
   rerankLift,
+  subsetLine,
+  subsetShort,
+  subsetTag,
+  subsettedOf,
+  suiteNotices,
+  suitesLine,
   summaryMarkdown,
   tradeoffRadar,
   unmeasuredOf,
@@ -38,6 +63,19 @@ const nm = (suite, name, variant, state = "unsupported", reason = `why ${name}`)
   value: null,
   state,
   reason,
+});
+// A measured metric scored over `n` units with `excluded` left out.
+const sub = (suite, name, variant, value, n, excluded) => ({
+  ...m(suite, name, variant, value),
+  n,
+  n_excluded: excluded,
+});
+const suite = (name, status, error = null) => ({
+  suite: name,
+  status,
+  error,
+  metric_count: 0,
+  record_count: 0,
 });
 const run = (...metrics) => ({
   run: {
@@ -154,17 +192,30 @@ describe("trade-off radar", () => {
     );
   });
 
-  test("robustness is unknown when either attack rate was not measured", () => {
-    const { data } = tradeoffRadar(
+  test("robustness is unknown when an attack rate that counts was not measured", () => {
+    for (const state of ["error", "unsupported", "not_estimable"]) {
+      const { data } = tradeoffRadar(
+        run(...base.slice(0, 3), nm("security", "injection_compliance_rate", "defense=none", state)),
+      );
+      assert.equal(
+        data.find((d) => d.name === "Robustness"),
+        undefined,
+        state,
+      );
+    }
+  });
+
+  test("a skipped attack carries no weight: robustness is the other one, and says so", () => {
+    const { data, notes } = tradeoffRadar(
       run(
-        ...base.slice(0, 3),
-        nm("security", "injection_compliance_rate", "defense=none", "skipped"),
+        ...base.slice(0, 2),
+        m("security", "knowledge_corruption_rate", "defense=none", 1.0),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection disabled"),
       ),
     );
-    assert.equal(
-      data.find((d) => d.name === "Robustness"),
-      undefined,
-    );
+    assert.equal(data.find((d) => d.name === "Robustness").value, 0);
+    assert.deepEqual(notes, ["Robustness: poison only; injection skipped"]);
+    assert.deepEqual(tradeoffRadar(run(...base)).notes, []);
   });
 
   test("an inapplicable rerank-off nDCG gives way to a measured MRR", () => {
@@ -248,6 +299,43 @@ describe("KPI cards", () => {
     );
     assert.equal(card.reading.measured, false);
     assert.equal(card.reading.reason, "injection_compliance_rate: generator failed");
+  });
+
+  test("a skipped attack carries no weight, and the card names what it set aside", () => {
+    const [card] = kpis(
+      run(
+        m("security", "knowledge_corruption_rate", "defense=none", 1.0),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection disabled"),
+      ),
+    );
+    assert.deepEqual(card.reading, { measured: true, value: 1.0 });
+    assert.equal(card.detail, "poison only, no defense; injection skipped");
+    const both = kpis(
+      run(
+        m("security", "knowledge_corruption_rate", "defense=none", 0.3),
+        m("security", "injection_compliance_rate", "defense=none", 0.1),
+      ),
+    );
+    assert.equal(both[0].detail, "poison vs injection, no defense");
+  });
+
+  test("set-aside inputs of different states keep both in the reason", () => {
+    const worst = worstOf([
+      ["a", read(nm("s", "a", "", "skipped", "disabled"))],
+      ["b", read(nm("s", "b", "", "inapplicable", "no reranker"))],
+    ]);
+    assert.deepEqual(worst, {
+      measured: false,
+      state: "skipped",
+      reason: "a: skipped, disabled; b: inapplicable, no reranker",
+    });
+    const skippedOnly = kpis(
+      run(
+        nm("security", "knowledge_corruption_rate", "defense=none", "skipped", "poison off"),
+        nm("security", "injection_compliance_rate", "defense=none", "skipped", "injection off"),
+      ),
+    );
+    assert.equal(skippedOnly[0].reading.state, "skipped");
   });
 
   test("an inapplicable attack carries no weight in the worst case", () => {
@@ -490,5 +578,529 @@ describe("not-measured lists and the markdown summary", () => {
       ),
       undefined,
     );
+  });
+});
+
+describe("values scored over a subset", () => {
+  test("a reading carries its subset only when a measured value excluded something", () => {
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, 53, 3)), {
+      measured: true,
+      value: 0.9,
+      subset: { n: 53, excluded: 3 },
+    });
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, 56, 0)), { measured: true, value: 0.9 });
+    assert.deepEqual(read(sub("r", "mrr", "", 0.9, null, null)), { measured: true, value: 0.9 });
+    assert.deepEqual(read(m("r", "mrr", "", 0.9)), { measured: true, value: 0.9 }); // older server
+    const empty = read({ ...nm("r", "mrr", "", "unsupported", "no labels"), n: 0, n_excluded: 56 });
+    assert.equal(empty.measured, false);
+    assert.equal("subset" in empty, false);
+  });
+
+  test("an excluded count with no recorded denominator says so; nonsense counts are ignored", () => {
+    const r = read(sub("r", "mrr", "", 0.9, null, 3));
+    assert.deepEqual(r.subset, { n: undefined, excluded: 3 });
+    assert.equal(subsetShort(r.subset), "3 excluded");
+    assert.equal(subsetShort({ n: 53, excluded: 3 }), "53 of 56");
+    assert.equal("subset" in read(sub("r", "mrr", "", 0.9, 53, -1)), false);
+    assert.equal("subset" in read(sub("r", "mrr", "", 0.9, 53, 1.5)), false);
+  });
+
+  test("a panel's subset footnote is one line per distinct denominator", () => {
+    const groups = groupSubsets(
+      subsettedOf([
+        sub("retrieval", "recall@1", "rerank=off", 0.5, 53, 3),
+        sub("retrieval", "mrr", "rerank=off", 0.6, 53, 3),
+        sub("retrieval", "mrr", "rerank=on", 0.7, 50, 6),
+        m("retrieval", "ndcg@10", "rerank=off", 0.8),
+      ]),
+    );
+    assert.deepEqual(
+      groups.map((g) => [g.labels, subsetLine(g)]),
+      [
+        [["recall@1 [rerank=off]", "mrr [rerank=off]"], "scored over 53 of 56; 3 excluded"],
+        [["mrr [rerank=on]"], "scored over 50 of 56; 6 excluded"],
+      ],
+    );
+    assert.match(subsetLine({ n: undefined, excluded: 2 }), /not recorded/);
+    // Same number excluded, different denominators: still two lines.
+    const sameExcluded = groupSubsets(
+      subsettedOf([sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 40, 3)]),
+    );
+    assert.equal(sameExcluded.length, 2);
+  });
+
+  test("the KPI card says a subset figure is one, and the worst case keeps its input's subset", () => {
+    const cards = kpis(
+      run(
+        sub("retrieval", "ndcg@10", "rerank=on", 0.8, 53, 3),
+        sub("security", "knowledge_corruption_rate", "defense=none", 0.4, 8, 2),
+        m("security", "injection_compliance_rate", "defense=none", 0.1),
+        sub("privacy", "leakage_rate", "defense=none", 0.2, 20, 7),
+      ),
+    );
+    const detail = Object.fromEntries(cards.map((k) => [k.key, k.detail]));
+    assert.equal(detail.retrieval, "nDCG@10, rerank on · 53 of 56");
+    assert.equal(detail.security, "poison vs injection, no defense · 8 of 10");
+    assert.equal(detail.privacy, "none arm · 20 of 27");
+    const worst = worstOf([
+      ["a", read(m("s", "a", "", 0.1))],
+      ["b", read(sub("s", "b", "", 0.3, 9, 1))],
+    ]);
+    assert.deepEqual(worst, { measured: true, value: 0.3, subset: { n: 9, excluded: 1 } });
+  });
+
+  test("radar, rerank lift and defense bars carry the subset to their panels", () => {
+    const radar = tradeoffRadar(
+      run(
+        sub("retrieval", "ndcg@10", "rerank=on", 0.8, 53, 3),
+        m("faithfulness", "groundedness", "", 0.7),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.2),
+        m("privacy", "leakage_rate", "defense=none", 0.1),
+      ),
+    );
+    assert.deepEqual(
+      radar.subsets.map((x) => x.label),
+      ["Retrieval"],
+    );
+    // An inverted axis is still scored over its input's subset.
+    const inverted = tradeoffRadar(
+      run(
+        m("retrieval", "ndcg@10", "rerank=on", 0.8),
+        m("faithfulness", "groundedness", "", 0.7),
+        sub("security", "knowledge_corruption_rate", "defense=none", 0.2, 8, 2),
+        sub("privacy", "leakage_rate", "defense=none", 0.1, 20, 7),
+      ),
+    );
+    assert.deepEqual(
+      inverted.subsets.map((x) => [x.label, subsetShort(x.subset)]),
+      [
+        ["Robustness", "8 of 10"],
+        ["Privacy", "20 of 27"],
+      ],
+    );
+    const lift = rerankLift(
+      run(sub("retrieval", "mrr", "rerank=off", 0.5, 53, 3), sub("retrieval", "mrr", "rerank=on", 0.6, 53, 3)),
+    );
+    assert.equal(lift.subsets.length, 2);
+    const [group] = defenseGroups(
+      run(sub("security", "knowledge_corruption_rate", "defense=none", 0.4, 8, 2)),
+      "security",
+    );
+    assert.deepEqual(group.bars[0].reading.subset, { n: 8, excluded: 2 });
+  });
+
+  test("the copied summary marks a subset score", () => {
+    const md = summaryMarkdown(run(sub("retrieval", "mrr", "rerank=on", 0.94339, 53, 3)));
+    assert.match(md, /\| retrieval \| mrr \| rerank=on \| 0\.9434 \(53 of 56\) \|/);
+    const full = summaryMarkdown(run(sub("retrieval", "mrr", "rerank=on", 0.9, 56, 0)));
+    assert.match(full, /\| 0\.9000 \|/);
+  });
+});
+
+describe("compare view denominators", () => {
+  test("a delta over different denominators is flagged; unknown or equal ones are not", () => {
+    const rows = diffRows(
+      run(
+        sub("s", "a", "", 0.5, 53, 3),
+        sub("s", "b", "", 0.5, 56, 0),
+        m("s", "c", "", 0.5),
+      ),
+      run(
+        sub("s", "a", "", 0.6, 56, 0),
+        sub("s", "b", "", 0.6, 56, 0),
+        sub("s", "c", "", 0.6, 40, 0),
+      ),
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.unlike, r.n]),
+      [
+        ["s · a", "n", [53, 56]],
+        ["s · b", undefined, [56, 56]],
+        ["s · c", undefined, [undefined, 40]],
+      ],
+    );
+  });
+
+  test("a side that was not measured flags nothing, so no mark goes uncounted", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 56, 0)),
+      run({ ...nm("s", "a", "", "unsupported", "no labels"), n: 0, n_excluded: 56 }),
+    );
+    assert.equal(rows[0].unlike, undefined);
+    assert.equal(diffFootnote(rows), undefined);
+  });
+
+  test("the same number of units over a different set, or an unrecorded side, is flagged as a set", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 53, 3), m("s", "c", "", 0.5)),
+      run(sub("s", "a", "", 0.6, 53, 0), sub("s", "b", "", 0.6, 53, 3), sub("s", "c", "", 0.6, 50, 6)),
+    );
+    assert.deepEqual(
+      rows.map((r) => [r.key, r.unlike]),
+      [
+        ["s · a", "set"],
+        ["s · b", undefined], // the same (n, excluded) on both sides: nothing to say
+        ["s · c", "set"],
+      ],
+    );
+  });
+
+  test("the footnote counts exactly the marks drawn", () => {
+    const rows = diffRows(
+      run(sub("s", "a", "", 0.5, 53, 3), sub("s", "b", "", 0.5, 53, 3), sub("s", "c", "", 0.5, 56, 0)),
+      run(sub("s", "a", "", 0.6, 56, 0), sub("s", "b", "", 0.6, 53, 0), nm("s", "c", "", "error")),
+    );
+    const marks = rows.map((r) => diffDelta(r).mark).filter(Boolean);
+    assert.deepEqual(marks, ["≠n", "≠set"]);
+    assert.equal(
+      diffFootnote(rows),
+      "≠n marks 1 metric scored over a different number of units in each run; " +
+        "≠set marks 1 metric scored over different sets of units, so their deltas compare unlike samples.",
+    );
+  });
+
+  test("cells show subsets and counts; a count's delta is an integer with no tone", () => {
+    assert.equal(diffCell(read(sub("s", "a", "", 0.94339, 53, 3)), false), "0.9434 (53 of 56)");
+    assert.equal(diffCell(read(m("privacy", "canary_docs_dropped_by_filter", "", 2)), true), "2");
+    assert.equal(diffCell(undefined, false), "—");
+    assert.equal(diffCell(read(nm("s", "a", "", "error")), false), "— (error)");
+    const [row] = diffRows(
+      run(m("privacy", "canary_docs_dropped_by_filter", "", 0)),
+      run(m("privacy", "canary_docs_dropped_by_filter", "", 2)),
+    );
+    assert.deepEqual(diffDelta(row), { text: "+2", tone: "", mark: undefined, title: undefined });
+    const [rate] = diffRows(run(m("s", "a", "", 0.5)), run(m("s", "a", "", 0.25)));
+    assert.equal(diffDelta(rate).tone, "neg");
+    assert.equal(diffDelta(rate).text, "-0.2500");
+  });
+});
+
+describe("suite status", () => {
+  test("a failed suite is a notice with its error; a skipped one with its grouped reasons", () => {
+    const results = {
+      ...run(
+        ...["recall@1", "mrr"].flatMap((name) =>
+          ["rerank=off", "rerank=on"].map((v) => ({
+            ...nm("retrieval", name, v, "unsupported", "no question carries a retrieval label"),
+            n: 0,
+            n_excluded: 56,
+          })),
+        ),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.2),
+      ),
+      suites: [
+        suite("retrieval", "skipped"),
+        suite("faithfulness", "failed", "ValueError: judge returned nothing"),
+        suite("security", "succeeded"),
+        suite("privacy", "cancelled"),
+      ],
+    };
+    const notices = suiteNotices(results);
+    assert.deepEqual(
+      notices.map((n) => [n.suite, n.status, n.error, n.reasons.map((g) => [g.state, g.labels.length])]),
+      [
+        ["retrieval", "skipped", undefined, [["unsupported", 4]]],
+        ["faithfulness", "failed", "ValueError: judge returned nothing", []],
+      ],
+    );
+    // The skipped suite's reasons are on its metrics, so it needs no message;
+    // the failed one says why its panels are empty.
+    assert.equal(notices[0].message, undefined);
+    assert.equal(
+      notices[1].message,
+      "ValueError: judge returned nothing Its panels are empty because the suite produced no results.",
+    );
+    assert.equal(
+      suitesLine(results.suites),
+      "retrieval (skipped) · faithfulness (failed) · security · privacy (cancelled)",
+    );
+    const md = summaryMarkdown(results);
+    assert.match(md, /- retrieval: skipped\n/);
+    assert.match(md, /- faithfulness: failed \(ValueError: judge returned nothing\)/);
+  });
+
+  test("a failed suite with a blank error is still a notice, with no error text", () => {
+    const [notice] = suiteNotices({ ...run(), suites: [suite("faithfulness", "failed", "  ")] });
+    assert.equal(notice.error, undefined);
+    assert.match(notice.message, /^The run recorded no error message\./);
+  });
+
+  test("a skipped suite from an older version gives the reason it put in `error`", () => {
+    const old = "unsupported: retrieval labels missing for q001, q002, q003";
+    const [notice] = suiteNotices({ ...run(), suites: [suite("retrieval", "skipped", old)] });
+    assert.deepEqual(notice.reasons, []);
+    assert.equal(notice.message, old);
+    const [silent] = suiteNotices({ ...run(), suites: [suite("retrieval", "skipped")] });
+    assert.equal(silent.message, "No reason was recorded.");
+  });
+
+  test("a run whose suites all succeeded has no notices, and its header and summary are unchanged", () => {
+    const results = { ...run(m("s", "a", "", 0.5)), suites: [suite("security", "succeeded")] };
+    assert.deepEqual(suiteNotices(results), []);
+    assert.equal(suitesLine(results.suites), "security");
+    assert.doesNotMatch(summaryMarkdown(results), /- security:/);
+  });
+});
+
+describe("counts", () => {
+  const dropped = (value, variant = "") => m("privacy", "canary_docs_dropped_by_filter", variant, value);
+
+  test("a count is written as an integer, a rate with its digits", () => {
+    assert.equal(isCount("canary_docs_dropped_by_filter"), true);
+    assert.equal(formatMetric(dropped(2)), "2");
+    assert.equal(formatMetric(m("privacy", "leakage_rate", "defense=none", 0.25), 2), "0.25");
+    assert.equal(formatMetric(nm("privacy", "canary_docs_dropped_by_filter", "", "error")), "— (error)");
+    const md = summaryMarkdown(run(dropped(2)));
+    assert.match(md, /\| privacy \| canary_docs_dropped_by_filter \| — \| 2 \|/);
+  });
+
+  test("a count is never a bar, even with a defense variant or a probe-style name", () => {
+    const groups = defenseGroups(
+      run(dropped(3, "defense=none"), m("privacy", "leakage_rate", "defense=none", 0.2)),
+      "privacy",
+    );
+    assert.deepEqual(
+      groups.map((g) => g.metric),
+      ["leakage_rate"],
+    );
+    const rows = breakdown(
+      run(m("privacy", "canary_docs_dropped_by_filter@direct", "", 1)),
+      "privacy",
+      "canary_docs_dropped_by_filter",
+    );
+    assert.deepEqual(rows, []);
+    assert.equal(isCount("canary_docs_dropped_by_filter@direct"), true);
+    assert.equal(isCount("leakage_rate@direct"), false);
+  });
+
+  test("in the compare view a count's change is neither good nor bad", () => {
+    const [row] = diffRows(run(dropped(0)), run(dropped(2)));
+    assert.equal(row.count, true);
+    assert.equal(row.delta, 2);
+  });
+});
+
+describe("privacy labels name the arm, and the pii caveat is keyed on the run", () => {
+  test("the probe-style heading and the KPI no longer claim there was no redaction", () => {
+    assert.doesNotMatch(probeStyleHeading("none"), /no redaction/);
+    assert.equal(probeStyleHeading("none"), "leakage by probe style (none arm)");
+    const [card] = kpis(run(m("privacy", "leakage_rate", "defense=none", 0.2)));
+    assert.equal(card.detail, "none arm");
+  });
+
+  test("the caveat needs this code's drop count and `pii` in the spec's ingest filters", () => {
+    const withCount = run(m("privacy", "canary_docs_dropped_by_filter", "", 0));
+    const pii = { ingest: { filters: ["dedup", "pii"] } };
+    assert.equal(canariesRedactedAtIngest(withCount, pii), true);
+    assert.equal(canariesRedactedAtIngest(withCount, { ingest: { filters: ["dedup"] } }), false);
+    assert.equal(canariesRedactedAtIngest(withCount, null), false);
+    // An older run whose spec lists `pii` but whose canaries skipped the filters.
+    assert.equal(canariesRedactedAtIngest(run(m("privacy", "leakage_rate", "defense=none", 0.5)), pii), false);
+  });
+});
+
+describe("which way is better", () => {
+  // docs/metrics.md is generated from rag_crucible/eval/catalog.py, so this
+  // keeps the dashboard's colours in step with the catalog's `better` field.
+  const doc = readFileSync(new URL("../../docs/metrics.md", import.meta.url), "utf8");
+  const entries = [...doc.matchAll(/^### `([^`]+)`\n[\s\S]*?^- \*\*Kind:\*\* [^\n]*?(better is (higher|lower)|no better direction)/gm)].map(
+    (x) => [x[1], x[3] ?? "neither"],
+  );
+  const instance = (name) =>
+    name.replace("{k}", "10").replace("{family}", "heldout").replace("{style}", "direct");
+
+  test("every catalogued metric's direction matches the catalog", () => {
+    assert.ok(entries.length >= 26, `parsed only ${entries.length} entries`);
+    for (const [name, better] of entries) {
+      assert.equal(betterOf(instance(name)), better, name);
+    }
+  });
+
+  test("screening the attack out is good; an abstention or competition is neither", () => {
+    const groups = defenseGroups(
+      run(
+        m("security", "injection_screened_rate@seen", "defense=none", 0),
+        m("security", "injection_screened_rate@seen", "defense=injection_filter", 1),
+        m("security", "attack_abstention_rate", "defense=none", 0),
+        m("security", "attack_abstention_rate", "defense=answer_integrity", 0.5),
+        m("security", "knowledge_corruption_rate", "defense=none", 0.4),
+        m("security", "knowledge_corruption_rate", "defense=prompt_isolation", 0.6),
+      ),
+      "security",
+    );
+    const tone = (metric, defense) =>
+      groups.find((g) => g.metric === metric).bars.find((b) => b.defense === defense).tone;
+    assert.equal(tone("injection_screened_rate@seen", "injection_filter"), "good");
+    assert.equal(tone("attack_abstention_rate", "answer_integrity"), "neutral");
+    assert.equal(tone("knowledge_corruption_rate", "prompt_isolation"), "bad");
+  });
+});
+
+describe("display decisions the panels only render", () => {
+  test("a track's subset tag, or nothing for a full-set or unmeasured value", () => {
+    assert.equal(subsetTag(read(sub("s", "a", "", 0.5, 53, 3))), "53 of 56");
+    assert.equal(subsetTag(read(sub("s", "a", "", 0.5, 56, 0))), undefined);
+    assert.equal(subsetTag(read(nm("s", "a", "", "error"))), undefined);
+    assert.equal(subsetTag(undefined), undefined);
+  });
+
+  test("a panel's footnotes: subsets first, then what was not measured; none when there is nothing", () => {
+    const blocks = panelFootnotes(
+      unmeasuredOf([nm("retrieval", "mrr", "rerank=on", "inapplicable", "no reranker")]),
+      subsettedOf([sub("retrieval", "mrr", "rerank=off", 0.5, 53, 3)]),
+    );
+    assert.deepEqual(
+      blocks.map((b) => [b.kind, b.heading, b.lines.map((l) => [l.labels, l.state, l.text])]),
+      [
+        ["subset", "Scored over a subset", [[["mrr [rerank=off]"], undefined, "— scored over 53 of 56; 3 excluded"]]],
+        ["not-measured", "Not measured", [[["mrr [rerank=on]"], "inapplicable", "no reranker"]]],
+      ],
+    );
+    assert.deepEqual(panelFootnotes([], []), []);
+  });
+
+  test("code spans split on backticks", () => {
+    assert.deepEqual(codeSpans("a `b` c"), [
+      { code: false, text: "a " },
+      { code: true, text: "b" },
+      { code: false, text: " c" },
+    ]);
+  });
+});
+
+describe("rerank lift with no reranker", () => {
+  test("every rerank-on figure inapplicable or skipped means there is no rerank-on figure", () => {
+    const allOut = rerankLift(
+      run(
+        m("retrieval", "mrr", "rerank=off", 0.5),
+        nm("retrieval", "mrr", "rerank=on", "inapplicable", "no reranker configured"),
+        m("retrieval", "recall@1", "rerank=off", 0.4),
+        nm("retrieval", "recall@1", "rerank=on", "skipped", "rerank lift off"),
+      ),
+    );
+    assert.equal(allOut.hasOn, false);
+    const oneCounts = rerankLift(
+      run(
+        m("retrieval", "mrr", "rerank=off", 0.5),
+        nm("retrieval", "mrr", "rerank=on", "error", "reranker crashed"),
+      ),
+    );
+    assert.equal(oneCounts.hasOn, true); // an error is a figure that should have been there
+  });
+});
+
+describe("the judge-gap callout", () => {
+  const acc = (value, n, x) => sub("faithfulness", "answer_accuracy", "", value, n, x);
+  const gr = (value, n, x) => sub("faithfulness", "groundedness", "", value, n, x);
+
+  test("a gap over the same answers, far apart, is the bottleneck callout", () => {
+    const note = judgeNote(run(acc(0.9, 56, 0), gr(0.37, 56, 0)));
+    assert.equal(note.kind, "bottleneck");
+    assert.equal(note.lead, "The judge is the bottleneck.");
+    assert.match(note.text, /^90% of answers contain the gold answer string, .* only 37% as grounded — a 0\.53 gap\./);
+    assert.equal(judgeNote(run(acc(0.5, 56, 0), gr(0.45, 56, 0))), undefined); // close: nothing
+    // An older run records no denominators; nothing says they differ.
+    assert.equal(judgeNote(run(m("faithfulness", "answer_accuracy", "", 0.9), m("faithfulness", "groundedness", "", 0.3))).kind, "bottleneck");
+  });
+
+  test("rates over different answers are both stated, with their denominators, and not subtracted", () => {
+    const subset = judgeNote(run(acc(0.9, 50, 6), gr(0.37, 56, 0)));
+    assert.equal(subset.kind, "unlike");
+    assert.equal(
+      subset.text,
+      "`answer_accuracy` 0.90 (50 of 56) and `groundedness` 0.37 (56 of 56) count different answers, " +
+        "so no gap between them is computed.",
+    );
+    assert.equal(judgeGap(run(acc(0.9, 50, 6), gr(0.37, 56, 0))), undefined);
+    assert.equal(judgeNote(run(acc(0.9, 40, 0), gr(0.37, 56, 0))).kind, "unlike"); // different n
+  });
+
+  test("nothing is said when either figure was not measured", () => {
+    assert.equal(judgeNote(run(acc(0.9, 56, 0), nm("faithfulness", "groundedness", ""))), undefined);
+  });
+});
+
+describe("the privacy panel's context", () => {
+  const spec = (filters, defenses) => ({ ingest: { filters }, suites: { privacy: { defenses } } });
+
+  test("the baseline arm is the spec's first privacy condition, or none", () => {
+    assert.equal(privacyBaseline(spec(["dedup"], ["pii_filter", "none"])), "pii_filter");
+    assert.equal(privacyBaseline(null), "none");
+    assert.equal(privacyBaseline({ suites: { privacy: { defenses: [] } } }), "none");
+    assert.equal(privacyContext(run(), spec(["dedup"], ["pii_filter", "none"])).heading, "leakage by probe style (pii_filter arm)");
+    assert.equal(privacyContext(run(), null).heading, "leakage by probe style (none arm)");
+  });
+
+  test("the pii caveat and the count lines", () => {
+    const results = run(m("privacy", "canary_docs_dropped_by_filter", "", 2));
+    const withPii = privacyContext(results, spec(["dedup", "pii"], ["none", "pii_filter"]));
+    assert.equal(
+      withPii.caveat,
+      "`pii` is in this run's ingest filters, so the canaries were redacted at ingestion in every arm: " +
+        "`none` is not defense-free here, and `pii_filter` finds nothing left to redact.",
+    );
+    assert.deepEqual(withPii.counts, [
+      "`canary_docs_dropped_by_filter` 2 — Canary documents the ingest filters removed before indexing; " +
+        "not probed, and outside every rate.",
+    ]);
+    assert.equal(privacyContext(results, spec(["dedup"], ["none"])).caveat, undefined);
+    assert.deepEqual(privacyContext(run(m("privacy", "leakage_rate", "defense=none", 0.2)), null).counts, []);
+  });
+});
+
+describe("evidence and excluded items", () => {
+  const rec = (id, payload) => ({ ...payload, _id: id });
+  const trial = (id, extra = {}) =>
+    rec(id, { kind: "canary_probe", canary_id: `c${id}`, probe_style: "direct", defense: "none", retrieved: true, leaked: false, answer: "x", ...extra });
+  const excluded = (id, item, reason, unit = "canary") =>
+    rec(id, { kind: "excluded_item", unit, item_id: item, reason });
+
+  test("an excluded item reads as such", () => {
+    assert.equal(
+      excludedItemLine(excluded(1, "q001", "no retrieval label", "question")),
+      "Excluded — q001: no retrieval label",
+    );
+    assert.equal(excludedItemLine(rec(2, { kind: "excluded_item" })), "Excluded — (unnamed): no reason recorded");
+    assert.equal(isExcludedItem(trial(3)), false);
+  });
+
+  test("excluded items are never trials, whatever the drill filters on", () => {
+    const records = [
+      trial(1),
+      trial(2, { leaked: true }),
+      excluded(3, "email-00", "dropped by dedup (duplicate_content)"),
+    ];
+    const all = selectEvidence(records, undefined, "");
+    assert.deepEqual(all.trials.map((r) => r._id), [2, 1]); // the leak sorts first
+    assert.deepEqual(all.excluded.map((r) => r._id), [3]);
+    assert.equal(evidenceCountLine(all), "2 shown · 1 excluded");
+    // A filter that assumes a scored trial: the excluded item is not one of them.
+    const byStyle = selectEvidence(records, { probe_style: "direct", defense: "none" }, "");
+    assert.deepEqual(byStyle.trials.map((r) => r._id), [2, 1]);
+    assert.deepEqual(byStyle.excluded.map((r) => r._id), [3]);
+    const byKind = selectEvidence(records, { kind: "excluded_item" }, "");
+    assert.deepEqual(byKind.trials, []);
+  });
+
+  test("the text filter applies to excluded items too, and counts stay honest", () => {
+    const records = [trial(1), excluded(2, "email-00", "dropped by dedup"), excluded(3, "phone-02", "dropped by language")];
+    const view = selectEvidence(records, undefined, "dedup");
+    assert.deepEqual(view.trials, []);
+    assert.deepEqual(view.excluded.map((r) => r._id), [2]);
+    assert.equal(evidenceCountLine(view), "0 shown · 1 excluded");
+    assert.equal(evidenceCountLine(selectEvidence([trial(1)], undefined, "")), "1 shown");
+  });
+
+  test("metric drills still resolve to the records the metric was computed over", () => {
+    const attacks = [
+      rec(1, { kind: "attack", attack_type: "poison", qid: "q1", succeeded: true, own_marker: "P1", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      rec(2, { kind: "attack", attack_type: "injection", qid: "q1", succeeded: false, own_marker: "I1", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      rec(3, { kind: "attack", attack_type: "injection", qid: "q2", succeeded: false, own_marker: "I2", matched_markers: [{ marker: "P1", attack_type: "poison", qid: "q1" }] }),
+      excluded(4, "q9", "no retrieval label", "question"),
+    ];
+    const ids = (filter) => selectEvidence(attacks, filter, "").trials.map((r) => r._id).sort();
+    assert.deepEqual(ids({ metric: "knowledge_corruption_rate" }), [1]);
+    assert.deepEqual(ids({ metric: "attack_competition_rate" }), [2]);
+    assert.deepEqual(ids({ metric: "cross_question_contamination_rate" }), [3]);
   });
 });

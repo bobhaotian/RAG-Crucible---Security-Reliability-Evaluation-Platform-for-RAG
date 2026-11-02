@@ -9,7 +9,7 @@ from rag_crucible.attacks import (
 )
 from rag_crucible.config import DefenseName, SecuritySuiteConfig
 from rag_crucible.eval.security import _aggregate, _defenses_for, _markers_present
-from rag_crucible.eval.types import AttackRecord, CleanScreenRecord, MarkerRef
+from rag_crucible.eval.types import AttackRecord, CleanDefenseRecord, CleanScreenRecord, MarkerRef
 from rag_crucible.qa import QAItem
 
 
@@ -173,11 +173,15 @@ def test_a_marker_from_another_question_is_contamination_not_competition() -> No
         ),
         _attack(qid="q2", succeeded=False, own_marker="900001", answer="14 hours"),
     ]
-    metrics = {(m.name, m.variant): m.value for m in _aggregate(records, config)}
+    by_key = {(m.name, m.variant): m for m in _aggregate(records, config)}
+    metrics = {key: m.value for key, m in by_key.items()}
 
     assert metrics[("poison_compromise_rate", "defense=none")] == 0.5
-    assert metrics[("attack_competition_rate", "defense=none")] == 0.0
     assert metrics[("cross_question_contamination_rate", "defense=none")] == 0.5
+    # No question carries both attacks here, so competition cannot happen: not
+    # a measured 0.0 but inapplicable.
+    competition = by_key[("attack_competition_rate", "defense=none")]
+    assert competition.value is None and competition.state == "inapplicable"
 
 
 def _qa(n: int) -> list[QAItem]:
@@ -264,13 +268,15 @@ def test_clean_screen_rate_reports_false_positive_cost_per_defense() -> None:
     ]
 
     attacks = [_attack(defense=defense) for defense in config.defenses]
-    metrics = {
-        (metric.name, metric.variant): metric.value
+    by_key = {
+        (metric.name, metric.variant): metric
         for metric in _aggregate(attacks, config, clean_screen_records=screened)
     }
 
-    assert metrics[("defense_clean_screen_rate", "defense=none")] == 0.0
-    assert metrics[("defense_clean_screen_rate", "defense=injection_filter")] == 0.5
+    # `none` has no chunk screen: its 0.0 was by construction, so inapplicable.
+    baseline = by_key[("defense_clean_screen_rate", "defense=none")]
+    assert baseline.value is None and baseline.state == "inapplicable"
+    assert by_key[("defense_clean_screen_rate", "defense=injection_filter")].value == 0.5
 
 
 def test_screened_rate_measures_the_defense_where_compliance_cannot() -> None:
@@ -301,3 +307,61 @@ def test_screened_rate_measures_the_defense_where_compliance_cannot() -> None:
     # compliance is blind to the difference
     assert metrics[("injection_compliance_rate@seen", "defense=injection_filter")] == 0.0
     assert metrics[("injection_compliance_rate@heldout", "defense=injection_filter")] == 0.0
+
+
+def test_diagnostics_count_unrecorded_trials_and_say_when_none_recorded() -> None:
+    """Fields an older version did not record are left out of the denominator
+    and counted; with none recorded the diagnostic is unsupported, not 0.0."""
+    config = SecuritySuiteConfig(defenses=("none",))
+    recorded = _attack(qid="q1", abstained=False, compromised=False, matched_markers=())
+    unrecorded = _attack(qid="q2", abstained=None)
+    by_key = {(m.name, m.variant): m for m in _aggregate([recorded, unrecorded], config)}
+    abstention = by_key[("attack_abstention_rate", "defense=none")]
+    assert (abstention.value, abstention.n, abstention.n_excluded) == (0.0, 1, 1)
+
+    none_recorded = {(m.name, m.variant): m for m in _aggregate([unrecorded], config)}[
+        ("attack_abstention_rate", "defense=none")
+    ]
+    assert none_recorded.value is None and none_recorded.state == "unsupported"
+    assert (none_recorded.n, none_recorded.n_excluded) == (0, 1)
+
+
+def test_clean_accuracy_counts_control_questions_without_a_gold_answer() -> None:
+    config = SecuritySuiteConfig(defenses=("none",))
+    clean = [
+        CleanDefenseRecord(
+            qid="c1", question="?", defense="none", abstained=False, answer_match=True, answer="a"
+        ),
+        CleanDefenseRecord(
+            qid="c2", question="?", defense="none", abstained=False, answer_match=None, answer="a"
+        ),
+    ]
+    by_key = {(m.name, m.variant): m for m in _aggregate([_attack()], config, clean)}
+    accuracy = by_key[("clean_answer_accuracy", "defense=none")]
+    assert (accuracy.value, accuracy.n, accuracy.n_excluded) == (1.0, 1, 1)
+
+    ungraded = {(m.name, m.variant): m for m in _aggregate([_attack()], config, clean[1:])}[
+        ("clean_answer_accuracy", "defense=none")
+    ]
+    assert ungraded.value is None and ungraded.state == "unsupported"
+
+
+def test_retrieval_rates_leave_out_every_arm_that_removes_chunks() -> None:
+    """answer_integrity drops chunks before the prompt, as injection_filter does,
+    so a chunk it removed must not read as one the retriever missed."""
+    config = SecuritySuiteConfig(defenses=("none", "injection_filter", "answer_integrity"))
+    records = [
+        _attack(defense="none", retrieved=True),
+        _attack(defense="injection_filter", retrieved=False),
+        _attack(defense="answer_integrity", retrieved=False),
+    ]
+    rate = next(m for m in _aggregate(records, config) if m.name == "poison_retrieval_rate")
+    assert (rate.value, rate.n) == (1.0, 1)
+
+
+def test_a_disjoint_question_set_leaves_injection_unsupported_with_its_reason() -> None:
+    config = SecuritySuiteConfig(defenses=("none",), disjoint_targets=True)
+    by_key = {(m.name, m.variant): m for m in _aggregate([_attack()], config)}
+    compliance = by_key[("injection_compliance_rate", "defense=none")]
+    assert compliance.state == "unsupported"
+    assert compliance.reason is not None and "disjoint_targets" in compliance.reason

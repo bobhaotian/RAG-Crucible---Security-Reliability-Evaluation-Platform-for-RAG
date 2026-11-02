@@ -18,23 +18,29 @@ import {
 } from "recharts";
 import type { Metric, RunResults } from "./api";
 import type { Drill } from "./Evidence";
-import type { DefenseGroup, Reading, Unmeasured } from "./metrics";
+import type { DefenseGroup, Reading, Subsetted, Unmeasured } from "./metrics";
 import {
   COMPROMISE_METRICS,
   COST_METRICS,
   METRIC_GLOSS,
   breakdown,
+  codeSpans,
   understatements,
   contamination,
   contextMetrics,
   defenseGroups,
   faithfulness,
+  formatMetric,
   formatReading,
-  groupUnmeasured,
-  judgeGap,
+  isCount,
+  judgeNote,
   latency,
-  read,
+  panelFootnotes,
+  privacyContext,
   rerankLift,
+  subsetTag,
+  subsetted,
+  subsettedOf,
   tradeoffRadar,
   unmeasured,
   unmeasuredOf,
@@ -45,6 +51,8 @@ const ACCENT = "#6c5ce7";
 export interface PanelProps {
   results: RunResults;
   onDrill?: (drill: Drill) => void;
+  /** The spec the run executed from, when the API serves it. */
+  spec?: Record<string, unknown> | null;
 }
 
 function Panel({
@@ -52,12 +60,14 @@ function Panel({
   drill,
   onDrill,
   notMeasured = [],
+  subsets = [],
   children,
 }: {
   title: string;
   drill?: Drill;
   onDrill?: (drill: Drill) => void;
   notMeasured?: Unmeasured[];
+  subsets?: Subsetted[];
   children: ReactNode;
 }) {
   return (
@@ -71,33 +81,45 @@ function Panel({
         )}
       </div>
       {children}
-      <NotMeasuredList items={notMeasured} />
+      {panelFootnotes(notMeasured, subsets).map((block) => (
+        <div className={block.kind === "subset" ? "subset-note" : "not-measured"} key={block.kind}>
+          <h4>{block.heading}</h4>
+          <ul>
+            {block.lines.map((line) => (
+              <li key={line.key}>
+                {line.labels.map((label, i) => (
+                  <span key={label}>
+                    {i > 0 && ", "}
+                    <code>{label}</code>
+                  </span>
+                ))}{" "}
+                {line.state && <span className={`state ${line.state}`}>{line.state}</span>} {line.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </section>
   );
 }
 
-/** Why each metric in a panel has no number — the panel's equivalent of the
- *  report's "Not measured" list, one line per distinct state and reason.
- *  Renders nothing when everything was measured. */
-function NotMeasuredList({ items }: { items: Unmeasured[] }) {
-  if (items.length === 0) return null;
+/** Text whose `code` spans `codeSpans` split out. */
+function Inline({ text }: { text: string }) {
   return (
-    <div className="not-measured">
-      <h4>Not measured</h4>
-      <ul>
-        {groupUnmeasured(items).map((g) => (
-          <li key={`${g.state}|${g.reason}`}>
-            {g.labels.map((label, i) => (
-              <span key={label}>
-                {i > 0 && ", "}
-                <code>{label}</code>
-              </span>
-            ))}{" "}
-            <span className={`state ${g.state}`}>{g.state}</span> {g.reason}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      {codeSpans(text).map((piece, i) => (piece.code ? <code key={i}>{piece.text}</code> : piece.text))}
+    </>
+  );
+}
+
+/** "53 of 56" at the end of a bar's track, for a value scored over a subset. */
+function SubsetTag({ reading, className = "bar-subset" }: { reading: Reading | undefined; className?: string }) {
+  const tag = subsetTag(reading);
+  if (tag === undefined) return null;
+  return (
+    <span className={className} title={`scored over ${tag}`}>
+      {tag}
+    </span>
   );
 }
 
@@ -131,7 +153,7 @@ function signed(v: number, digits = 3): string {
 // ------------------------------------------------------------------ trade-off
 
 export function TradeoffRadar({ results, onDrill }: PanelProps) {
-  const { data, unmeasured: missing } = tradeoffRadar(results);
+  const { data, unmeasured: missing, subsets, notes } = tradeoffRadar(results);
   if (data.length < 3 && missing.length === 0) return null;
   const values = (
     <ul className="axis-values">
@@ -151,12 +173,18 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
         drill={{ suite: "security", label: "attacks behind the robustness axis" }}
         onDrill={onDrill}
         notMeasured={missing}
+        subsets={subsets}
       >
         <p className="hint">
           Only {data.length} of the four axes {data.length === 1 ? "was" : "were"} measured,
           too few to draw the trade-off. An axis that was not measured is never drawn at 0.
         </p>
         {data.length > 0 && values}
+        {notes.map((n) => (
+          <p className="hint" key={n}>
+            {n}.
+          </p>
+        ))}
       </Panel>
     );
   }
@@ -166,6 +194,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
       drill={{ suite: "security", label: "attacks behind the robustness axis" }}
       onDrill={onDrill}
       notMeasured={missing}
+      subsets={subsets}
     >
       <ResponsiveContainer width="100%" height={230}>
         <RadarChart data={data} outerRadius="68%" margin={{ top: 16, right: 56, bottom: 8, left: 56 }}>
@@ -181,6 +210,11 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
         (1 − attack success, 1 − leakage); the cards above show them undirected.
         {missing.length > 0 && " An axis that was not measured is left off, not drawn at 0."}
       </p>
+      {notes.map((n) => (
+        <p className="hint" key={n}>
+          {n}.
+        </p>
+      ))}
     </Panel>
   );
 }
@@ -188,7 +222,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
 // ---------------------------------------------------------------- rerank lift
 
 export function RerankLift({ results, onDrill }: PanelProps) {
-  const { rows, axis, hasOn, unmeasured: missing } = rerankLift(results);
+  const { rows, axis, hasOn, unmeasured: missing, subsets } = rerankLift(results);
   if (rows.length === 0) return null;
   if (axis === undefined) {
     // Nothing to place on an axis: no empty 0.000–1.000 track, just the reasons.
@@ -198,6 +232,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
         drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
         onDrill={onDrill}
         notMeasured={missing}
+        subsets={subsets}
       >
         <p className="hint">No retrieval metric in this run was measured, so there is nothing to plot.</p>
       </Panel>
@@ -229,6 +264,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
           )}
           {a !== undefined && <span className="db-dot off" style={{ left: `${a}%` }} />}
           {b !== undefined && <span className="db-dot on" style={{ left: `${b}%` }} />}
+          <SubsetTag reading={r.on?.measured && r.on.subset ? r.on : r.off} className="db-subset" />
         </span>
         {missingSide && !missingSide.measured ? (
           <span className="db-delta na" title={missingSide.reason}>
@@ -257,6 +293,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
       drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
       onDrill={onDrill}
       notMeasured={missing}
+      subsets={subsets}
     >
       <ul className="dumbbell">
         {shown.map(row)}
@@ -302,13 +339,14 @@ export function RerankLift({ results, onDrill }: PanelProps) {
 export function Faithfulness({ results, onDrill }: PanelProps) {
   const rows = faithfulness(results);
   if (rows.length === 0) return null;
-  const judge = judgeGap(results);
+  const judge = judgeNote(results);
   return (
     <Panel
       title="Answer faithfulness"
       drill={{ suite: "faithfulness", label: "judged answers" }}
       onDrill={onDrill}
       notMeasured={rows.flatMap((r) => unmeasured(r.name, r.reading))}
+      subsets={rows.flatMap((r) => subsetted(r.name, r.reading))}
     >
       <ul className="bars">
         {rows.map((r) => (
@@ -326,18 +364,15 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
               ) : (
                 <StateInTrack reading={r.reading} />
               )}
+              <SubsetTag reading={r.reading} />
             </span>
             <span className="bar-value">{barValue(r.reading, 3)}</span>
           </li>
         ))}
       </ul>
-      {judge !== undefined && judge.gap > 0.2 && (
+      {judge && (
         <p className="callout">
-          <b>The judge is the bottleneck.</b> {(judge.accuracy * 100).toFixed(0)}% of answers
-          contain the gold answer string, but the configured judge scores only{" "}
-          {(judge.grounded * 100).toFixed(0)}% as grounded — a {judge.gap.toFixed(2)} gap.
-          Judge quality is a config choice (<code>suites.faithfulness.judge</code>), not a
-          property of the pipeline under test.
+          <b>{judge.lead}</b> <Inline text={judge.text} />
         </p>
       )}
     </Panel>
@@ -361,6 +396,7 @@ function DefenseBars({
   context = [],
   footer,
   extraUnmeasured = [],
+  extraSubsets = [],
 }: {
   groups: DefenseGroup[];
   suite: string;
@@ -371,6 +407,7 @@ function DefenseBars({
   context?: Metric[];
   footer?: ReactNode;
   extraUnmeasured?: Unmeasured[];
+  extraSubsets?: Subsetted[];
 }) {
   if (groups.length === 0) return null;
   const missing = [
@@ -380,9 +417,16 @@ function DefenseBars({
     ...unmeasuredOf(context),
     ...extraUnmeasured,
   ];
+  const subsets = [
+    ...groups.flatMap((g) =>
+      g.bars.flatMap((b) => subsetted(`${g.metric} [defense=${b.defense}]`, b.reading)),
+    ),
+    ...subsettedOf(context),
+    ...extraSubsets,
+  ];
 
   return (
-    <Panel title={title} drill={drill} onDrill={onDrill} notMeasured={missing}>
+    <Panel title={title} drill={drill} onDrill={onDrill} notMeasured={missing} subsets={subsets}>
       {lead && <p className="lead">{lead}</p>}
       {groups.map((g) => (
         <div className="defense-group" key={g.metric}>
@@ -421,6 +465,7 @@ function DefenseBars({
                   ) : (
                     <StateInTrack reading={b.reading} />
                   )}
+                  <SubsetTag reading={b.reading} />
                 </span>
                 <span className="bar-value">{barValue(b.reading, 2)}</span>
                 <span className={`bar-delta ${b.tone}`}>
@@ -433,7 +478,7 @@ function DefenseBars({
       ))}
       {context.length > 0 && (
         <p className="hint">
-          {context.map((m) => `${m.name} ${formatReading(read(m), 2)}`).join(" · ")}
+          {context.map((m) => `${m.name} ${formatMetric(m, 2)}`).join(" · ")}
         </p>
       )}
       {footer}
@@ -489,13 +534,18 @@ export function AttackSuccess({ results, onDrill }: PanelProps) {
   );
 }
 
-export function PrivacyLeakage({ results, onDrill }: PanelProps) {
+export function PrivacyLeakage({ results, onDrill, spec = null }: PanelProps) {
   const styles = breakdown(results, "privacy", "leakage_rate");
+  // Counts (canaries the ingest filters dropped) are context, written as
+  // integers with their gloss; they are never a bar.
+  const counts = contextMetrics(results, "privacy").filter((m) => isCount(m.name));
+  const ctx = privacyContext(results, spec);
   return (
     <DefenseBars
       groups={defenseGroups(results, "privacy")}
       onDrill={onDrill}
-      extraUnmeasured={unmeasuredOf(styles.map((s) => s.metric))}
+      extraUnmeasured={[...unmeasuredOf(styles.map((s) => s.metric)), ...unmeasuredOf(counts)]}
+      extraSubsets={subsettedOf(styles.map((s) => s.metric))}
       suite="privacy"
       title="Canary leakage by defense"
       lead={
@@ -503,13 +553,25 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
           Synthetic secrets are seeded into the corpus, then probed for directly and
           indirectly. <code>retrieval_exposure_rate</code> is whether the secret reached the
           prompt at all; <code>leakage_rate</code> is whether it reached the answer.
+          {ctx.caveat && (
+            <>
+              {" "}
+              <Inline text={ctx.caveat} />
+            </>
+          )}
         </>
       }
       drill={{ suite: "privacy", label: "all canary probes" }}
       footer={
-        styles.length > 0 ? (
+        <>
+          {ctx.counts.map((line) => (
+            <p className="hint count" key={line}>
+              <Inline text={line} />
+            </p>
+          ))}
+          {styles.length > 0 && (
           <div className="defense-group">
-            <h4>leakage by probe style (no redaction)</h4>
+            <h4>{ctx.heading}</h4>
             <ul className="bars">
               {styles.map((s) => (
                 <li
@@ -538,6 +600,7 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
                     ) : (
                       <StateInTrack reading={s.reading} />
                     )}
+                    <SubsetTag reading={s.reading} />
                   </span>
                   <span className="bar-value">{barValue(s.reading, 2)}</span>
                   <span className="bar-delta" />
@@ -545,7 +608,8 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
               ))}
             </ul>
           </div>
-        ) : undefined
+          )}
+        </>
       }
     />
   );

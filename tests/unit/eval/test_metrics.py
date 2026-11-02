@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from rag_crucible.eval.metrics import (
     first_relevant_rank,
     mean,
@@ -41,6 +43,9 @@ def test_reciprocal_rank() -> None:
     assert reciprocal_rank(None) == 0.0
 
 
-def test_mean_handles_empty() -> None:
-    assert mean([]) == 0.0
+def test_mean_of_an_empty_sample_is_refused_not_zero() -> None:
+    # A 0.0 here read as a perfect defense or a total failure; it is now
+    # the caller's job to say why the sample is empty (eval/measure.py).
+    with pytest.raises(ValueError, match="empty sample"):
+        mean([])
     assert mean([0.0, 1.0]) == 0.5

@@ -391,8 +391,11 @@ CREATE TABLE metrics (                  -- flat + queryable: what the dashboard 
   value    REAL,                        -- NULL exactly when state != 'measured'
   state    TEXT NOT NULL DEFAULT 'measured', -- or unsupported|inapplicable|skipped|error|not_estimable
   reason   TEXT,                        -- why there is no value; required unless measured
+  n          INTEGER,                   -- units scored; NULL = not recorded
+  n_excluded INTEGER,                   -- units in scope left out as ineligible
   PRIMARY KEY (run_id, suite, name, variant),
-  CHECK ((value IS NULL) = (state != 'measured'))
+  CHECK ((value IS NULL) = (state != 'measured')),
+  CHECK (state != 'measured' OR n IS NULL OR n >= 1)   -- and value, n, n_excluded typed
 );
 
 CREATE TABLE records (                  -- per-item evidence behind every metric
@@ -431,8 +434,14 @@ stores NULL with its state and reason; every existing row was copied as `measure
 added `records.payload_schema`: rows written from then on record the result schema of
 their payload, so a later reader can migrate them; earlier rows hold NULL, meaning unknown.
 The `metrics` CHECKs are `Metric`'s own rules, so SQL admits no row this build cannot
-read back, and adding a metric state is a store migration. A later nullable column, such as a per-metric sample size or interval
-bound, is a plain `ADD COLUMN` step and needs no rebuild.
+read back, and adding a metric state is a store migration. Version 2 rebuilt `metrics`
+again to add `n` and `n_excluded` (a metric's sample size and the units it left out as
+ineligible) with CHECKs, which an `ADD COLUMN` would have placed after the table's
+constraints; existing rows hold NULL in both, meaning not recorded. A later column that
+stays unconstrained, such as an interval bound, can be a plain `ADD COLUMN` step; one with
+a CHECK needs another rebuild. A build that predates a version refuses the store, so the
+API and worker are upgraded together, and an upgrade cannot be undone in place: copy
+`crucible.db` first if a rollback may be needed.
 
 ---
 

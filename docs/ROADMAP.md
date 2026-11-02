@@ -288,7 +288,8 @@ half of P0.
 
 Per-item label capabilities (`scores_retrieval`, `scores_answers`, `label_source`) so a
 questions-only `qa.jsonl` loads and only the *retrieval* suite requires gold labels; an
-unlabelled item must yield a typed *unsupported* metric, never a `0.0`. Poison that
+unlabelled item is left out and counted (a fully unlabelled set yields typed *unsupported*
+metrics), never scored as a `0.0`. Poison that
 degrades honestly when there is no gold answer, rather than scoring a nonsense assertion
 the model declined to repeat as a defense win. A content-addressed ingest fingerprint, so
 editing one corpus byte changes the run's identity. Ingestion honesty: dropped documents
@@ -591,7 +592,7 @@ These are intentionally issue-sized and ordered by dependency:
    filesystem roots and outbound targets before any hosted deployment guidance.
 9. **P0 / any dataset:** per-item label capabilities (`scores_retrieval` /
    `scores_answers` / `label_source`), so a questions-only corpus loads and an
-   unlabelled item yields a typed *unsupported* metric rather than a 0.0.
+   unlabelled item is left out and counted rather than scored as a 0.0.
 10. **P0 / ingestion honesty:** report dropped documents per filter *with their
     identities*, persist them in the run result, and skip malformed files instead of
     aborting the load.

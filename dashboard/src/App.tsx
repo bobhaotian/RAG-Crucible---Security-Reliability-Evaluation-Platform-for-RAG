@@ -15,7 +15,7 @@ import { PanelBoundary } from "./Boundary";
 import { DiffView } from "./DiffView";
 import type { Drill } from "./Evidence";
 import { EvidenceDrawer } from "./Evidence";
-import { duration, kpis, pipelineChips, summaryMarkdown } from "./metrics";
+import { duration, kpis, pipelineChips, suiteNotices, suitesLine, summaryMarkdown } from "./metrics";
 
 /** The selected run — and any open evidence view — live in the URL, so "the
  *  attacks that succeeded under prompt_isolation" is a link someone can paste
@@ -180,7 +180,7 @@ function SingleRun({
         {duration(run) && <span className="suites">{duration(run)}</span>}
         <code>{run.id}</code>
         <code title="spec hash">#{run.spec_hash.slice(0, 12)}</code>
-        <span className="suites">{suites.map((s) => s.suite).join(" · ") || "no suites"}</span>
+        <span className="suites">{suitesLine(suites) || "no suites"}</span>
         <CopySummary results={results} />
       </header>
 
@@ -195,6 +195,10 @@ function SingleRun({
         </ul>
       )}
 
+      <PanelBoundary key={`suite-status-${run.id}`} title="Suite status">
+        <SuiteNotices results={results} />
+      </PanelBoundary>
+
       <PanelBoundary key={`kpis-${run.id}`} title="Headline metrics">
         <KpiRow results={results} onDrill={onDrill} />
       </PanelBoundary>
@@ -208,7 +212,7 @@ function SingleRun({
             ["Attack success by defense", <AttackSuccess results={results} onDrill={onDrill} />],
             ["Model compromise by defense", <Compromise results={results} onDrill={onDrill} />],
             ["What the defenses cost", <DefenseCost results={results} onDrill={onDrill} />],
-            ["Canary leakage by defense", <PrivacyLeakage results={results} onDrill={onDrill} />],
+            ["Canary leakage by defense", <PrivacyLeakage results={results} onDrill={onDrill} spec={spec} />],
             ["Per-stage latency", <Latency results={results} />],
           ] as const
         ).map(([title, panel]) => (
@@ -219,6 +223,36 @@ function SingleRun({
         ))}
       </div>
     </>
+  );
+}
+
+/** A suite that failed or was skipped, said before any panel: a failed suite's
+ *  panels are absent because it produced nothing, which must not read as "this
+ *  run had no such suite". */
+function SuiteNotices({ results }: { results: RunResults }) {
+  const notices = suiteNotices(results);
+  if (notices.length === 0) return null;
+  return (
+    <div className="suite-notices">
+      {notices.map((n) => (
+        <section key={n.suite} className={`suite-notice ${n.status}`}>
+          <h3>
+            {n.suite} <span className={`status ${n.status}`}>{n.status}</span>
+          </h3>
+          {n.message && <p className="suite-error">{n.message}</p>}
+          {n.reasons.length > 0 && (
+            <ul>
+              {n.reasons.map((g) => (
+                <li key={`${g.state}|${g.reason}`}>
+                  {g.labels.length} {g.labels.length === 1 ? "metric" : "metrics"}{" "}
+                  <span className={`state ${g.state}`}>{g.state}</span>: {g.reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+    </div>
   );
 }
 

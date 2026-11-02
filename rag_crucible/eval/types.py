@@ -18,6 +18,14 @@ exactly when ``value`` carries a number; every other state carries a
 ``reason`` and no value. So a metric that could not be computed can be
 emitted with its reason instead of being omitted or written as 0.0, and "this
 run did not measure it" stays distinct from "this run measured zero".
+
+**A metric says what it was computed over.** ``n`` is the number of units in
+its denominator (questions, answers, trials, probes, chunks, citations; for a
+count, the units examined), and ``n_excluded`` the units in its scope left out
+because they were not eligible, such as questions with no retrieval label. A
+partially labelled set is scored over its labelled part, and the count of what
+was left out travels with the number. ``rag_crucible.eval.catalog`` defines,
+for every metric, which units are eligible and what an empty sample means.
 """
 
 from __future__ import annotations
@@ -43,7 +51,11 @@ from rag_crucible.types import StrictModel
 #   4 — corpus and QA content digests preserved in the embedded spec
 #   5 — per-chunk clean-defense screening evidence
 #   6 — every metric carries a state (and a reason when it was not measured)
-RESULT_SCHEMA_VERSION = 6
+#   7 — every metric carries n and n_excluded, its sample size and exclusions;
+#       a citation can be unjudged (supports_claim None) when its answer made no
+#       claim; excluded_item records name each unit left out (an unlabelled
+#       question, a dropped canary)
+RESULT_SCHEMA_VERSION = 7
 
 # One spelling, imported by both the eval layer and the result store. Spelled
 # twice they drift, and a status one module can produce becomes a status the
@@ -59,6 +71,8 @@ SuiteStatus = Literal["succeeded", "failed", "skipped"]
 MetricState = Literal[
     "measured", "unsupported", "inapplicable", "skipped", "error", "not_estimable"
 ]
+# Every state but "measured": what a metric without a value can be.
+NotMeasuredState = Literal["unsupported", "inapplicable", "skipped", "error", "not_estimable"]
 
 
 class Metric(StrictModel):
@@ -68,9 +82,19 @@ class Metric(StrictModel):
     value: float | None  # None exactly when state is not "measured"
     state: MetricState = "measured"
     reason: str | None = None  # required, non-empty, whenever state is not "measured"
+    # n: the units scored. n_excluded: units in the metric's scope left out
+    # because they were not eligible by its definition (an unlabelled question,
+    # a dropped canary, a field an older version did not record), never errors,
+    # which B2 will count apart. None means "not recorded" or "not computed",
+    # never zero. rag_crucible.eval.catalog says what each metric's n counts.
+    n: int | None = None
+    n_excluded: int | None = None
 
     @model_validator(mode="after")
     def _value_present_exactly_when_measured(self) -> Metric:
+        for field, count in (("n", self.n), ("n_excluded", self.n_excluded)):
+            if count is not None and count < 0:
+                raise ValueError(f"{field} counts units and cannot be negative, got {count}")
         if self.state == "measured":
             if self.value is None:
                 raise ValueError("a measured metric needs a value; give another state and a reason")
@@ -79,6 +103,10 @@ class Metric(StrictModel):
             # would come back from storage as a measured metric with no value.
             if not math.isfinite(self.value):
                 raise ValueError(f"a measured value must be finite, got {self.value}")
+            # A value over no units is the invented zero this model exists to
+            # prevent: an empty sample is not_estimable, unsupported or skipped.
+            if self.n == 0:
+                raise ValueError("a measured metric was computed over at least one unit; n is 0")
             return self
         if self.value is not None:
             raise ValueError(f"a {self.state} metric carries no value, got {self.value}")
@@ -135,7 +163,9 @@ class ClaimJudgment(StrictModel):
 
 class CitationJudgment(StrictModel):
     chunk_id: str
-    supports_claim: bool
+    # None: not judged, because the answer had no claim to check it against.
+    # Scoring it False would count a citation nobody checked as unsupported.
+    supports_claim: bool | None
 
 
 class FaithfulnessRecord(StrictModel):
@@ -257,13 +287,26 @@ class CleanScreenRecord(StrictModel):
     reason: str | None = None
 
 
+class ExcludedItemRecord(StrictModel):
+    """A unit a suite left out of its denominators, and why: a question with no
+    retrieval label, a canary document the ingest filters dropped. The count is
+    on the metrics (``n_excluded``); this names each one, so a partial score can
+    be audited for what it does not cover. It is not a trial."""
+
+    kind: Literal["excluded_item"] = "excluded_item"
+    unit: Literal["question", "canary"]
+    item_id: str
+    reason: str
+
+
 EvalRecord = Annotated[
     RetrievalRecord
     | FaithfulnessRecord
     | AttackRecord
     | PrivacyRecord
     | CleanDefenseRecord
-    | CleanScreenRecord,
+    | CleanScreenRecord
+    | ExcludedItemRecord,
     Field(discriminator="kind"),
 ]
 
