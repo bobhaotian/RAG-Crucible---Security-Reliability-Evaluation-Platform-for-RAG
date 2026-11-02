@@ -18,23 +18,31 @@ import {
 } from "recharts";
 import type { Metric, RunResults } from "./api";
 import type { Drill } from "./Evidence";
-import type { DefenseGroup, Reading, Unmeasured } from "./metrics";
+import type { DefenseGroup, Reading, Subsetted, Unmeasured } from "./metrics";
 import {
   COMPROMISE_METRICS,
   COST_METRICS,
   METRIC_GLOSS,
+  PROBE_STYLE_HEADING,
   breakdown,
+  canariesRedactedAtIngest,
   understatements,
   contamination,
   contextMetrics,
   defenseGroups,
   faithfulness,
+  formatMetric,
   formatReading,
+  groupSubsets,
   groupUnmeasured,
+  isCount,
   judgeGap,
   latency,
-  read,
   rerankLift,
+  subsetLine,
+  subsetShort,
+  subsetted,
+  subsettedOf,
   tradeoffRadar,
   unmeasured,
   unmeasuredOf,
@@ -45,6 +53,8 @@ const ACCENT = "#6c5ce7";
 export interface PanelProps {
   results: RunResults;
   onDrill?: (drill: Drill) => void;
+  /** The spec the run executed from, when the API serves it. */
+  spec?: Record<string, unknown> | null;
 }
 
 function Panel({
@@ -52,12 +62,14 @@ function Panel({
   drill,
   onDrill,
   notMeasured = [],
+  subsets = [],
   children,
 }: {
   title: string;
   drill?: Drill;
   onDrill?: (drill: Drill) => void;
   notMeasured?: Unmeasured[];
+  subsets?: Subsetted[];
   children: ReactNode;
 }) {
   return (
@@ -71,8 +83,44 @@ function Panel({
         )}
       </div>
       {children}
+      <SubsetList items={subsets} />
       <NotMeasuredList items={notMeasured} />
     </section>
+  );
+}
+
+/** Which values in a panel were scored over part of their scope, one line per
+ *  distinct denominator. Renders nothing when no value excluded anything, so a
+ *  run scored over every unit looks as it always did. */
+function SubsetList({ items }: { items: Subsetted[] }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="subset-note">
+      <h4>Scored over a subset</h4>
+      <ul>
+        {groupSubsets(items).map((g) => (
+          <li key={`${g.n ?? "?"}|${g.excluded}`}>
+            {g.labels.map((label, i) => (
+              <span key={label}>
+                {i > 0 && ", "}
+                <code>{label}</code>
+              </span>
+            ))}{" "}
+            — {subsetLine(g)}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** "53 of 56" at the end of a bar's track, for a value scored over a subset. */
+function SubsetTag({ reading, className = "bar-subset" }: { reading: Reading | undefined; className?: string }) {
+  if (!reading?.measured || !reading.subset) return null;
+  return (
+    <span className={className} title={`scored over ${subsetShort(reading.subset)}`}>
+      {subsetShort(reading.subset)}
+    </span>
   );
 }
 
@@ -131,7 +179,7 @@ function signed(v: number, digits = 3): string {
 // ------------------------------------------------------------------ trade-off
 
 export function TradeoffRadar({ results, onDrill }: PanelProps) {
-  const { data, unmeasured: missing } = tradeoffRadar(results);
+  const { data, unmeasured: missing, subsets } = tradeoffRadar(results);
   if (data.length < 3 && missing.length === 0) return null;
   const values = (
     <ul className="axis-values">
@@ -151,6 +199,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
         drill={{ suite: "security", label: "attacks behind the robustness axis" }}
         onDrill={onDrill}
         notMeasured={missing}
+        subsets={subsets}
       >
         <p className="hint">
           Only {data.length} of the four axes {data.length === 1 ? "was" : "were"} measured,
@@ -166,6 +215,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
       drill={{ suite: "security", label: "attacks behind the robustness axis" }}
       onDrill={onDrill}
       notMeasured={missing}
+      subsets={subsets}
     >
       <ResponsiveContainer width="100%" height={230}>
         <RadarChart data={data} outerRadius="68%" margin={{ top: 16, right: 56, bottom: 8, left: 56 }}>
@@ -188,7 +238,7 @@ export function TradeoffRadar({ results, onDrill }: PanelProps) {
 // ---------------------------------------------------------------- rerank lift
 
 export function RerankLift({ results, onDrill }: PanelProps) {
-  const { rows, axis, hasOn, unmeasured: missing } = rerankLift(results);
+  const { rows, axis, hasOn, unmeasured: missing, subsets } = rerankLift(results);
   if (rows.length === 0) return null;
   if (axis === undefined) {
     // Nothing to place on an axis: no empty 0.000–1.000 track, just the reasons.
@@ -198,6 +248,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
         drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
         onDrill={onDrill}
         notMeasured={missing}
+        subsets={subsets}
       >
         <p className="hint">No retrieval metric in this run was measured, so there is nothing to plot.</p>
       </Panel>
@@ -229,6 +280,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
           )}
           {a !== undefined && <span className="db-dot off" style={{ left: `${a}%` }} />}
           {b !== undefined && <span className="db-dot on" style={{ left: `${b}%` }} />}
+          <SubsetTag reading={r.on?.measured && r.on.subset ? r.on : r.off} className="db-subset" />
         </span>
         {missingSide && !missingSide.measured ? (
           <span className="db-delta na" title={missingSide.reason}>
@@ -257,6 +309,7 @@ export function RerankLift({ results, onDrill }: PanelProps) {
       drill={{ suite: "retrieval", label: "per-question retrieval ranks" }}
       onDrill={onDrill}
       notMeasured={missing}
+      subsets={subsets}
     >
       <ul className="dumbbell">
         {shown.map(row)}
@@ -309,6 +362,7 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
       drill={{ suite: "faithfulness", label: "judged answers" }}
       onDrill={onDrill}
       notMeasured={rows.flatMap((r) => unmeasured(r.name, r.reading))}
+      subsets={rows.flatMap((r) => subsetted(r.name, r.reading))}
     >
       <ul className="bars">
         {rows.map((r) => (
@@ -326,6 +380,7 @@ export function Faithfulness({ results, onDrill }: PanelProps) {
               ) : (
                 <StateInTrack reading={r.reading} />
               )}
+              <SubsetTag reading={r.reading} />
             </span>
             <span className="bar-value">{barValue(r.reading, 3)}</span>
           </li>
@@ -361,6 +416,7 @@ function DefenseBars({
   context = [],
   footer,
   extraUnmeasured = [],
+  extraSubsets = [],
 }: {
   groups: DefenseGroup[];
   suite: string;
@@ -371,6 +427,7 @@ function DefenseBars({
   context?: Metric[];
   footer?: ReactNode;
   extraUnmeasured?: Unmeasured[];
+  extraSubsets?: Subsetted[];
 }) {
   if (groups.length === 0) return null;
   const missing = [
@@ -380,9 +437,16 @@ function DefenseBars({
     ...unmeasuredOf(context),
     ...extraUnmeasured,
   ];
+  const subsets = [
+    ...groups.flatMap((g) =>
+      g.bars.flatMap((b) => subsetted(`${g.metric} [defense=${b.defense}]`, b.reading)),
+    ),
+    ...subsettedOf(context),
+    ...extraSubsets,
+  ];
 
   return (
-    <Panel title={title} drill={drill} onDrill={onDrill} notMeasured={missing}>
+    <Panel title={title} drill={drill} onDrill={onDrill} notMeasured={missing} subsets={subsets}>
       {lead && <p className="lead">{lead}</p>}
       {groups.map((g) => (
         <div className="defense-group" key={g.metric}>
@@ -421,6 +485,7 @@ function DefenseBars({
                   ) : (
                     <StateInTrack reading={b.reading} />
                   )}
+                  <SubsetTag reading={b.reading} />
                 </span>
                 <span className="bar-value">{barValue(b.reading, 2)}</span>
                 <span className={`bar-delta ${b.tone}`}>
@@ -433,7 +498,7 @@ function DefenseBars({
       ))}
       {context.length > 0 && (
         <p className="hint">
-          {context.map((m) => `${m.name} ${formatReading(read(m), 2)}`).join(" · ")}
+          {context.map((m) => `${m.name} ${formatMetric(m, 2)}`).join(" · ")}
         </p>
       )}
       {footer}
@@ -489,13 +554,18 @@ export function AttackSuccess({ results, onDrill }: PanelProps) {
   );
 }
 
-export function PrivacyLeakage({ results, onDrill }: PanelProps) {
+export function PrivacyLeakage({ results, onDrill, spec = null }: PanelProps) {
   const styles = breakdown(results, "privacy", "leakage_rate");
+  // Counts (canaries the ingest filters dropped) are context, written as
+  // integers with their gloss; they are never a bar.
+  const counts = contextMetrics(results, "privacy").filter((m) => isCount(m.name));
+  const redacted = canariesRedactedAtIngest(results, spec);
   return (
     <DefenseBars
       groups={defenseGroups(results, "privacy")}
       onDrill={onDrill}
-      extraUnmeasured={unmeasuredOf(styles.map((s) => s.metric))}
+      extraUnmeasured={[...unmeasuredOf(styles.map((s) => s.metric)), ...unmeasuredOf(counts)]}
+      extraSubsets={subsettedOf(styles.map((s) => s.metric))}
       suite="privacy"
       title="Canary leakage by defense"
       lead={
@@ -503,13 +573,30 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
           Synthetic secrets are seeded into the corpus, then probed for directly and
           indirectly. <code>retrieval_exposure_rate</code> is whether the secret reached the
           prompt at all; <code>leakage_rate</code> is whether it reached the answer.
+          {redacted && (
+            <>
+              {" "}
+              <b>
+                <code>pii</code> is in this run's ingest filters,
+              </b>{" "}
+              so the canaries were redacted at ingestion in every arm: <code>none</code> is not
+              defense-free here, and <code>pii_filter</code> finds nothing left to redact.
+            </>
+          )}
         </>
       }
       drill={{ suite: "privacy", label: "all canary probes" }}
       footer={
-        styles.length > 0 ? (
+        <>
+          {counts.map((m) => (
+            <p className="hint count" key={m.name}>
+              <code>{m.name}</code> <b>{formatMetric(m)}</b>
+              {METRIC_GLOSS[m.name] ? ` — ${METRIC_GLOSS[m.name]}` : ""}
+            </p>
+          ))}
+          {styles.length > 0 && (
           <div className="defense-group">
-            <h4>leakage by probe style (no redaction)</h4>
+            <h4>{PROBE_STYLE_HEADING}</h4>
             <ul className="bars">
               {styles.map((s) => (
                 <li
@@ -538,6 +625,7 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
                     ) : (
                       <StateInTrack reading={s.reading} />
                     )}
+                    <SubsetTag reading={s.reading} />
                   </span>
                   <span className="bar-value">{barValue(s.reading, 2)}</span>
                   <span className="bar-delta" />
@@ -545,7 +633,8 @@ export function PrivacyLeakage({ results, onDrill }: PanelProps) {
               ))}
             </ul>
           </div>
-        ) : undefined
+          )}
+        </>
       }
     />
   );

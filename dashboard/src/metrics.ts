@@ -13,8 +13,12 @@
 // metric gives way to one that applies (see `firstApplicable`, `worstOf`). When
 // every input is inapplicable, the figure is shown as inapplicable, with its
 // reason, rather than vanishing.
+//
+// A measured value scored over part of its scope (`n_excluded > 0`) carries its
+// subset on the reading, so every surface that shows the number can say "53 of
+// 56" beside it: a subset score must never pass for a full-set one.
 
-import type { Metric, MetricState, RunResults, RunRow, StageStat } from "./api";
+import type { Metric, MetricState, RunResults, RunRow, StageStat, SuiteSummary } from "./api";
 
 const NOT_MEASURED_STATES: readonly string[] = [
   "unsupported",
@@ -35,7 +39,29 @@ export interface NotMeasured {
   reason: string;
 }
 
-export type Reading = { measured: true; value: number } | NotMeasured;
+/** A measured value scored over part of its scope: `n` units in the
+ *  denominator (undefined when the run did not record it) and `excluded` left
+ *  out as not eligible, always at least 1. */
+export interface Subset {
+  n: number | undefined;
+  excluded: number;
+}
+
+export type Reading = { measured: true; value: number; subset?: Subset } | NotMeasured;
+
+/** A count from the API: a non-negative integer, or undefined for null, a
+ *  missing key (an older server) or anything else. */
+function count(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : undefined;
+}
+
+/** The subset a metric was scored over, or undefined when nothing was excluded
+ *  or the run did not record exclusions. */
+function subsetOf(m: Metric): Subset | undefined {
+  const excluded = count(m.n_excluded);
+  if (excluded === undefined || excluded === 0) return undefined;
+  return { n: count(m.n), excluded };
+}
 
 /** A metric's value, or why it has none. */
 export function read(m: Metric): Reading {
@@ -44,7 +70,8 @@ export function read(m: Metric): Reading {
   const given = m.reason?.trim() ? m.reason : undefined;
   if (state === "measured") {
     if (typeof m.value === "number" && Number.isFinite(m.value)) {
-      return { measured: true, value: m.value };
+      const subset = subsetOf(m);
+      return subset ? { measured: true, value: m.value, subset } : { measured: true, value: m.value };
     }
     return { measured: false, state: "invalid", reason: "marked measured, but carries no number" };
   }
@@ -124,6 +151,73 @@ export function formatReading(r: Reading | undefined, digits = 3): string {
   return r.measured ? r.value.toFixed(digits) : `— (${r.state})`;
 }
 
+// --------------------------------------------------------------------- counts
+
+/** Metrics that count things rather than rate them. A count is never drawn as
+ *  a 0–1 bar, is written as an integer, and a change in it is neither good nor
+ *  bad: more canaries dropped by the ingest filters is the user's own hygiene,
+ *  not a regression. */
+export const COUNT_METRICS: ReadonlySet<string> = new Set(["canary_docs_dropped_by_filter"]);
+
+export function isCount(name: string): boolean {
+  return COUNT_METRICS.has(name);
+}
+
+/** A metric's value as text: an integer for a count, `digits` places for a
+ *  rate, `— (<state>)` when it was not measured. */
+export function formatMetric(m: Metric, digits = 3): string {
+  const r = read(m);
+  return isCount(m.name) && r.measured ? r.value.toFixed(0) : formatReading(r, digits);
+}
+
+// -------------------------------------------------------------------- subsets
+
+/** `53 of 56`, or `3 excluded` when the run did not record the denominator. */
+export function subsetShort(s: Subset): string {
+  return s.n === undefined ? `${s.excluded} excluded` : `${s.n} of ${s.n + s.excluded}`;
+}
+
+/** One entry in a panel's "scored over a subset" list. */
+export interface Subsetted {
+  label: string;
+  subset: Subset;
+}
+
+export interface SubsetGroup {
+  n: number | undefined;
+  excluded: number;
+  labels: string[];
+}
+
+export function subsetted(label: string, r: Reading | undefined): Subsetted[] {
+  return r?.measured && r.subset ? [{ label, subset: r.subset }] : [];
+}
+
+/** The measured metrics in a list that were scored over a subset, labelled. */
+export function subsettedOf(metrics: Metric[]): Subsetted[] {
+  return metrics.flatMap((m) => subsetted(labelOf(m), read(m)));
+}
+
+/** One line per distinct (n, excluded), as the "Not measured" list groups by
+ *  state and reason: a suite scored over one subset is one line. */
+export function groupSubsets(items: Subsetted[]): SubsetGroup[] {
+  const groups = new Map<string, SubsetGroup>();
+  for (const { label, subset } of items) {
+    const key = `${subset.n ?? "?"}\u0000${subset.excluded}`;
+    const group = groups.get(key) ?? { n: subset.n, excluded: subset.excluded, labels: [] };
+    if (!group.labels.includes(label)) group.labels.push(label);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+/** `scored over 53; 3 excluded`, the text after a group's labels. */
+export function subsetLine(g: { n: number | undefined; excluded: number }): string {
+  return g.n === undefined
+    ? `${g.excluded} excluded; denominator not recorded`
+    : `scored over ${g.n}; ${g.excluded} excluded`;
+}
+
 /** One entry in a panel's "not measured" list. */
 export interface Unmeasured extends NotMeasured {
   label: string;
@@ -173,16 +267,17 @@ export function worstOf(parts: [string, Reading | undefined][]): Reading | undef
     const reasons = emitted.map(([name, r]) => `${name}: ${(r as NotMeasured).reason}`);
     return { measured: false, state: "inapplicable", reason: reasons.join("; ") };
   }
-  const values: number[] = [];
+  // The worst case is one of its inputs, so it keeps that input's subset.
+  let worst: Extract<Reading, { measured: true }> | undefined;
   for (const [name, r] of present) {
     if (!r.measured) return { ...r, reason: `${name}: ${r.reason}` };
-    values.push(r.value);
+    if (worst === undefined || r.value > worst.value) worst = r;
   }
-  return { measured: true, value: Math.max(...values) };
+  return worst as Reading;
 }
 
 function invert(r: Reading | undefined): Reading | undefined {
-  return r?.measured ? { measured: true, value: 1 - r.value } : r;
+  return r?.measured ? { ...r, value: 1 - r.value } : r;
 }
 
 export interface NamedSeries {
@@ -221,7 +316,10 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "retrieval",
       label: "Retrieval quality",
-      detail: retrieval !== undefined && retrieval === off ? "nDCG@10, rerank off" : "nDCG@10, rerank on",
+      detail: withSubset(
+        retrieval !== undefined && retrieval === off ? "nDCG@10, rerank off" : "nDCG@10, rerank on",
+        retrieval,
+      ),
       reading: retrieval,
       direction: "up",
       suite: "retrieval",
@@ -229,7 +327,7 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "faithfulness",
       label: "Answer accuracy",
-      detail: "gold answer present",
+      detail: withSubset("gold answer present", reading(results, "faithfulness", "answer_accuracy")),
       reading: reading(results, "faithfulness", "answer_accuracy"),
       direction: "up",
       suite: "faithfulness",
@@ -237,7 +335,7 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "security",
       label: "Worst-case attack",
-      detail: "poison vs injection, no defense",
+      detail: withSubset("poison vs injection, no defense", attack),
       reading: attack,
       direction: "down",
       suite: "security",
@@ -245,7 +343,9 @@ export function kpis(results: RunResults): Kpi[] {
     {
       key: "privacy",
       label: "Canary leakage",
-      detail: "no defense",
+      // The `none` arm, not "no defense": with `pii` in the ingest filters the
+      // canaries were redacted before any arm ran.
+      detail: withSubset("none arm", reading(results, "privacy", "leakage_rate", "defense=none")),
       reading: reading(results, "privacy", "leakage_rate", "defense=none"),
       direction: "down",
       suite: "privacy",
@@ -253,6 +353,10 @@ export function kpis(results: RunResults): Kpi[] {
   ];
   // A card the run has no metric for is dropped; one it could not measure stays, with its reason.
   return cards.flatMap((k) => (k.reading === undefined ? [] : [{ ...k, reading: k.reading }]));
+}
+
+function withSubset(detail: string, r: Reading | undefined): string {
+  return r?.measured && r.subset ? `${detail} · ${subsetShort(r.subset)}` : detail;
 }
 
 // One headline number per property, 0..1, higher = better. Robustness and
@@ -264,6 +368,7 @@ export function kpis(results: RunResults): Kpi[] {
 export interface Radar {
   data: NamedSeries[];
   unmeasured: Unmeasured[];
+  subsets: Subsetted[];
 }
 
 export function tradeoffRadar(results: RunResults): Radar {
@@ -292,6 +397,7 @@ export function tradeoffRadar(results: RunResults): Radar {
       r?.measured ? [{ name, value: Number(r.value.toFixed(3)) }] : [],
     ),
     unmeasured: axes.flatMap(([name, r]) => unmeasured(name, r)),
+    subsets: axes.flatMap(([name, r]) => subsetted(name, r)),
   };
 }
 
@@ -310,6 +416,7 @@ export interface LiftChart {
   axis: { min: number; max: number } | undefined; // undefined: nothing measured to place
   hasOn: boolean; // false: the run has no rerank-on figures, so there is no lift
   unmeasured: Unmeasured[];
+  subsets: Subsetted[];
 }
 
 // The metrics worth showing before the reader asks for all of them.
@@ -321,7 +428,9 @@ const HEADLINE_RETRIEVAL = ["recall@1", "recall@5", "ndcg@10", "mrr"];
 export function rerankLift(results: RunResults): LiftChart {
   const retrieval = results.metrics.filter((m) => m.suite === "retrieval");
   const off = retrieval.filter((m) => m.variant === "rerank=off");
-  if (off.length === 0) return { rows: [], axis: undefined, hasOn: false, unmeasured: [] };
+  if (off.length === 0) {
+    return { rows: [], axis: undefined, hasOn: false, unmeasured: [], subsets: [] };
+  }
   const on = new Map(
     retrieval.filter((m) => m.variant === "rerank=on").map((m) => [m.name, read(m)]),
   );
@@ -351,11 +460,13 @@ export function rerankLift(results: RunResults): LiftChart {
   const values = rows.flatMap((r) =>
     [r.off, r.on].flatMap((x) => (x?.measured ? [x.value] : [])),
   );
-  const unmeasuredRows = unmeasuredOf(
-    retrieval.filter((m) => m.variant === "rerank=off" || m.variant === "rerank=on"),
-  );
+  const ranked = retrieval.filter((m) => m.variant === "rerank=off" || m.variant === "rerank=on");
+  const unmeasuredRows = unmeasuredOf(ranked);
+  const subsets = subsettedOf(ranked);
   const hasOn = on.size > 0;
-  if (values.length === 0) return { rows, axis: undefined, hasOn, unmeasured: unmeasuredRows };
+  if (values.length === 0) {
+    return { rows, axis: undefined, hasOn, unmeasured: unmeasuredRows, subsets };
+  }
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   // Pad so the dots never sit on the panel edge, and so a run where every
@@ -366,6 +477,7 @@ export function rerankLift(results: RunResults): LiftChart {
     axis: { min: Math.max(0, lo - pad), max: Math.min(1, hi + pad) },
     hasOn,
     unmeasured: unmeasuredRows,
+    subsets,
   };
 }
 
@@ -481,6 +593,8 @@ export const METRIC_GLOSS: Record<string, string> = {
   leakage_rate: "Probes where the answer text contained the seeded canary value.",
   retrieval_exposure_rate:
     "Probes where the chunk holding the canary reached the prompt context at all.",
+  canary_docs_dropped_by_filter:
+    "Canary documents the ingest filters removed before indexing; not probed, and outside every rate.",
 };
 
 /** Each compromise rate and the per-attack rate it generalises. They share a
@@ -526,10 +640,12 @@ export function defenseGroups(
   suite: string,
   opts: { only?: string[]; except?: string[] } = {},
 ): DefenseGroup[] {
+  // A count is never a bar on a 0–1 track.
   const scoped = results.metrics.filter(
     (m) =>
       m.suite === suite &&
       m.variant.startsWith("defense=") &&
+      !isCount(m.name) &&
       (opts.only ? opts.only.includes(m.name) : true) &&
       (opts.except ? !opts.except.includes(m.name) : true),
   );
@@ -595,20 +711,33 @@ export interface DiffRow {
   a: Reading | undefined;
   b: Reading | undefined;
   delta: number | undefined; // only when both runs measured the metric
+  count: boolean; // a count: written as an integer, and a change is neither good nor bad
+  n: [number | undefined, number | undefined]; // each run's denominator, when recorded
+  nDiffers: boolean; // both recorded, and different: the delta compares unlike samples
 }
 
 /** The two-run comparison, one row per metric either run emitted. */
 export function diffRows(base: RunResults, other: RunResults): DiffRow[] {
   const keyOf = (m: Metric) => `${m.suite} · ${summaryMetric(m)}`;
-  const rows = new Map<string, { a?: Reading; b?: Reading }>();
-  for (const m of base.metrics) rows.set(keyOf(m), { a: read(m) });
-  for (const m of other.metrics) rows.set(keyOf(m), { ...(rows.get(keyOf(m)) ?? {}), b: read(m) });
-  return [...rows.entries()].map(([key, { a, b }]) => ({
-    key,
-    a,
-    b,
-    delta: a?.measured && b?.measured ? b.value - a.value : undefined,
-  }));
+  const rows = new Map<string, { name: string; a?: Metric; b?: Metric }>();
+  for (const m of base.metrics) rows.set(keyOf(m), { name: m.name, a: m });
+  for (const m of other.metrics) {
+    rows.set(keyOf(m), { ...(rows.get(keyOf(m)) ?? { name: m.name }), b: m });
+  }
+  return [...rows.entries()].map(([key, { name, a: ma, b: mb }]) => {
+    const a = ma === undefined ? undefined : read(ma);
+    const b = mb === undefined ? undefined : read(mb);
+    const n: [number | undefined, number | undefined] = [count(ma?.n), count(mb?.n)];
+    return {
+      key,
+      a,
+      b,
+      delta: a?.measured && b?.measured ? b.value - a.value : undefined,
+      count: isCount(name),
+      n,
+      nDiffers: n[0] !== undefined && n[1] !== undefined && n[0] !== n[1],
+    };
+  });
 }
 
 /** Suite metrics with no defense variant — the stage-level context that frames
@@ -628,8 +757,60 @@ export interface BreakdownRow {
 /** `leakage_rate@direct` style metrics: the same rate cut by probe style. */
 export function breakdown(results: RunResults, suite: string, name: string): BreakdownRow[] {
   return results.metrics
-    .filter((m) => m.suite === suite && m.name.startsWith(`${name}@`) && m.variant === "")
+    .filter(
+      (m) =>
+        m.suite === suite && m.name.startsWith(`${name}@`) && m.variant === "" && !isCount(m.name),
+    )
     .map((m) => ({ name: m.name.split("@")[1], metric: m, reading: read(m) }));
+}
+
+/** The heading over the probe-style breakdown. It is measured on the `none`
+ *  arm, which is not "no redaction" when the spec has `pii` in its ingest
+ *  filters, so it names the arm rather than claiming there was no redaction. */
+export const PROBE_STYLE_HEADING = "leakage by probe style (none arm)";
+
+/** Whether this run's own `pii` ingest filter redacted the canaries, as
+ *  summary.md decides it: only code that routes canaries through the filters
+ *  emits the drop count, so an older run whose spec lists `pii` is not claimed
+ *  as redacted. */
+export function canariesRedactedAtIngest(
+  results: RunResults,
+  spec: Record<string, unknown> | null,
+): boolean {
+  const routed = results.metrics.some(
+    (m) => m.suite === "privacy" && m.name === "canary_docs_dropped_by_filter",
+  );
+  const ingest = spec?.ingest;
+  const filters =
+    ingest && typeof ingest === "object" ? (ingest as Record<string, unknown>).filters : undefined;
+  return routed && Array.isArray(filters) && filters.includes("pii");
+}
+
+// --------------------------------------------------------------- suite status
+
+export interface SuiteNotice {
+  suite: string;
+  status: "failed" | "skipped";
+  error: string | undefined; // a failed suite's error, when it recorded one
+  reasons: UnmeasuredGroup[]; // why its metrics have no value, grouped
+}
+
+/** The suites a reader has to be told about before reading any panel: one that
+ *  failed (its panels are empty because it produced nothing) and one that was
+ *  skipped (its metrics carry the reason). A succeeded suite, or a status this
+ *  dashboard does not know, gets no notice. */
+export function suiteNotices(results: RunResults): SuiteNotice[] {
+  return results.suites.flatMap((s) => {
+    if (s.status !== "failed" && s.status !== "skipped") return [];
+    const reasons = groupUnmeasured(unmeasuredOf(results.metrics.filter((m) => m.suite === s.suite)));
+    const error = s.error?.trim() ? s.error : undefined;
+    return [{ suite: s.suite, status: s.status, error, reasons }];
+  });
+}
+
+/** The run header's suite list: a suite that did not succeed says so. */
+export function suitesLine(suites: SuiteSummary[]): string {
+  return suites.map((s) => (s.status === "succeeded" ? s.suite : `${s.suite} (${s.status})`)).join(" · ");
 }
 
 // -------------------------------------------------------------------- latency
@@ -705,6 +886,9 @@ export function summaryMarkdown(results: RunResults): string {
     `- run id: \`${run.id}\``,
     `- spec hash: \`${run.spec_hash.slice(0, 12)}\``,
     `- status: ${run.status}${duration(run) ? ` (${duration(run)})` : ""}`,
+    ...suiteNotices(results).map(
+      (n) => `- ${n.suite}: ${n.status}${n.error ? ` (${plainMarkdown(n.error)})` : ""}`,
+    ),
     "",
     "| suite | metric | variant | value |",
     "|---|---|---|---|",
@@ -714,7 +898,7 @@ export function summaryMarkdown(results: RunResults): string {
   )) {
     const r = read(m);
     const cell = r.measured
-      ? r.value.toFixed(4)
+      ? `${r.value.toFixed(isCount(m.name) ? 0 : 4)}${r.subset ? ` (${subsetShort(r.subset)})` : ""}`
       : `— (${r.state}: ${plainMarkdown(r.reason)})`;
     lines.push(`| ${m.suite} | ${m.name} | ${m.variant || "—"} | ${cell} |`);
   }
